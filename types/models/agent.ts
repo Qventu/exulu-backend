@@ -6,6 +6,8 @@ export interface ExuluAgent {
     provider?: string;
     source: "code" | "database";
     memory?: string;
+    /** Memory behaviour (retrieval limit, visibility preselect, guest display). null = defaults. */
+    memory_config?: Record<string, unknown> | string | null;
     welcomemessage?: string;
     defaultagent?: boolean;
     type: "agent";

@@ -22,13 +22,20 @@ import { getPresignedUrl } from "@SRC/uppy";
 import type { ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
 import type { Item } from "@EXULU_TYPES/models/item";
 import { handleRBACUpdate } from "@EE/rbac-update.ts";
+import { recallService } from "@SRC/exulu/recall/service";
 import {
   transcriptionClient,
   TranscriptionServerUnavailable,
   type WhisperJob,
 } from "./client";
-import { renderTranscript, type RawSegment, type SpeakerMap } from "./transcript-text";
+import { effectiveSegments, renderTranscript, type RawSegment, type SpeakerMap } from "./transcript-text";
 import { buildTranscriptItemInput } from "./build-transcript-item";
+import {
+  assertOwnsTranscriptionJob,
+  TranscriptionJobAccessError,
+  type TranscriptionJobUser,
+} from "./authorize";
+import type { TranscriptExportItem } from "./transcript-export";
 
 const TABLE = "transcription_jobs";
 
@@ -37,7 +44,8 @@ export type JobStatus =
   | "transcribing"
   | "recording" // live browser recording in progress (chunks arriving)
   | "awaiting_review"
-  | "saved"
+  | "reviewed" // signed off by a human; NOT in the knowledge base
+  | "saved" // in the knowledge base (saved_item_id is set)
   | "failed"
   | "cancelled";
 
@@ -53,6 +61,7 @@ export type StartJobInput = {
   target_rights_mode?: ExuluRightsMode | null;
   target_rbac_users?: { id: number; rights: "read" | "write" }[];
   target_rbac_roles?: { id: string; rights: "read" | "write" }[];
+  post_processing_prompts?: { prompt_id: string; agent_id: string }[];
 };
 
 export type FinalizeInput = {
@@ -62,6 +71,7 @@ export type FinalizeInput = {
   target_rights_mode?: ExuluRightsMode | null;
   target_rbac_users?: { id: number; rights: "read" | "write" }[];
   target_rbac_roles?: { id: string; rights: "read" | "write" }[];
+  corrected_segments?: RawSegment[] | null;
 };
 
 type JobRow = {
@@ -79,11 +89,14 @@ type JobRow = {
   target_rbac_users: { id: number; rights: "read" | "write" }[] | null;
   target_rbac_roles: { id: string; rights: "read" | "write" }[] | null;
   saved_item_id: string | null;
+  reviewed_at: string | null;
   error: string | null;
   rights_mode: ExuluRightsMode;
   created_by: number;
   createdAt: string;
   updatedAt: string;
+  // {prompt, agent} pairs to run once the transcript completes.
+  post_processing_prompts?: { prompt_id: string; agent_id: string }[] | null;
   // Recall meeting-bot post-processing results, carried into the saved item.
   post_processing_outputs?: unknown[] | null;
   /** Recall recording id — the handle for the meeting video. Null for Whisper. */
@@ -94,6 +107,8 @@ type JobRow = {
   chunk_count?: number | null;
   /** Live recordings: when the last chunk was accepted. */
   last_chunk_at?: string | null;
+  /** User corrections to the transcript text; null means never corrected. */
+  corrected_segments?: RawSegment[] | null;
 };
 
 const log = (msg: string) => console.log(`[EXULU-TRANSCRIPTION] ${msg}`);
@@ -126,6 +141,24 @@ const presignAudio = async (s3Key: string): Promise<string> => {
   return getPresignedUrl(bucket, objectKey, config);
 };
 
+/**
+ * Whether a whisper job that just reported `status` should have its
+ * post-processing run.
+ *
+ * pollOnce calls _applyJobUpdate on every tick for every transcribing row, so
+ * this must be false for every status but `completed`, and false once outputs
+ * exist — otherwise each tick pays for another set of LLM calls.
+ */
+export const shouldRunUploadPostProcessing = (
+  whisperStatus: string,
+  prompts: { prompt_id: string; agent_id: string }[] | null | undefined,
+  existingOutputs: unknown[] | null | undefined,
+): boolean =>
+  whisperStatus === "completed" &&
+  Array.isArray(prompts) &&
+  prompts.length > 0 &&
+  (existingOutputs === null || existingOutputs === undefined || existingOutputs.length === 0);
+
 export const transcriptionService = {
   /**
    * Create a transcription job row and dispatch it to the whisper server.
@@ -150,6 +183,9 @@ export const transcriptionService = {
         target_rights_mode: input.target_rights_mode ?? "private",
         target_rbac_users: input.target_rbac_users ? JSON.stringify(input.target_rbac_users) : null,
         target_rbac_roles: input.target_rbac_roles ? JSON.stringify(input.target_rbac_roles) : null,
+        post_processing_prompts: input.post_processing_prompts
+          ? JSON.stringify(input.post_processing_prompts)
+          : null,
         rights_mode: "private",
         created_by: input.userId,
         createdAt: now,
@@ -261,6 +297,20 @@ export const transcriptionService = {
           duration_seconds: job.duration_seconds ?? null,
           updatedAt: new Date(),
         });
+
+      if (
+        shouldRunUploadPostProcessing(
+          job.status,
+          row.post_processing_prompts as { prompt_id: string; agent_id: string }[] | null,
+          row.post_processing_outputs,
+        )
+      ) {
+        // Same fire-and-forget shape as live-recording.ts:181 — a failing
+        // summary must never stop the transcript becoming reviewable.
+        void recallService.runPostProcessing(row.id).catch((err: unknown) => {
+          log(`post-processing for upload ${row.id} failed: ${(err as Error).message}`);
+        });
+      }
       return;
     }
 
@@ -310,6 +360,66 @@ export const transcriptionService = {
   },
 
   /**
+   * Sign a transcript off without publishing it.
+   *
+   * Everything `finalize` does except creating the context item: the
+   * corrections are persisted, but the transcript does not enter the
+   * knowledge base and no agent can retrieve it. Publishing later goes
+   * through `finalize`, which upserts from this state.
+   *
+   * Deliberately does NOT render transcript_text: that field belongs to the
+   * context item (templates/contexts/transcriptions.ts), and the export
+   * builders read raw_segments + corrected_segments + speakers, which the job
+   * already has. A second rendered copy on the job could drift from the
+   * corrections it was rendered from.
+   *
+   * Sharing stays intent-only here (spec §"What happens today"): RBAC lives on
+   * the item, so an unpublished transcript is creator-only whatever
+   * target_rights_mode says.
+   */
+  async markReviewed(id: string, input: FinalizeInput): Promise<JobRow> {
+    const { db } = await postgresClient();
+    const dbRow = await db(TABLE).where({ id }).first();
+    if (!dbRow) throw new Error(`transcription_job ${id} not found`);
+    const row = this._rowFromDb(dbRow);
+
+    if (row.status !== "awaiting_review" && row.status !== "reviewed") {
+      throw new Error(
+        `transcription_job ${id} is in status '${row.status}'; can only mark reviewed from 'awaiting_review' or 'reviewed'`,
+      );
+    }
+    if (!row.raw_segments) {
+      throw new Error(`transcription_job ${id} has no raw_segments to review`);
+    }
+
+    // Same resolution rule as finalize: `!== undefined` so an explicit null
+    // means "reset the correction", not "keep what is stored".
+    const resolvedCorrected =
+      input.corrected_segments !== undefined
+        ? input.corrected_segments
+        : (row.corrected_segments ?? null);
+
+    const [updated] = await db(TABLE)
+      .where({ id })
+      .update({
+        status: "reviewed" as JobStatus,
+        reviewed_at: row.reviewed_at ?? new Date(),
+        title: input.title ?? row.title,
+        speakers: JSON.stringify(input.speakers),
+        corrected_segments:
+          resolvedCorrected === null ? null : JSON.stringify(resolvedCorrected),
+        project_id: input.project_id ?? row.project_id ?? null,
+        target_rights_mode: input.target_rights_mode ?? row.target_rights_mode ?? "private",
+        target_rbac_users: JSON.stringify(input.target_rbac_users ?? row.target_rbac_users ?? []),
+        target_rbac_roles: JSON.stringify(input.target_rbac_roles ?? row.target_rbac_roles ?? []),
+        error: null,
+        updatedAt: new Date(),
+      })
+      .returning("*");
+    return this._rowFromDb(updated);
+  },
+
+  /**
    * User clicked Save in the review panel.
    *
    * - From 'awaiting_review': render the speaker-labeled transcript, create a
@@ -325,9 +435,13 @@ export const transcriptionService = {
     if (!dbRow) throw new Error(`transcription_job ${id} not found`);
     const row = this._rowFromDb(dbRow);
 
-    if (row.status !== "awaiting_review" && row.status !== "saved") {
+    if (
+      row.status !== "awaiting_review" &&
+      row.status !== "reviewed" &&
+      row.status !== "saved"
+    ) {
       throw new Error(
-        `transcription_job ${id} is in status '${row.status}'; can only finalize from 'awaiting_review' or 'saved'`,
+        `transcription_job ${id} is in status '${row.status}'; can only finalize from 'awaiting_review', 'reviewed' or 'saved'`,
       );
     }
     if (!row.raw_segments) {
@@ -341,7 +455,19 @@ export const transcriptionService = {
     }
     const config = (app as any)._config ?? (app as any).config;
 
-    const transcriptText = renderTranscript(row.raw_segments, input.speakers);
+    // Resolve once so the rendered text and the item's mirrored field always
+    // agree — buildTranscriptItemInput must NOT re-derive this from `row`,
+    // which still holds the pre-save value at this point in finalize.
+    // `!== undefined` (not `??`) so an explicit `null` means "reset the
+    // correction," matching the persistence semantics below (nextCorrected-
+    // Segments) instead of silently keeping the row's old corrections.
+    const resolvedCorrected =
+      input.corrected_segments !== undefined ? input.corrected_segments : (row.corrected_segments ?? null);
+
+    const transcriptText = renderTranscript(
+      effectiveSegments(row.raw_segments, resolvedCorrected),
+      input.speakers,
+    );
     const rightsMode: ExuluRightsMode =
       input.target_rights_mode ?? row.target_rights_mode ?? "private";
 
@@ -354,6 +480,7 @@ export const transcriptionService = {
       transcriptText,
       rightsMode,
       isReSave,
+      correctedSegments: resolvedCorrected,
     });
 
     let item: Item;
@@ -427,19 +554,81 @@ export const transcriptionService = {
       }
     }
 
+    // Persist a freshly-submitted correction; otherwise leave the row's
+    // existing corrected_segments (if any) untouched.
+    const nextCorrectedSegments =
+      input.corrected_segments !== undefined ? input.corrected_segments : row.corrected_segments;
+
     const [updated] = await db(TABLE)
       .where({ id })
       .update({
         status: "saved" as JobStatus,
+        reviewed_at: row.reviewed_at ?? new Date(),
         saved_item_id: itemId,
         title: input.title ?? row.title ?? null,
         speakers: JSON.stringify(input.speakers),
+        corrected_segments: nextCorrectedSegments ? JSON.stringify(nextCorrectedSegments) : null,
         error: projectWarning ? `Saved, but could not attach to project: ${projectWarning}` : null,
         updatedAt: new Date(),
       })
       .returning("*");
 
     return { item, row: this._rowFromDb(updated) };
+  },
+
+  /**
+   * Export-route lookup for a job that has been reviewed but not published.
+   *
+   * The item export route (export-route.ts) reads through the
+   * transcriptions context's own getItems({ user }), which is where RBAC
+   * lives for a saved item. A job that has not been saved has no item to
+   * hang that on, so this applies the job's own ownership check
+   * (assertOwnsTranscriptionJob — same helper the transcription mutations
+   * use) instead, and returns undefined for both "no such job" and "not
+   * yours" so the caller can answer the same 404 either way: a 403 would
+   * confirm to a stranger that the transcript exists.
+   *
+   * Takes the full caller (not just an id), same as the GraphQL mutations
+   * pass `context.user` to this helper — a super_admin who reviewed someone
+   * else's transcript needs that flag to export it too (final fix wave,
+   * Finding 3). A `{ id }`-only caller still works (super_admin optional).
+   *
+   * Goes through _rowFromDb so raw_segments / corrected_segments / speakers
+   * / post_processing_outputs come back parsed exactly like every other
+   * caller of this row.
+   */
+  async exportableJob(
+    jobId: string,
+    user: TranscriptionJobUser,
+  ): Promise<(TranscriptExportItem & { reviewed_at?: string | Date | null }) | undefined> {
+    const { db } = await postgresClient();
+    try {
+      await assertOwnsTranscriptionJob(db, user, jobId);
+    } catch (err) {
+      // Only a permission/not-found failure becomes "undefined" (→ the
+      // route's 404). Anything else — a connection drop, a timeout, a
+      // programming fault inside the helper's own query — must not be
+      // reported to the caller as a missing transcript.
+      if (err instanceof TranscriptionJobAccessError) return undefined;
+      throw err;
+    }
+
+    const dbRow = await db(TABLE).where({ id: jobId }).first();
+    if (!dbRow) return undefined;
+    const row = this._rowFromDb(dbRow);
+
+    return {
+      name: row.title,
+      recording_source: row.source ?? "whisper",
+      recorded_at: (row as any).join_at ?? row.createdAt,
+      duration_seconds: row.duration_seconds,
+      language: row.language,
+      speakers: row.speakers,
+      raw_segments: row.raw_segments,
+      corrected_segments: row.corrected_segments,
+      post_processing: row.post_processing_outputs as TranscriptExportItem["post_processing"],
+      reviewed_at: row.reviewed_at,
+    };
   },
 
   _rowFromDb(dbRow: any): JobRow {
@@ -453,7 +642,11 @@ export const transcriptionService = {
       target_rbac_roles: parseJsonField<{ id: string; rights: "read" | "write" }[]>(
         dbRow.target_rbac_roles,
       ),
+      post_processing_prompts: parseJsonField<{ prompt_id: string; agent_id: string }[]>(
+        dbRow.post_processing_prompts,
+      ),
       post_processing_outputs: parseJsonField<unknown[]>(dbRow.post_processing_outputs),
+      corrected_segments: parseJsonField<RawSegment[]>(dbRow.corrected_segments),
     } as JobRow;
   },
 };

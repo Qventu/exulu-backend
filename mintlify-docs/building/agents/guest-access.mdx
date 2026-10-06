@@ -85,7 +85,9 @@ Behaviour specific to external users:
 
 ## Abuse limits
 
-Guest chat endpoints apply per-IP rate limits and message-size caps. These run in-process; they are not distributed and will reset if the backend process restarts.
+Guest chat endpoints apply per-IP rate limits and message-size caps. Logged-in external users (login mode) apply a separate per-user rate limit instead, since they're identifiable by user ID rather than IP. Both run in-process; they are not distributed and will reset if the backend process restarts.
+
+### Anonymous guests (per IP)
 
 | Limit | Default | Environment variable |
 | --- | --- | --- |
@@ -94,9 +96,18 @@ Guest chat endpoints apply per-IP rate limits and message-size caps. These run i
 | Max characters per message part | 8 000 | `EXULU_GUEST_MAX_MESSAGE_CHARS` |
 | Max total characters per request | 32 000 | `EXULU_GUEST_MAX_TOTAL_CHARS` |
 
-All four variables accept integer values and take effect at startup (or on next read, since they are re-evaluated on each request). See the [environment variables reference](/self-hosting/environment-variables) for the full list of self-hosting knobs.
+All four variables accept integer values and take effect at startup (or on next read, since they are re-evaluated on each request). When an IP exceeds the per-minute or per-hour cap, the run endpoint returns HTTP 429. Oversized messages return HTTP 400 before any model call is made.
 
-When an IP exceeds the per-minute or per-hour cap, the run endpoint returns HTTP 429. Oversized messages return HTTP 400 before any model call is made.
+### Logged-in external users (per user)
+
+| Limit | Default | Environment variable |
+| --- | --- | --- |
+| Requests per minute (per user) | 30 | `EXULU_EXTERNAL_RATE_PER_MINUTE` |
+| Requests per hour (per user) | 300 | `EXULU_EXTERNAL_RATE_PER_HOUR` |
+
+There are no message-size caps for external users — those exist to bound cost from anonymous drive-by traffic. Applies to the run, compact, and suggestions endpoints. When a user exceeds either cap, the endpoint returns HTTP 429.
+
+See the [environment variables reference](/self-hosting/environment-variables) for the full list of self-hosting knobs.
 
 The in-process IP table is bounded to 10 000 tracked addresses; stale entries are evicted opportunistically and by hard cap under sustained load.
 

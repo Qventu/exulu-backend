@@ -25,18 +25,14 @@ import { resolveModel } from "@SRC/exulu/resolve-model";
 import type { ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
 import { renderTranscript, type RawSegment, type SpeakerMap } from "../transcription/transcript-text";
 import { recallClient, recordingDurationSeconds } from "./client";
-import {
-  recallEnabled,
-  RecallNotConfiguredError,
-  recordingMonthlyLimitSeconds,
-  recallStoreVideoLocally,
-} from "./env";
+import { recallEnabled, RecallNotConfiguredError } from "./env";
 import { downloadAndStoreRecordingVideo } from "./video-storage";
 import { mapRecallTranscript, durationFromSegments } from "./transcript-map";
 import { withGlossary } from "@SRC/utils/agent-glossary";
+import { resolveTranscriptsSettings } from "../transcripts-settings";
+import { resolveBotIdentity } from "./bot-identity";
 
 const TABLE = "transcription_jobs";
-const DEFAULT_BOT_NAME = "Company Notetaker";
 
 // Reconciliation sweep tuning. The webhook route ACKs with 2xx before
 // processing, and Recall never redelivers an ACKed event — so a crash,
@@ -82,7 +78,7 @@ export type CreateMeetingBotInput = {
   language?: string | null;
   title?: string | null;
   bot_name?: string | null;
-  notify_chat?: boolean;
+  notify_chat?: boolean | null;
   project_id?: string | null;
   target_rights_mode?: ExuluRightsMode | null;
   target_rbac_users?: { id: number; rights: "read" | "write" }[];
@@ -133,6 +129,16 @@ export type RecordingUsage = {
   exceeded: boolean;
 };
 
+/**
+ * Pure minutes -> seconds conversion for the resolved monthlyRecordingLimitMinutes
+ * setting ("none" -> no cap). Separated from the resolver so a caller that
+ * already holds a resolved settings object (createMeetingBot, which resolves
+ * settings exactly once per dispatch) can derive the cap without a second
+ * resolveTranscriptsSettings() round-trip.
+ */
+export const capSecondsFrom = (value: number | "none"): number | null =>
+  value === "none" ? null : value * 60;
+
 export const recallService = {
   /**
    * Total recorded meeting duration (seconds) for the current UTC month. Sums
@@ -152,9 +158,20 @@ export const recallService = {
     return Number(row?.total ?? 0);
   },
 
+  /**
+   * Resolved monthly recording cap in seconds, or null when uncapped (the
+   * "none" sentinel). Resolves settings itself, so callers that already hold
+   * a resolved settings object (createMeetingBot — one resolution per
+   * dispatch) should call capSecondsFrom directly instead of this.
+   */
+  async _monthlyLimitSeconds(): Promise<number | null> {
+    const resolved = (await resolveTranscriptsSettings()).monthlyRecordingLimitMinutes.value;
+    return capSecondsFrom(resolved);
+  },
+
   /** Current month's recording usage against the optional monthly cap. */
   async getUsage(): Promise<RecordingUsage> {
-    const limit = recordingMonthlyLimitSeconds();
+    const limit = await this._monthlyLimitSeconds();
     const used = await this.monthlyUsedSeconds();
     return {
       enabled: limit != null,
@@ -173,8 +190,15 @@ export const recallService = {
   async createMeetingBot(input: CreateMeetingBotInput) {
     if (!recallEnabled()) throw new RecallNotConfiguredError();
 
+    // Resolved once and reused below for the cap check, bot identity, and
+    // retention: one round-trip on the path a user waits on while a bot
+    // joins their meeting, and no window where an admin's save lands between
+    // two reads and the cap check disagrees with the bot identity within a
+    // single dispatch.
+    const settings = await resolveTranscriptsSettings();
+
     // Enforce the optional monthly recording cap before launching a bot.
-    const limit = recordingMonthlyLimitSeconds();
+    const limit = capSecondsFrom(settings.monthlyRecordingLimitMinutes.value);
     if (limit != null) {
       const used = await this.monthlyUsedSeconds();
       if (used >= limit) {
@@ -222,13 +246,19 @@ export const recallService = {
       .returning("*");
 
     try {
+      const { botName, notifyChat } = resolveBotIdentity(input, {
+        botName: settings.botName.value,
+        notifyChat: settings.notifyChat.value,
+        recordersMayOverrideBot: settings.recordersMayOverrideBot.value,
+      });
       const bot = await recallClient.createBot({
         meeting_url: input.meeting_url,
         join_at: joinAt.toISOString(),
-        bot_name: input.bot_name?.trim() || DEFAULT_BOT_NAME,
-        notifyChat: input.notify_chat
+        bot_name: botName,
+        notifyChat: notifyChat
           ? { message: "This meeting is being recorded and transcribed." }
           : undefined,
+        retentionHours: settings.videoRetentionHours.value,
       });
       const [updated] = await db(TABLE)
         .where({ id: inserted.id })
@@ -305,6 +335,7 @@ export const recallService = {
       .whereNotIn("status", [
         "transcribing",
         "awaiting_review",
+        "reviewed",
         "saved",
         "failed",
         "cancelled",
@@ -341,9 +372,16 @@ export const recallService = {
     if (!dbRow) return;
     const job = this._row(dbRow);
 
-    // Idempotent: a transcript already downloaded means this event was handled.
+    // Idempotent: a transcript already downloaded means this event was
+    // handled. `reviewed` belongs here too — it is signed off (and `saved`
+    // can follow it directly without going back through `awaiting_review`) —
+    // otherwise a re-delivered transcript.done overwrites raw_segments and
+    // resets a reviewed job back to awaiting_review, silently reverting the
+    // human's sign-off (final fix wave, Finding 2).
     if (
-      (job.status === "awaiting_review" || job.status === "saved") &&
+      (job.status === "awaiting_review" ||
+        job.status === "reviewed" ||
+        job.status === "saved") &&
       job.raw_segments &&
       job.raw_segments.length > 0
     ) {
@@ -364,17 +402,19 @@ export const recallService = {
       // Prefer Recall's authoritative recording duration; fall back to the
       // transcript span (last spoken word) when the recording object lacks it.
       let duration = durationFromSegments(segments);
-      // Only populated when RECALL_STORE_VIDEO_LOCALLY is on for this
+      // Only populated when the workspace's storeVideoLocally setting (or its
+      // RECALL_STORE_VIDEO_LOCALLY env/code fallback) is on for this
       // deployment — otherwise the video stays reachable only via
       // ExuluRecall.getRecordingVideoUrl, for as long as Recall retains it.
       let videoS3Key: string | null = null;
       const recId = recordingId ?? job.recall_recording_id;
       if (recId) {
+        const settings = await resolveTranscriptsSettings();
         try {
           const rec = await recallClient.retrieveRecording(recId);
           const recDuration = recordingDurationSeconds(rec);
           if (recDuration != null) duration = recDuration;
-          if (recallStoreVideoLocally()) {
+          if (settings.storeVideoLocally.value) {
             try {
               videoS3Key = await downloadAndStoreRecordingVideo(
                 rec,
@@ -601,9 +641,13 @@ export const recallService = {
         agent,
       });
 
+      // Timestamped on purpose: a summary that can cite [mm:ss] becomes
+      // clickable in the reading view (spec §3.1). The stored
+      // transcript_text stays untimestamped.
       const transcriptText = renderTranscript(
         job.raw_segments ?? [],
         job.speakers ?? {},
+        { timestamps: true },
       );
 
       const { text } = await generateText({

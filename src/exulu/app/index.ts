@@ -44,6 +44,7 @@ import { startRecallReconcileLoop } from "@SRC/exulu/recall/reconcile-loop.ts";
 import type { AuditConfig } from "../audit/config";
 import { initAudit, getAuditLogger, type AuditLogger } from "../audit/logger";
 import { computeBuiltinToolIds } from "./audit-wiring-helpers";
+import { skillEnvStartupWarning } from "../skill-env/startup-warning";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -266,6 +267,12 @@ export class ExuluApp {
         imageGenerationTools,
       }),
     });
+
+    // Report-only: names the skill sandbox will still expose because they
+    // look like credentials but aren't in the declared secret inventory.
+    // Never strips anything — see skill-env/inventory.ts for why.
+    const skillEnvWarning = skillEnvStartupWarning(process.env);
+    if (skillEnvWarning) console.warn(skillEnvWarning);
 
     const checks: {
       name: string;

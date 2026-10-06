@@ -12,18 +12,21 @@ Some agents are set up with a **long-term memory** store — a knowledge context
 
 Not every agent has memory enabled. If yours does, you'll see it ask a short question before it saves anything.
 
-## The private-vs-public question
+## The save card
 
-Before the agent saves a memory it will ask you to choose visibility:
+When the agent finds something worth keeping it shows a **Remember this?** card instead of asking in prose. The card contains the wording (editable), the memory type, and who may see it — **Private** (only you) by default, or **Public** (everyone using this agent), with the same access control you know from knowledge items. Nothing is saved until you choose **Save**. **Don't save** tells the agent to drop it.
 
-- **Private** — the memory is visible only to you. Other people who use the same agent cannot see or retrieve it.
-- **Public** — the memory is shared with everyone who has read access to the agent's memory context.
+If the agent proposes several memories at once you can **Save all** or decide one by one.
 
-The agent will not save a memory until you answer. Private memories can only be found by you in later conversations; public memories can be found by anyone who can use that agent's memory knowledge base.
+## Corrections and forgetting
 
-<Tip>
-When in doubt, choose **Private**. You can always review and delete the item later from Knowledge.
-</Tip>
+Tell the agent "that's wrong, it's …" or "forget that". It proposes an update or a deletion on a card you confirm. You can only change memories you saved yourself or have write access to; for other people's public memories the agent tells you who saved it so you can ask them.
+
+## Seeing what was used
+
+Answers that used memories show **Recalled N memories** under the reply, with each memory, who saved it and when. From there you can open, edit or forget your own memories. The header chip **Remembers N things about you** opens the panel with everything the agent remembers that you saved, split into Private and Public.
+
+Builders and curators review everything an agent has learned under **Build → Memory**: every memory base, its memories, and each memory in full. See [Memory area](/building/memory/overview).
 
 ## What the agent can remember
 

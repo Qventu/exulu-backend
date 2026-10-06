@@ -22,6 +22,27 @@ import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/in
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
 import { shouldGenerateEmbeddings } from "./should-generate-embeddings";
+import { changeContextEmbedder } from "@SRC/exulu/embedder-change";
+import { dropProjection } from "@SRC/exulu/projection/store";
+import {
+  clearEmbedderSetting,
+  resolveContextEmbedder,
+  setEmbedderSetting,
+} from "@SRC/exulu/embedder-settings";
+import {
+  captureCodeEmbedder,
+  codeEmbedderFor,
+  hydrateContextEmbedders,
+  willEmbedOnQueue,
+} from "@SRC/exulu/hydrate-embedders";
+import { currentChunksDimensionality } from "@SRC/exulu/chunks-dimensionality";
+import { getEmbeddingModelInfo } from "@SRC/exulu/litellm/parse-embedding-models";
+import {
+  resolveTranscriptsSettings,
+  saveTranscriptsSettings,
+  filterLivePresets,
+} from "@SRC/exulu/transcripts-settings";
+import { parseSettingsInput } from "./transcripts-settings-input";
 
 // Same allow-list as utils/check-item-write-access.ts — the modes a client
 // may explicitly set on create.
@@ -209,6 +230,88 @@ const postprocessUpdate = async ({
     }
   }
   return result;
+};
+
+/**
+ * Build the TranscriptsSettingsInfo payload shared by the `transcriptsSettings`
+ * query (src/graphql/schemas/index.ts) and the `setTranscriptsSettings`
+ * mutation below, so a save and the page's own refetch are built identically.
+ *
+ * summaryPresets is filtered through filterLivePresets before being returned:
+ * prompts/agents are deleted independently of this page, so a stale preset
+ * (pointing at a prompt_library row or agent that no longer exists) is
+ * expected, not exceptional — it is reported separately as stalePresets
+ * rather than silently dropped or left to break the composer.
+ *
+ * videoRetentionHours / monthlyRecordingLimitMinutes are stringified here
+ * (String(value)) because each resolves to `number | sentinel`, and the SDL
+ * types both as String so the sentinel ("forever" / "none") can cross the
+ * wire verbatim. The frontend parses the string back with the same rule.
+ *
+ * transcriptsSettings is a non-null root field (TranscriptsSettingsInfo!,
+ * src/graphql/schemas/index.ts), so a throw anywhere in here does not just
+ * null out one field — GraphQL null-bubbles the whole response, and Task 6
+ * wires this query into the composer-open path every user hits. The
+ * prompt_library / agents lookups below exist only to classify presets as
+ * live vs stale for display, never to decide whether this query can answer
+ * at all (spec §6: an unreadable settings row must never stop a composer
+ * opening, and that applies just as much to this derived lookup). Each read
+ * is guarded independently and logged the same way the settings store's own
+ * read degrades (transcripts-settings.ts's getTranscriptsSettings); on
+ * either failure we cannot trust a partial id set, so this falls back to
+ * treating every stored preset as live rather than risk misreporting a real
+ * preset as stale.
+ */
+export const buildTranscriptsSettingsInfo = async () => {
+  const resolved = await resolveTranscriptsSettings();
+
+  let livePromptIds: Set<string> | null = null;
+  try {
+    const { db } = await postgresClient();
+    const promptRows: { id: string }[] = await db.from("prompt_library").select("id");
+    livePromptIds = new Set(promptRows.map((row) => String(row.id)));
+  } catch (err) {
+    console.warn(
+      "[EXULU] Could not read prompt_library for the Transcripts settings page:",
+      (err as Error).message,
+    );
+  }
+
+  let liveAgentIds: Set<string> | null = null;
+  try {
+    const { db } = await postgresClient();
+    const agentRows: { id: string }[] = await db.from("agents").select("id");
+    liveAgentIds = new Set(agentRows.map((row) => String(row.id)));
+  } catch (err) {
+    console.warn(
+      "[EXULU] Could not read agents for the Transcripts settings page:",
+      (err as Error).message,
+    );
+  }
+
+  const { live, stale } =
+    livePromptIds && liveAgentIds
+      ? filterLivePresets(resolved.summaryPresets.value, livePromptIds, liveAgentIds)
+      : { live: resolved.summaryPresets.value, stale: [] };
+
+  return {
+    botName: resolved.botName,
+    notifyChat: resolved.notifyChat,
+    recordersMayOverrideBot: resolved.recordersMayOverrideBot,
+    defaultRightsMode: resolved.defaultRightsMode,
+    summaryPresets: { value: live, source: resolved.summaryPresets.source },
+    videoRetentionHours: {
+      value: String(resolved.videoRetentionHours.value),
+      source: resolved.videoRetentionHours.source,
+    },
+    storeVideoLocally: resolved.storeVideoLocally,
+    monthlyRecordingLimitMinutes: {
+      value: String(resolved.monthlyRecordingLimitMinutes.value),
+      source: resolved.monthlyRecordingLimitMinutes.source,
+    },
+    videoStorageCostPerHour: resolved.videoStorageCostPerHour,
+    stalePresets: stale,
+  };
 };
 
 export function createMutations(
@@ -1241,6 +1344,102 @@ export function createMutations(
       return await resolveEntityModel(ctx);
     };
 
+    mutations[`${tableNameSingular}SetEmbedder`] = async (_, args, context) => {
+      const ctx = contexts.find((c) => c.id === table.id);
+      if (!ctx) {
+        throw new Error(`Context ${table.id} not found.`);
+      }
+      // Capture the constructor embedder before anything else touches this
+      // instance. If this context has never been hydrated in this process,
+      // the bridge assignment below would otherwise be the first thing
+      // hydrate() ever sees on it, and its own (non-capturing) read would
+      // freeze that bridge in as the "code default" forever on this replica.
+      captureCodeEmbedder(ctx);
+      if (!context.user) {
+        throw new Error("Authentication required to set the embedding model.");
+      }
+      // Destructive: this drops a knowledge base's chunks table and triggers a
+      // full re-embed. Same gate as the other destructive context mutations
+      // in this file.
+      if (!context.user.super_admin) {
+        throw new Error(
+          "You are not authorized to set the embedding model via API, user must be super admin.",
+        );
+      }
+
+      const model = args.model?.trim() || null;
+      const queue = args.queue?.trim() || null;
+
+      // createChunksTable reads context.embedder.model for its dimensionality,
+      // so the instance must already carry the TARGET model before the
+      // rebuild. Clearing targets the code default (spec §3), not "no model",
+      // so bridge to the code embedder in that case rather than leaving the
+      // override on the instance. hydrate() inside changeContextEmbedder
+      // re-derives it from the persisted value afterwards.
+      const previous = ctx.embedder;
+      const codeEmbedder = codeEmbedderFor(ctx);
+      if (model) ctx.embedder = { model, queue: previous?.queue };
+      else if (codeEmbedder) ctx.embedder = codeEmbedder;
+
+      try {
+        const result = await changeContextEmbedder(ctx, model, queue, {
+          currentDimensionality: currentChunksDimensionality,
+          modelInfo: getEmbeddingModelInfo,
+          chunksTableExists: (c) => c.chunksTableExists(),
+          dropChunksTable: async (c) => {
+            const { db } = await postgresClient();
+            await db.schema.dropTableIfExists(getChunksTableName(c.id));
+            // The fitted map describes the vectors that just went away.
+            await dropProjection(db, c.id);
+          },
+          // Deliberately NOT c.createChunksTable() on its own. Two admins
+          // changing the same context interleave as drop/drop/create/create,
+          // and the second plain createTable throws "already exists" after the
+          // first has already rebuilt it. ExuluContext.createChunksTable has
+          // other callers that want the plain behaviour, so the idempotence
+          // lives here. Do not "simplify" this back to a bare call.
+          createChunksTable: async (c) => {
+            // Also drop the projection here, not only in the two destructive
+            // deps: a context whose chunks table was dropped before the map
+            // shipped still carries a row describing vectors that no longer
+            // exist, and this is the one dep that path reaches. Idempotent.
+            const { db } = await postgresClient();
+            await dropProjection(db, c.id);
+            if (await c.chunksTableExists()) return;
+            await c.createChunksTable();
+          },
+          deleteAllChunks: async (c) => {
+            const { db } = await postgresClient();
+            await db.from(getChunksTableName(c.id)).delete();
+            // Same width, different model: the re-embedded vectors occupy a
+            // different space, so this map is as stale as a dropped table's.
+            await dropProjection(db, c.id);
+          },
+          persist: async (id, m, q) =>
+            m ? setEmbedderSetting(id, m, q) : clearEmbedderSetting(id),
+          hydrate: (cs) => hydrateContextEmbedders(cs),
+          queueRegeneration: (c) => c.embeddings.generate.all(config),
+          codeModel: (c) => codeEmbedderFor(c)?.model ?? null,
+          itemCount: async (c) => {
+            const { db } = await postgresClient();
+            const [row] = await db.from(getTableName(c.id)).count({ count: "*" });
+            return Number(row?.count ?? 0);
+          },
+          willEmbedOnQueue: (c) => willEmbedOnQueue(c, queue),
+        });
+        return {
+          info: await resolveContextEmbedder(ctx),
+          rebuild: result.case,
+          itemsQueued: result.items,
+        };
+      } catch (err) {
+        // The rebuild failed; put the instance back so this replica keeps
+        // serving on the previous embedder (the setting was never persisted).
+        ctx.embedder = previous;
+        throw err;
+      }
+    };
+
     mutations[`${tableNameSingular}ExtractEntities`] = async (_, args, context) => {
       const ctx = contexts.find((c) => c.id === table.id);
       if (!ctx) {
@@ -1320,6 +1519,26 @@ export function createMutations(
       };
     }
   }
+
+  // Global mutation, registered the same way as the global queries in
+  // src/graphql/schemas/index.ts (litellmCatalog etc.): unrelated to `table`,
+  // so this assignment simply repeats identically on every per-table call of
+  // createMutations rather than needing special-casing to run once.
+  //
+  // Gated exactly like the destructive context mutations above
+  // (xSetEmbedder, xProcessItem(s)): the Transcripts settings link sits in a
+  // menu every user sees, so the UI-level check is not the protection — this
+  // server-side super_admin gate is.
+  mutations["setTranscriptsSettings"] = async (_, args, context) => {
+    if (!context.user) {
+      throw new Error("Authentication required to change the Transcripts settings.");
+    }
+    if (!context.user.super_admin) {
+      throw new Error("Only a super admin can change the Transcripts settings.");
+    }
+    await saveTranscriptsSettings(parseSettingsInput(args.input));
+    return buildTranscriptsSettingsInfo();
+  };
 
   return mutations;
 }

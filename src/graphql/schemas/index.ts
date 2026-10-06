@@ -4,7 +4,10 @@ import { makeExecutableSchema } from "@graphql-tools/schema";
 import GraphQLJSON from "graphql-type-json";
 import cron from "cron-validator";
 import { parseRerankerModels } from "@SRC/exulu/litellm/parse-reranker-models";
-import { resolveLiteLLMConfigPath } from "@SRC/exulu/litellm/parse-embedding-models";
+import {
+  parseEmbeddingModels,
+  resolveLiteLLMConfigPath,
+} from "@SRC/exulu/litellm/parse-embedding-models";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { getTableName } from "@SRC/exulu/context.ts";
@@ -27,12 +30,12 @@ import { createKbEditorPickerTool } from "@SRC/templates/tools/context-write-too
 import { GraphQLDate } from "@SRC/graphql/types";
 import { resolveAvailableQueues } from "@SRC/graphql/available-queues";
 import { getRequestedFields } from "@SRC/graphql/resolvers/utils";
-import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
+import { applyAccessControl, hasAgentsReadAccess, hasAgentsWriteAccess } from "@SRC/graphql/utilities/access-control";
 import { RBACResolver } from "../../../ee/rbac-resolver.ts";
 import { createQueries } from "@SRC/graphql/resolvers";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
 import { getJobsByQueueName } from "../resolvers/job-queues";
-import { createMutations } from "../mutations";
+import { createMutations, buildTranscriptsSettingsInfo } from "../mutations";
 import type { ExuluEval } from "@SRC/exulu/evals";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
@@ -72,6 +75,17 @@ import { EMAIL_INBOUND_S3_PREFIX } from "@SRC/exulu/email-inbound/webhook";
 import { uploadFile } from "@SRC/uppy";
 import { randomUUID } from "node:crypto";
 import { createAgentTool } from "@SRC/exulu/agent-as-tool.ts";
+import { checkMemoryBase } from "@SRC/exulu/memory/memory-base";
+import { memoryBaseStats } from "@SRC/graphql/resolvers/memory-base-stats";
+import { memoryBaseContributors } from "@SRC/graphql/resolvers/memory-base-contributors";
+import { listMemoryBases, countAgents } from "@SRC/graphql/resolvers/memory-bases";
+import { memoryBaseUnusedIds, memoryBaseUsage, memoryUsage, memoryUsageByIds } from "@SRC/graphql/resolvers/memory-usage";
+import { hydrateConflictRow, memoryConflictCounts, memoryConflicts, memoryConflictsForMemory } from "@SRC/graphql/resolvers/memory-conflicts";
+import { contextMapEdges, contextMapItem, contextMapPoints, contextMapTopics, contextProjectionStatus } from "@SRC/graphql/resolvers/context-map";
+import { EDGE_LIMIT_DEFAULT, POINTS_LIMIT_DEFAULT } from "@SRC/exulu/projection/constants";
+import { resolveConflict, suggestMerge } from "@SRC/exulu/memory/conflicts/resolve";
+import { runScan } from "@SRC/exulu/memory/conflicts/scan";
+import { makeMergeSuggester, makeModelJudge } from "@SRC/exulu/memory/conflicts/judge";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -278,6 +292,354 @@ export function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): 
   return operatorTypes;
 }
 
+/**
+ * The slice of the generated SDL that takes no argument from `createSDL` —
+ * exported so a GraphQL-parse regression test can reach it without building an
+ * executable schema or touching a resolver.
+ *
+ * A FUNCTION, deliberately, and it must stay one. It interpolates module-level
+ * runtime state — `ExuluQueues.list` for `QueueEnum`, among others — and a
+ * template literal is evaluated where it is written. As a module-level `const`
+ * it rendered at import time, before any `ExuluQueues.register()` call site has
+ * run (every one of them is inside a function body, and this module is imported
+ * transitively by `routes.ts` long before `ExuluApp.create()` executes). The
+ * result was `enum QueueEnum { NO_QUEUES }` baked into the schema, which still
+ * parses, still type-checks and still passes every test — while making
+ * `queue`, `jobs`, `drainQueue`, `pauseQueue`, `resumeQueue`, `deleteJob` and
+ * `retryJob` reject every call, since each takes a `QueueEnum!`.
+ */
+export function genericTypes(): string {
+  return `
+
+type AgentCapabilities {
+    text: Boolean
+    images: [String]
+    files: [String]
+    audio: [String]
+    video: [String]
+}
+
+type AgentEvalFunction {
+    id: ID!
+    name: String!
+    description: String!
+    config: [AgentEvalFunctionConfig!]
+}
+
+type AgentEvalFunctionConfig {
+    name: String!
+    description: String!
+}
+
+type ItemChunks {
+    chunk_id: String!
+    chunk_metadata: JSON!
+    chunk_index: Int!
+    chunk_content: String!
+    chunk_source: String!
+    chunk_created_at: Date!
+    chunk_updated_at: Date!
+}
+
+type Provider {
+  id: ID!
+  name: String!
+  description: String
+  providerName: String
+  provider: String
+  modelName: String
+  type: EnumProviderType!
+  authenticationInformation: String
+  maxContextLength: Int
+  capabilities: JSON
+}
+
+type Eval {
+    id: ID!
+    name: String!
+    description: String!
+    llm: Boolean!
+    config: [EvalConfig!]
+}
+
+type EvalConfig {
+    name: String!
+    description: String!
+}
+
+type Context {
+    id: ID!
+    name: String!
+    description: String
+    embedder: Embedder
+    slug: String
+    active: Boolean
+    fields: JSON
+    configuration: JSON
+    sources: [ContextSource]
+    processor: ContextProcessor
+    """
+    Health aggregates over non-archived items (knowledge V2 KB-3/KB-4).
+    Computed lazily — only when one of these fields is selected — so plain
+    context queries pay nothing. item_count: total; chunk_total: SUM of
+    chunks_count; stuck_count: items with 0/NULL chunks; stale_count: items
+    whose embeddings are older than 30 days.
+    """
+    item_count: Int
+    chunk_total: Int
+    stuck_count: Int
+    stale_count: Int
+    memoryBase: MemoryBaseCheck!
+}
+type MemoryBaseCheck {
+    ok: Boolean!
+    missing: [String!]!
+}
+type MemoryBaseUser {
+    id: Int!
+    name: String!
+}
+type MemoryBaseStats {
+    total: Int!
+    public: Int!
+    private: Int!
+    contributors: Int!
+    visible: Int!
+    lastSavedAt: String
+    lastSavedBy: MemoryBaseUser
+}
+type MemoryBaseAgent {
+    id: ID!
+    name: String!
+}
+type MemoryBase {
+    id: ID!
+    name: String!
+    description: String
+    valid: Boolean!
+    missing: [String!]!
+    missingFromCode: Boolean!
+    agents: [MemoryBaseAgent!]!
+    stats: MemoryBaseStats
+}
+type MemoryUsageSummary { memoryId: ID!  count: Int!  lastUsedAt: String }
+type MemoryUsageEntry {
+    sessionId: String
+    messageId: String!
+    usedAt: String!
+    agent: MemoryBaseAgent
+    user: MemoryBaseUser
+    title: String
+}
+type MemoryUsage { count: Int!  lastUsedAt: String  recent: [MemoryUsageEntry!]! }
+type MemoryWeekBucket { weekStart: String!  count: Int! }
+type MemoryMostUsed { id: ID!  information: String!  count: Int!  lastUsedAt: String }
+type MemoryBaseUsage {
+    used: Int!
+    neverUsed: Int!
+    stale: Int!
+    mostUsed: [MemoryMostUsed!]!
+    newPerWeek: [MemoryWeekBucket!]!
+}
+enum MemoryUnusedMode { NEVER  STALE }
+enum MemoryConflictAction { KEEP  MERGE  NOT_CONFLICT }
+input MemoryMergeInput { information: String!  type: String }
+type MemoryConflictMember { id: ID!  information: String!  type: String  author: MemoryBaseUser  createdAt: String!  usedCount: Int! }
+type MemoryConflict { id: ID!  kind: String!  status: String!  similarity: Float!  reason: String  members: [MemoryConflictMember!]!  scannedAt: String!  resolvedAt: String  resolution: String  mergedInto: ID }
+type MemoryConflictCounts { open: Int!  memoriesInvolved: Int!  lastScanAt: String }
+type MemoryConflictsForMemory { open: [MemoryConflict!]!  mergedFrom: [MemoryConflictMember!]! }
+type MemoryConflictScanResult { open: Int!  duplicateGroups: Int!  contradictionGroups: Int!  judged: Int!  unjudged: Int!  skipped: Int!  scannedAt: String! }
+type MemoryMergeSuggestion { information: String!  type: String }
+enum ContextMapMode { DOCUMENTS  PASSAGES }
+type ContextMapPoint {
+    id: ID!
+    itemId: ID!
+    x: Float!
+    y: Float!
+    z: Float!
+    """
+    What a reader calls the document this point came from, or "" when the item
+    has no name. This is what every surface titles a point with.
+
+    A point carries no passage text. The answer used to include the chunk's
+    opening, which was roughly 2.4 MB of a 5.8 MB response at the point cap,
+    sent for every row to serve the one that gets selected — and unusable as a
+    title anyway, since this product's ingestion injects a document header
+    into every chunk. Read a selected point's detail through contextMapItem.
+    """
+    itemName: String!
+    group: String
+    chunks: Int!
+    """
+    When this point's ITEM was created, as epoch milliseconds, or null when the
+    base never recorded it. Milliseconds rather than a date string because the
+    field rides on every point and the client compares it against a slider.
+    Never 0 for a missing value: 0 is 1970, which would park the point at the
+    far left of every time filter instead of outside it.
+    """
+    createdAtMs: Float
+}
+"""
+One item's own metadata, read when a point is selected. Separate from
+ContextMapPoint on purpose: this is shown for one item at a time, and carrying
+these columns on every point to serve a single selection is the wrong trade.
+"""
+type ContextMapItem {
+    id: ID!
+    name: String!
+    "Chunks this item was split into, or null when the base never recorded it."
+    chunks: Int
+    "Characters of extracted text, or null when never recorded."
+    textLength: Int
+    "How the item entered the base, when recorded."
+    source: String
+    createdAt: String
+    updatedAt: String
+}
+type ContextMapPoints { points: [ContextMapPoint!]!  total: Int!  sampled: Boolean! }
+type ContextMapEdge { source: ID!  target: ID!  score: Float! }
+type ContextMapTopic {
+    id: ID!
+    label: String!
+    count: Int!
+    x: Float!
+    y: Float!
+    z: Float!
+}
+type ContextProjectionStatus {
+    fitted: Boolean!
+    method: String
+    fittedAt: String
+    sampleSize: Int
+    dims: Int
+    components: Int
+    residual: Float
+    mappedChunks: Int!
+    totalChunks: Int!
+}
+type Reranker {
+    id: ID!
+    name: String!
+    description: String
+}
+type Embedder {
+    model: String!
+    queue: String
+}
+type ContextProcessor {
+    name: String!
+    description: String
+    queue: String
+    trigger: String
+    timeoutInSeconds: Int
+    generateEmbeddings: Boolean
+}
+
+type ContextSource {
+    id: String!
+    name: String!
+    description: String!
+    config: ContextSourceConfig!
+}
+
+type ContextSourceConfig {
+    schedule: String
+    queue: String
+    retries: Int
+    backoff: ContextSourceBackoff
+    params: [ContextSourceParam!]
+}
+
+type ContextSourceParam {
+    name: String!
+    description: String!
+    default: String
+}
+
+type ContextSourceBackoff {
+    type: String
+    delay: Int
+}
+
+type RunEvalReturnPayload {
+    jobs: [String!]!
+    count: Int!
+}
+
+type RunWorkflowReturnPayload {
+    result: JSON
+    job: String
+    metadata: JSON
+}
+
+type WorkflowScheduleReturnPayload {
+    status: String!
+    job: String
+}
+
+type JobActionReturnPayload {
+    success: Boolean!
+}
+
+type ContextField {
+    name: String!
+    type: String!
+    unique: Boolean
+    label: String
+}
+
+type Tool {
+  id: ID!
+  name: String!
+  description: String
+  category: String
+  type: String
+  config: JSON
+}
+
+type Job {
+  id: String!
+  name: String!
+  returnvalue: JSON
+  stacktrace: [String]
+  finishedOn: Date
+  processedOn: Date
+  attemptsMade: Int
+  failedReason: String
+  state: String!
+  data: JSON
+  timestamp: Date
+}
+
+enum EnumProviderType {
+  agent
+}
+
+enum QueueEnum {
+  ${ExuluQueues.list.keys().toArray().length > 0 ? ExuluQueues.list.keys().toArray().join("\n") : "NO_QUEUES"}
+}
+
+enum JobStateEnum {
+  ${JOB_STATUS_ENUM.active}
+  ${JOB_STATUS_ENUM.waiting}
+  ${JOB_STATUS_ENUM.delayed}
+  ${JOB_STATUS_ENUM.failed}
+  ${JOB_STATUS_ENUM.completed}
+  ${JOB_STATUS_ENUM.paused}
+  ${JOB_STATUS_ENUM.stuck}
+  ${JOB_STATUS_ENUM.waiting_approval}
+  ${JOB_STATUS_ENUM.filtered}
+  ${JOB_STATUS_ENUM.cancelled}
+}
+
+type StatisticsResult {
+  group: String!
+  count: Int!
+}
+`;
+}
+
+
 export function createSDL(
   tables: ExuluTableDefinition[],
   contexts: ExuluContext[],
@@ -402,6 +764,7 @@ export function createSDL(
       ${tableNameSingular}StaleEntityCount: Int
       ${tableNameSingular}EntityModel: ${tableNameSingular}EntityModelInfo
       ${tableNameSingular}EntitiesForItem(item: ID!): [${tableNameSingular}ItemEntity!]
+      ${tableNameSingular}EmbedderInfo: ${tableNameSingular}ContextEmbedderInfo
     `;
     }
     // todo add the fields of each table as filter options
@@ -423,6 +786,7 @@ export function createSDL(
     ${tableNameSingular}BackfillEntities(onlyStale: Boolean, limit: Int): ${tableNameSingular}EntityBackfillPayload
     ${tableNameSingular}PurgeEntityType(type: String!): ${tableNameSingular}EntityPurgePayload
     ${tableNameSingular}SetEntityModel(model: String): ${tableNameSingular}EntityModelInfo
+    ${tableNameSingular}SetEmbedder(model: String, queue: String): ${tableNameSingular}SetEmbedderPayload
     ${tableNameSingular}ExtractEntities(item: ID!): ${tableNameSingular}EntityExtractPayload
     ${tableNameSingular}DetachEntities(item: ID!): ${tableNameSingular}EntityDetachPayload
     `;
@@ -576,6 +940,30 @@ export function createSDL(
         codeModel: String
     }
 
+    type ${tableNameSingular}ContextEmbedderInfo {
+        effectiveModel: String
+        source: String
+        databaseModel: String
+        codeModel: String
+        databaseQueue: String
+        dimensionality: Int
+        chunkCount: Int
+        """
+        True when effectiveModel names a model that is no longer a usable
+        embedding model in config.litellm.yaml. The context reports a
+        configured model, but hydration refuses it and search raises
+        ContextEmbedderNotConfigured — surface it rather than showing a
+        model that silently does not work.
+        """
+        effectiveModelUnavailable: Boolean
+    }
+
+    type ${tableNameSingular}SetEmbedderPayload {
+        info: ${tableNameSingular}ContextEmbedderInfo!
+        rebuild: String!
+        itemsQueued: Int!
+    }
+
     type ${tableNameSingular}EntityExtractPayload {
         extracted: Int!
     }
@@ -646,6 +1034,10 @@ type PageInfo {
     `;
 
   typeDefs += `
+    availableEmbeddingModels: [EmbeddingModelOption!]!
+    `;
+
+  typeDefs += `
     workflowSchedule(workflow: ID!): WorkflowScheduleResult
     `;
 
@@ -679,12 +1071,102 @@ type PageInfo {
     `;
 
   typeDefs += `
+    memoryBaseStats(contextId: ID!): MemoryBaseStats
+    `;
+
+  typeDefs += `
+    memoryBaseContributors(contextId: ID!): [MemoryBaseUser!]!
+    `;
+
+  typeDefs += `
+    memoryBases: [MemoryBase!]!
+    `;
+
+  typeDefs += `
+    memoryAgentCount: Int!
+    `;
+
+  typeDefs += `
+    memoryUsageByIds(contextId: ID!, ids: [ID!]!): [MemoryUsageSummary!]!
+    memoryUsage(contextId: ID!, memoryId: ID!, limit: Int = 5): MemoryUsage
+    memoryBaseUsage(contextId: ID!, staleDays: Int = 90): MemoryBaseUsage
+    memoryBaseUnusedIds(contextId: ID!, mode: MemoryUnusedMode!, staleDays: Int = 90): [ID!]!
+    memoryConflicts(contextId: ID!): [MemoryConflict!]!
+    memoryConflictCounts(contextId: ID!): MemoryConflictCounts
+    memoryConflictsForMemory(contextId: ID!, memoryId: ID!): MemoryConflictsForMemory
+    `;
+
+  // Vector map (3c-1 spec §5): the 3d cloud of a knowledge or memory base.
+  // Gated on a signed-in user only - the rows themselves are filtered by
+  // item-level access control, the same call <ctx>_itemsPagination makes.
+  typeDefs += `
+    contextMapPoints(contextId: ID!, mode: ContextMapMode = DOCUMENTS, groupField: String, search: String, limit: Int = ${POINTS_LIMIT_DEFAULT}): ContextMapPoints
+    contextMapEdges(contextId: ID!, nodeId: ID!, mode: ContextMapMode = DOCUMENTS, limit: Int = ${EDGE_LIMIT_DEFAULT}): [ContextMapEdge!]!
+    contextMapTopics(contextId: ID!): [ContextMapTopic!]!
+    "Null when the item does not exist, is archived, or the viewer may not read it."
+    contextMapItem(contextId: ID!, itemId: ID!): ContextMapItem
+    contextProjectionStatus(contextId: ID!): ContextProjectionStatus
+    `;
+
+  typeDefs += `
     getUniquePromptTags: [String!]!
     `;
 
   typeDefs += `
     getUniqueSkillTags: [String!]!
     `;
+
+  // Transcripts settings (spec §5): one workspace-level settings object,
+  // registered once here like litellmCatalog/availableEmbeddingModels above —
+  // NOT per context table. Each field resolves database -> env -> code, so
+  // the settings page can show where a value came from.
+  typeDefs += `
+    transcriptsSettings: TranscriptsSettingsInfo!
+    `;
+
+  mutationDefs += `
+    setTranscriptsSettings(input: TranscriptsSettingsInput!): TranscriptsSettingsInfo!
+    `;
+
+  mutationDefs += `
+    memoryConflictsScan(contextId: ID!): MemoryConflictScanResult!
+    memoryConflictResolve(id: ID!, action: MemoryConflictAction!, keepId: ID, merged: MemoryMergeInput): MemoryConflict!
+    memoryConflictSuggestMerge(id: ID!): MemoryMergeSuggestion!
+    `;
+
+  modelDefs += `
+    type ResolvedStringSetting { value: String, source: String! }
+    type ResolvedBoolSetting { value: Boolean, source: String! }
+    type ResolvedFloatSetting { value: Float, source: String! }
+    type SummaryPreset { prompt_id: ID!, agent_id: ID! }
+    type ResolvedPresetSetting { value: [SummaryPreset!]!, source: String! }
+
+    type TranscriptsSettingsInfo {
+      botName: ResolvedStringSetting!
+      notifyChat: ResolvedBoolSetting!
+      recordersMayOverrideBot: ResolvedBoolSetting!
+      defaultRightsMode: ResolvedStringSetting!
+      summaryPresets: ResolvedPresetSetting!
+      videoRetentionHours: ResolvedStringSetting!
+      storeVideoLocally: ResolvedBoolSetting!
+      monthlyRecordingLimitMinutes: ResolvedStringSetting!
+      videoStorageCostPerHour: ResolvedFloatSetting!
+      stalePresets: [SummaryPreset!]!
+    }
+
+    input SummaryPresetInput { prompt_id: ID!, agent_id: ID! }
+    input TranscriptsSettingsInput {
+      botName: String
+      notifyChat: Boolean
+      recordersMayOverrideBot: Boolean
+      defaultRightsMode: String
+      summaryPresets: [SummaryPresetInput!]
+      videoRetentionHours: String
+      storeVideoLocally: Boolean
+      monthlyRecordingLimitMinutes: String
+      videoStorageCostPerHour: Float
+    }
+  `;
 
   mutationDefs += `
     runEval(id: ID!, test_case_ids: [ID!]): RunEvalReturnPayload
@@ -727,6 +1209,7 @@ type PageInfo {
   mutationDefs += `
     transcriptionJobStart(input: TranscriptionJobStartInput!): transcription_job
     transcriptionJobFinalize(id: ID!, input: TranscriptionJobFinalizeInput!): TranscriptionJobFinalizeResult
+    transcriptionJobMarkReviewed(id: ID!, input: TranscriptionJobFinalizeInput!): transcription_job
     transcriptionJobCancel(id: ID!): transcription_job
     meetingBotStart(input: MeetingBotStartInput!): transcription_job
     runTranscriptPostProcessing(id: ID!, prompt_id: ID!, agent_id: ID!): transcription_job
@@ -754,6 +1237,7 @@ type PageInfo {
       target_rights_mode: String
       target_rbac_users: [RBACUserInput!]
       target_rbac_roles: [RBACRoleInput!]
+      post_processing_prompts: [PostProcessingPromptInput!]
     }
 
     input TranscriptionJobFinalizeInput {
@@ -763,6 +1247,7 @@ type PageInfo {
       target_rights_mode: String
       target_rbac_users: [RBACUserInput!]
       target_rbac_roles: [RBACRoleInput!]
+      corrected_segments: JSON
     }
 
     type TranscriptionJobFinalizeResult {
@@ -912,6 +1397,15 @@ type LiteLLMModel {
 }
 `;
 
+  modelDefs += `
+type EmbeddingModelOption {
+  model: String!
+  dimensionality: Int!
+  maxChunkSize: Int!
+  maxBatchSize: Int!
+}
+`;
+
   // litellmCatalog: returns the list of models LiteLLM is currently configured
   // to expose. Empty array when LiteLLM is off / misconfigured so callers can
   // invoke this unconditionally. Cache lives in the shared catalog module so
@@ -922,6 +1416,32 @@ type LiteLLMModel {
     );
     return fetchLiteLLMCatalog();
   };
+
+  // availableEmbeddingModels: the embedding models declared in
+  // config.litellm.yaml, for the context-settings embedder picker. Registered
+  // once here (not per context) — same reasoning as litellmCatalog/queues
+  // above. Empty array when the config is missing/unreadable so callers can
+  // invoke this unconditionally.
+  resolvers.Query["availableEmbeddingModels"] = async () => {
+    try {
+      return parseEmbeddingModels(resolveLiteLLMConfigPath()).map((m) => ({
+        model: m.model_name,
+        dimensionality: m.dimensionality,
+        maxChunkSize: m.maxChunkSize,
+        maxBatchSize: m.maxBatchSize,
+      }));
+    } catch (err) {
+      console.warn("[EXULU] Could not read embedding models:", (err as Error).message);
+      return [];
+    }
+  };
+
+  // transcriptsSettings: the workspace-level Transcripts settings object
+  // (spec §5), each field resolved database -> env -> code. Shares
+  // buildTranscriptsSettingsInfo with the setTranscriptsSettings mutation
+  // (src/graphql/mutations/index.ts) so the query and the mutation's return
+  // value are built the exact same way.
+  resolvers.Query["transcriptsSettings"] = async () => buildTranscriptsSettingsInfo();
 
   resolvers.Query["workflowSchedule"] = async (_, args, context, info) => {
     // Creates a scheduled workflow execution, takes args.workflow (id) args.queue and args.schedule and args.variables
@@ -2032,6 +2552,7 @@ type LiteLLMModel {
       target_rights_mode: args.input.target_rights_mode ?? null,
       target_rbac_users: args.input.target_rbac_users ?? undefined,
       target_rbac_roles: args.input.target_rbac_roles ?? undefined,
+      post_processing_prompts: args.input.post_processing_prompts ?? undefined,
     });
   };
 
@@ -2044,8 +2565,22 @@ type LiteLLMModel {
       target_rights_mode: args.input.target_rights_mode ?? null,
       target_rbac_users: args.input.target_rbac_users ?? undefined,
       target_rbac_roles: args.input.target_rbac_roles ?? undefined,
+      corrected_segments: args.input.corrected_segments,
     });
     return { job: row, item_id: item.id };
+  };
+
+  resolvers.Mutation["transcriptionJobMarkReviewed"] = async (_, args, context) => {
+    await assertOwnsTranscriptionJob(args.id, context);
+    return transcriptionService.markReviewed(args.id, {
+      title: args.input.title,
+      speakers: args.input.speakers,
+      project_id: args.input.project_id ?? null,
+      target_rights_mode: args.input.target_rights_mode ?? null,
+      target_rbac_users: args.input.target_rbac_users ?? undefined,
+      target_rbac_roles: args.input.target_rbac_roles ?? undefined,
+      corrected_segments: args.input.corrected_segments,
+    });
   };
 
   resolvers.Mutation["transcriptionJobCancel"] = async (_, args, context) => {
@@ -2066,7 +2601,10 @@ type LiteLLMModel {
       language: args.input.language ?? null,
       title: args.input.title ?? null,
       bot_name: args.input.bot_name ?? null,
-      notify_chat: args.input.notify_chat ?? false,
+      // null (not false) when the caller omits it: lets resolveBotIdentity
+      // fall through to the workspace notifyChat default instead of the
+      // per-request value silently pinning it to "off" on every dispatch.
+      notify_chat: args.input.notify_chat ?? null,
       project_id: args.input.project_id ?? null,
       target_rights_mode: args.input.target_rights_mode ?? null,
       target_rbac_users: args.input.target_rbac_users ?? undefined,
@@ -2325,6 +2863,7 @@ type LiteLLMModel {
           active: context.active,
           sources,
           processor,
+          memoryBase: checkMemoryBase(context),
           fields: await Promise.all(
             context.fields.map(async (field) => {
               if (field.type === "file" && !field.name.endsWith("_s3key")) {
@@ -2437,6 +2976,7 @@ type LiteLLMModel {
       active: data.active,
       sources,
       processor,
+      memoryBase: checkMemoryBase(data),
       fields: await Promise.all(
         data.fields.map(async (field) => {
           const label = field.name?.replace("_s3key", "");
@@ -2465,6 +3005,149 @@ type LiteLLMModel {
       mapped[field] = clean[field];
     });
     return mapped;
+  };
+
+  resolvers.Query["memoryBaseStats"] = async (_, args, context) => {
+    // spec §3.3: memory bases are configured on agents, so viewing their
+    // stats requires the same agents-read right as viewing the agent itself.
+    if (!hasAgentsReadAccess(context.user)) return null;
+    const target = contexts.find((c) => c.id === args.contextId);
+    if (!target) return null;
+    return memoryBaseStats({ context: target, user: context.user, db: context.db });
+  };
+
+  resolvers.Query["memoryBaseContributors"] = async (_, args, context) => {
+    // Same gate as memoryBaseStats: names of the people who saved into a base
+    // are agent configuration, not the `users` directory.
+    if (!hasAgentsReadAccess(context.user)) return [];
+    const target = contexts.find((c) => c.id === args.contextId);
+    if (!target) return [];
+    return memoryBaseContributors({ context: target, db: context.db });
+  };
+
+  resolvers.Query["memoryBases"] = async (_, _args, context) => {
+    if (!hasAgentsReadAccess(context.user)) return [];
+    return listMemoryBases({ contexts, user: context.user, db: context.db });
+  };
+
+  resolvers.Query["memoryAgentCount"] = async (_, _args, context) => {
+    if (!hasAgentsReadAccess(context.user)) return 0;
+    return countAgents(context.db);
+  };
+
+  const memoryContextOf = (id: string) => contexts.find((c) => c.id === id);
+  resolvers.Query["memoryUsageByIds"] = async (_, args, context) => {
+    if (!hasAgentsReadAccess(context.user) || !memoryContextOf(args.contextId)) return [];
+    return memoryUsageByIds({ db: context.db, contextId: args.contextId, ids: args.ids });
+  };
+  resolvers.Query["memoryUsage"] = async (_, args, context) => {
+    if (!hasAgentsReadAccess(context.user) || !memoryContextOf(args.contextId)) return null;
+    return memoryUsage({ db: context.db, contextId: args.contextId, memoryId: args.memoryId, limit: args.limit ?? 5, user: context.user });
+  };
+  resolvers.Query["memoryBaseUsage"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!hasAgentsReadAccess(context.user) || !target) return null;
+    return memoryBaseUsage({ db: context.db, context: target, user: context.user, staleDays: args.staleDays ?? 90 });
+  };
+  resolvers.Query["memoryBaseUnusedIds"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!hasAgentsReadAccess(context.user) || !target) return [];
+    return memoryBaseUnusedIds({ db: context.db, context: target, mode: args.mode, staleDays: args.staleDays ?? 90 });
+  };
+
+  /** The agent whose model backs the scan's judge and the merge suggestion; also carries the spend tags. */
+  const firstAgentModel = async (db: any, contextId: string): Promise<{ id: string; name: string; model: string }> => {
+    const cols = ["id", "name", "model"];
+    const agent =
+      (await db("agents").where("memory", contextId).where("active", true).orderBy("createdAt", "asc").select(cols).first()) ??
+      (await db("agents").where("memory", contextId).orderBy("createdAt", "asc").select(cols).first());
+    if (!agent?.model) throw new Error("No agent with a model uses this memory base; the conflict scan and the merge suggestion need one");
+    return { id: String(agent.id), name: String(agent.name ?? ""), model: String(agent.model) };
+  };
+  resolvers.Query["memoryConflicts"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!hasAgentsReadAccess(context.user) || !target) return [];
+    return memoryConflicts({ db: context.db, context: target });
+  };
+  resolvers.Query["memoryConflictCounts"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!hasAgentsReadAccess(context.user) || !target) return null;
+    return memoryConflictCounts({ db: context.db, context: target });
+  };
+  resolvers.Query["memoryConflictsForMemory"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!hasAgentsReadAccess(context.user) || !target) return null;
+    return memoryConflictsForMemory({ db: context.db, context: target, memoryId: args.memoryId });
+  };
+  resolvers.Mutation["memoryConflictsScan"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!hasAgentsWriteAccess(context.user) || !target) throw new Error("Not allowed");
+    const agent = await firstAgentModel(context.db, target.id);
+    const judge = await makeModelJudge({ modelId: agent.model, agent, user: context.user });
+    return runScan({ db: context.db, context: target, user: context.user, judge });
+  };
+  resolvers.Mutation["memoryConflictResolve"] = async (_, args, context) => {
+    if (!hasAgentsWriteAccess(context.user)) throw new Error("Not allowed");
+    const group = await context.db("memory_conflicts").where({ id: args.id }).first();
+    const target = group ? memoryContextOf(group.context) : undefined;
+    if (!target) throw new Error("Not allowed");
+    await resolveConflict({ db: context.db, context: target, config, user: context.user, id: args.id, action: args.action, keepId: args.keepId, merged: args.merged });
+    const row = await context.db("memory_conflicts").where({ id: args.id }).first();
+    const hydrated = await hydrateConflictRow(context.db, target, row);
+    if (!hydrated) throw new Error(`Conflict ${args.id} has no members to show`);
+    return hydrated;
+  };
+  resolvers.Mutation["memoryConflictSuggestMerge"] = async (_, args, context) => {
+    if (!hasAgentsWriteAccess(context.user)) throw new Error("Not allowed");
+    const group = await context.db("memory_conflicts").where({ id: args.id }).first();
+    const target = group ? memoryContextOf(group.context) : undefined;
+    if (!target) throw new Error("Not allowed");
+    const agent = await firstAgentModel(context.db, target.id);
+    const suggester = await makeMergeSuggester({ modelId: agent.model, agent, user: context.user });
+    return suggestMerge({ db: context.db, context: target, id: args.id, suggester });
+  };
+
+  // Vector map (3c-1 spec §5). memoryContextOf is reused as-is: despite the
+  // name it is just `contexts.find`, and the map serves knowledge bases too.
+  // No hasAgentsReadAccess gate here on purpose - access is decided per item
+  // inside the resolvers, by applyAccessControl with the "items" prefix.
+  resolvers.Query["contextMapPoints"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!context.user || !target) return { points: [], total: 0, sampled: false };
+    return contextMapPoints({
+      db: context.db, context: target, user: context.user,
+      mode: args.mode ?? "DOCUMENTS", groupField: args.groupField, search: args.search,
+      // An explicit `limit: null` is legal for a nullable Int; it must mean
+      // "the default", not "one point" (ruling 25).
+      limit: args.limit ?? POINTS_LIMIT_DEFAULT,
+    });
+  };
+  resolvers.Query["contextMapEdges"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!context.user || !target) return [];
+    return contextMapEdges({
+      db: context.db, context: target, user: context.user, nodeId: args.nodeId,
+      mode: args.mode ?? "DOCUMENTS", limit: args.limit ?? EDGE_LIMIT_DEFAULT,
+    });
+  };
+  // Counts and labels for the base's regions. Unscoped on purpose - see the
+  // resolver's own doc comment; it returns nothing a reader could look up.
+  resolvers.Query["contextMapTopics"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!context.user || !target) return [];
+    return contextMapTopics({ db: context.db, context: target });
+  };
+  // Scoped per item inside the resolver, by applyAccessControl with the
+  // "items" prefix, exactly as the points query is.
+  resolvers.Query["contextMapItem"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!context.user || !target) return null;
+    return contextMapItem({ db: context.db, context: target, user: context.user, itemId: args.itemId });
+  };
+  resolvers.Query["contextProjectionStatus"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!context.user || !target) return null;
+    return contextProjectionStatus({ db: context.db, context: target });
   };
 
   resolvers.Query["tools"] = async (_, args, context, info) => {
@@ -2723,210 +3406,9 @@ type LiteLLMModel {
   typeDefs += "}\n";
   mutationDefs += "}\n";
 
-  // Add generic types used across all tables
-  const genericTypes = `
-
-type AgentCapabilities {
-    text: Boolean
-    images: [String]
-    files: [String]
-    audio: [String]
-    video: [String]
-}
-
-type AgentEvalFunction {
-    id: ID!
-    name: String!
-    description: String!
-    config: [AgentEvalFunctionConfig!]
-}
-
-type AgentEvalFunctionConfig {
-    name: String!
-    description: String!
-}
-
-type ItemChunks {
-    chunk_id: String!
-    chunk_metadata: JSON!
-    chunk_index: Int!
-    chunk_content: String!
-    chunk_source: String!
-    chunk_created_at: Date!
-    chunk_updated_at: Date!
-}
-
-type Provider {
-  id: ID!
-  name: String!
-  description: String
-  providerName: String
-  provider: String
-  modelName: String
-  type: EnumProviderType!
-  authenticationInformation: String
-  maxContextLength: Int
-  capabilities: JSON
-}
-
-type Eval {
-    id: ID!
-    name: String!
-    description: String!
-    llm: Boolean!
-    config: [EvalConfig!]
-}
-
-type EvalConfig {
-    name: String!
-    description: String!
-}
-
-type Context {
-    id: ID!
-    name: String!
-    description: String
-    embedder: Embedder
-    slug: String
-    active: Boolean
-    fields: JSON
-    configuration: JSON
-    sources: [ContextSource]
-    processor: ContextProcessor
-    """
-    Health aggregates over non-archived items (knowledge V2 KB-3/KB-4).
-    Computed lazily — only when one of these fields is selected — so plain
-    context queries pay nothing. item_count: total; chunk_total: SUM of
-    chunks_count; stuck_count: items with 0/NULL chunks; stale_count: items
-    whose embeddings are older than 30 days.
-    """
-    item_count: Int
-    chunk_total: Int
-    stuck_count: Int
-    stale_count: Int
-}
-type Reranker {
-    id: ID!
-    name: String!
-    description: String
-}
-type Embedder {
-    model: String!
-    queue: String
-}
-type ContextProcessor {
-    name: String!
-    description: String
-    queue: String
-    trigger: String
-    timeoutInSeconds: Int
-    generateEmbeddings: Boolean
-}
-
-type ContextSource {
-    id: String!
-    name: String!
-    description: String!
-    config: ContextSourceConfig!
-}
-
-type ContextSourceConfig {
-    schedule: String
-    queue: String
-    retries: Int
-    backoff: ContextSourceBackoff
-    params: [ContextSourceParam!]
-}
-
-type ContextSourceParam {
-    name: String!
-    description: String!
-    default: String
-}
-
-type ContextSourceBackoff {
-    type: String
-    delay: Int
-}
-
-type RunEvalReturnPayload {
-    jobs: [String!]!
-    count: Int!
-}
-
-type RunWorkflowReturnPayload {
-    result: JSON
-    job: String
-    metadata: JSON
-}
-
-type WorkflowScheduleReturnPayload {
-    status: String!
-    job: String
-}
-
-type JobActionReturnPayload {
-    success: Boolean!
-}
-
-type ContextField {
-    name: String!
-    type: String!
-    unique: Boolean
-    label: String
-}
-
-type Tool {
-  id: ID!
-  name: String!
-  description: String
-  category: String
-  type: String
-  config: JSON
-}
-
-type Job {
-  id: String!
-  name: String!
-  returnvalue: JSON
-  stacktrace: [String]
-  finishedOn: Date
-  processedOn: Date
-  attemptsMade: Int
-  failedReason: String
-  state: String!
-  data: JSON
-  timestamp: Date
-}
-
-enum EnumProviderType {
-  agent
-}
-
-enum QueueEnum {
-  ${ExuluQueues.list.keys().toArray().length > 0 ? ExuluQueues.list.keys().toArray().join("\n") : "NO_QUEUES"}
-}
-
-enum JobStateEnum {
-  ${JOB_STATUS_ENUM.active}
-  ${JOB_STATUS_ENUM.waiting}
-  ${JOB_STATUS_ENUM.delayed}
-  ${JOB_STATUS_ENUM.failed}
-  ${JOB_STATUS_ENUM.completed}
-  ${JOB_STATUS_ENUM.paused}
-  ${JOB_STATUS_ENUM.stuck}
-  ${JOB_STATUS_ENUM.waiting_approval}
-  ${JOB_STATUS_ENUM.filtered}
-  ${JOB_STATUS_ENUM.cancelled}
-}
-
-type StatisticsResult {
-  group: String!
-  count: Int!
-}
-`;
-
-  const fullSDL = typeDefs + mutationDefs + modelDefs + genericTypes;
+  // genericTypes (generic types used across all tables) is the module-level
+  // export above — see its comment for why it is a function and must stay one.
+  const fullSDL = typeDefs + mutationDefs + modelDefs + genericTypes();
 
   // -------------- Create Schema ------------------
 

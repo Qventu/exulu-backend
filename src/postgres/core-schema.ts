@@ -173,6 +173,11 @@ const variablesSchema: ExuluTableDefinition = {
       type: "boolean",
       default: false,
     },
+    {
+      name: "allow_skill_access",
+      type: "boolean",
+      default: false,
+    },
   ],
 };
 
@@ -257,6 +262,10 @@ const agentsSchema: ExuluTableDefinition = {
     {
       name: "memory",
       type: "text", // allows selecting a exulu context as native memory for the agent
+    },
+    {
+      name: "memory_config",
+      type: "json", // MemoryConfig (src/exulu/memory/config.ts); null = defaults
     },
     {
       name: "model",
@@ -695,6 +704,132 @@ const promptFavoritesSchema: ExuluTableDefinition = {
   ],
 };
 
+/**
+ * Memory usage (agent memory redesign, sub-project 3a): one row per memory
+ * recalled into an answer. Ids and timestamps only — never content. Counts
+ * are derived by query; the unique (message_id, memory_id) index makes the
+ * writer idempotent. Indexes are created in init-exulu-db.ts (the schema's
+ * `index` flag is informational only).
+ */
+const memoryUsagesSchema: ExuluTableDefinition = {
+  type: "memory_usages",
+  name: {
+    plural: "memory_usages",
+    singular: "memory_usage",
+  },
+  fields: [
+    { name: "memory_id", type: "uuid", required: true, index: true },
+    { name: "context", type: "text", required: true, index: true },
+    { name: "agent", type: "text", required: true },
+    { name: "session", type: "text" },
+    { name: "message_id", type: "text", required: true },
+    { name: "user", type: "number" },
+    { name: "guest", type: "boolean", default: false },
+  ],
+};
+
+/**
+ * Memory conflicts (sub-project 3b): one row per detected group (near-duplicates
+ * or a contradiction) and the decision taken on it. `key` makes the scan's
+ * upsert idempotent; `members` holds the sorted memory ids (2–6).
+ */
+const memoryConflictsSchema: ExuluTableDefinition = {
+  type: "memory_conflicts",
+  name: { plural: "memory_conflicts", singular: "memory_conflict" },
+  fields: [
+    { name: "context", type: "text", required: true, index: true },
+    { name: "kind", type: "text", required: true },
+    { name: "key", type: "text", required: true, unique: true },
+    { name: "members", type: "json", required: true },
+    { name: "similarity", type: "number", required: true },
+    { name: "reason", type: "text" },
+    { name: "status", type: "text", required: true, default: "open" },
+    { name: "resolution", type: "text" },
+    { name: "resolved_by", type: "number" },
+    { name: "resolved_at", type: "date" },
+    { name: "merged_into", type: "uuid" },
+    { name: "scanned_at", type: "date", required: true },
+  ],
+};
+
+/** Judged pairs, so a rescan never asks the model twice about the same two memories. */
+const memoryJudgementsSchema: ExuluTableDefinition = {
+  type: "memory_judgements",
+  name: { plural: "memory_judgements", singular: "memory_judgement" },
+  fields: [
+    { name: "context", type: "text", required: true, index: true },
+    { name: "key", type: "text", required: true, unique: true },
+    { name: "verdict", type: "text", required: true },
+    { name: "reason", type: "text" },
+    { name: "judged_at", type: "date", required: true },
+  ],
+};
+
+/**
+ * One row per memory base: the last conflict scan and what it found. A clean
+ * scan leaves no open group, so this marker is the only way the page can tell
+ * "never scanned" from "scanned, nothing found".
+ */
+const memoryConflictScansSchema: ExuluTableDefinition = {
+  type: "memory_conflict_scans",
+  name: { plural: "memory_conflict_scans", singular: "memory_conflict_scan" },
+  fields: [
+    { name: "context", type: "text", required: true, unique: true },
+    { name: "scanned_at", type: "date", required: true },
+    { name: "open", type: "number" },
+    { name: "judged", type: "number" },
+    { name: "unjudged", type: "number" },
+    { name: "skipped", type: "number" },
+  ],
+};
+
+/**
+ * Vector map (sub-project 3c-1): one fitted projection per context — the mean,
+ * the linear reduction and the learned map that turn an embedding into a point
+ * in three dimensions. Read once per process and cached; measured at ~1.6 MB of
+ * JSON for a 1536-dimension model at 50 components, because every float
+ * serialises as a full double.
+ */
+const contextProjectionsSchema: ExuluTableDefinition = {
+  type: "context_projections",
+  name: { plural: "context_projections", singular: "context_projection" },
+  fields: [
+    { name: "context", type: "text", required: true, unique: true, index: true },
+    { name: "dims", type: "number", required: true },
+    { name: "components", type: "number", required: true },
+    { name: "mean", type: "json", required: true },
+    { name: "basis", type: "json", required: true },
+    { name: "map", type: "json", required: true },
+    { name: "intercept", type: "json", required: true },
+    { name: "method", type: "text", required: true },
+    { name: "version", type: "number", required: true },
+    { name: "sample_size", type: "number" },
+    { name: "residual", type: "number" },
+    { name: "fitted_at", type: "date", required: true },
+  ],
+};
+
+/**
+ * One row per topic per context (3c-2). Replaced wholesale on every fit, so a
+ * context's rows always describe one layout. Not RBAC-scoped: a topic count
+ * describes the base, not the reader's slice of it.
+ */
+const contextMapTopicsSchema: ExuluTableDefinition = {
+  type: "context_map_topics",
+  name: { plural: "context_map_topics", singular: "context_map_topic" },
+  fields: [
+    { name: "context", type: "text", required: true, index: true },
+    { name: "topic_index", type: "number", required: true },
+    { name: "label", type: "text", required: true },
+    { name: "count", type: "number", required: true },
+    { name: "x", type: "number", required: true },
+    { name: "y", type: "number", required: true },
+    { name: "z", type: "number", required: true },
+    { name: "version", type: "number", required: true },
+    { name: "fitted_at", type: "date", required: true },
+  ],
+};
+
 const transcriptionJobsSchema: ExuluTableDefinition = {
   type: "transcription_jobs",
   name: {
@@ -716,6 +851,10 @@ const transcriptionJobsSchema: ExuluTableDefinition = {
     { name: "target_rbac_users", type: "json" },
     { name: "target_rbac_roles", type: "json" },
     { name: "saved_item_id", type: "uuid", required: false },
+    // Review is independent of publication: a transcript can be signed off
+    // without entering the knowledge base. `saved_item_id` still answers
+    // "published?"; this answers "reviewed?" (and when).
+    { name: "reviewed_at", type: "date", required: false },
     { name: "error", type: "text" },
     // Recall.ai meeting-bot fields. source discriminates the pipeline: whisper
     // rows are driven by the polling loop, recall rows by webhooks.
@@ -743,6 +882,10 @@ const transcriptionJobsSchema: ExuluTableDefinition = {
     { name: "chunk_count", type: "number", default: 0 },
     // Heartbeat of the last accepted chunk; shown in the queue row.
     { name: "last_chunk_at", type: "date" },
+    // User corrections to the transcript text. raw_segments stays the
+    // untouched engine output so a correction can always be reset and
+    // diarization can be re-run (spec 2026-09-29 §2.2).
+    { name: "corrected_segments", type: "json" },
   ],
 };
 
@@ -875,10 +1018,13 @@ export const addCoreFields = (schema: ExuluTableDefinition): ExuluTableDefinitio
       });
     }
     if (!schema.fields.some((field) => field.name === "created_by")) {
+      // Nullable in the API: item tables store created_by as text and rows
+      // created through the SDK (processors, sources, tools) may carry none,
+      // so a non-null field would fail every list that selects it.
       schema.fields.push({
         name: "created_by",
         type: "number",
-        required: true,
+        required: false,
         default: 0,
       });
     }
@@ -950,6 +1096,12 @@ export const coreSchemas = {
       promptLibrarySchema: (): ExuluTableDefinition => addCoreFields(promptLibrarySchema),
       entityTypeSettingsSchema: (): ExuluTableDefinition => addCoreFields(entityTypeSettingsSchema),
       promptFavoritesSchema: (): ExuluTableDefinition => addCoreFields(promptFavoritesSchema),
+      memoryUsagesSchema: (): ExuluTableDefinition => addCoreFields(memoryUsagesSchema),
+      memoryConflictsSchema: (): ExuluTableDefinition => addCoreFields(memoryConflictsSchema),
+      memoryJudgementsSchema: (): ExuluTableDefinition => addCoreFields(memoryJudgementsSchema),
+      memoryConflictScansSchema: (): ExuluTableDefinition => addCoreFields(memoryConflictScansSchema),
+      contextProjectionsSchema: (): ExuluTableDefinition => addCoreFields(contextProjectionsSchema),
+      contextMapTopicsSchema: (): ExuluTableDefinition => addCoreFields(contextMapTopicsSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
       sharedArtifactsSchema: (): ExuluTableDefinition => addCoreFields(sharedArtifactsSchema),
       transcriptionJobsSchema: (): ExuluTableDefinition => addCoreFields(transcriptionJobsSchema),

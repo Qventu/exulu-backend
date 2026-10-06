@@ -34,12 +34,29 @@ jest.mock("@SRC/exulu/resolve-model", () => ({
 }));
 
 const recallEnabledSpy = jest.fn(() => true);
-const recallStoreVideoLocallySpy = jest.fn(() => false);
 jest.mock("./env", () => ({
   recallEnabled: () => recallEnabledSpy(),
   RecallNotConfiguredError: class RecallNotConfiguredError extends Error {},
-  recordingMonthlyLimitSeconds: () => null,
-  recallStoreVideoLocally: () => recallStoreVideoLocallySpy(),
+}));
+
+// resolveTranscriptsSettings is Task 2's own (DB-backed) resolver — mocked
+// here the same way bot-identity.test.ts avoids it: a settings() factory the
+// suite can override per test, rather than fighting its DB plumbing.
+const resolved = <T>(value: T) => ({ value, source: "code" as const });
+const defaultSettings = () => ({
+  botName: resolved("IMP Notetaker"),
+  notifyChat: resolved(false),
+  recordersMayOverrideBot: resolved(true),
+  defaultRightsMode: resolved("private"),
+  summaryPresets: resolved([]),
+  videoRetentionHours: resolved(2160),
+  storeVideoLocally: resolved(false),
+  monthlyRecordingLimitMinutes: resolved("none"),
+  videoStorageCostPerHour: resolved(0),
+});
+const resolveTranscriptsSettingsSpy = jest.fn(async () => defaultSettings());
+jest.mock("../transcripts-settings", () => ({
+  resolveTranscriptsSettings: () => resolveTranscriptsSettingsSpy(),
 }));
 
 const downloadAndStoreRecordingVideoSpy = jest.fn<Promise<string | null>, any[]>();
@@ -74,6 +91,7 @@ const calls: Record<string, any[][]> = {};
 const firstResults: Record<string, any[]> = {};
 const selectResults: Record<string, any[][]> = {};
 const updateResults: Record<string, number[]> = {};
+const sumResults: Record<string, number[]> = {};
 
 const record = (table: string, name: string, builder: any) =>
   (...args: any[]) => {
@@ -112,7 +130,11 @@ const builderFor = (table: string) => {
     (calls[`${table}.insert`] ||= []).push([values]);
     return { returning: jest.fn(async () => [{ id: "jr-1", ...values }]) };
   };
-  builder.sum = jest.fn(async () => [{ total: 0 }]);
+  // monthlyUsedSeconds' .sum(): seed per-table via sumResults; defaults to 0
+  // (no usage) when a test doesn't care.
+  builder.sum = jest.fn(async () => [
+    { total: (sumResults[table] ||= []).shift() ?? 0 },
+  ]);
   // Awaiting the builder itself resolves a seeded multi-row select.
   builder.then = (resolve: any, reject: any) =>
     Promise.resolve((selectResults[table] ||= []).shift() ?? []).then(
@@ -128,17 +150,17 @@ jest.mock("@SRC/postgres/client", () => ({
   postgresClient: jest.fn(async () => ({ db })),
 }));
 
-import { recallService } from "./service";
+import { recallService, capSecondsFrom } from "./service";
 
 const JOBS = "transcription_jobs";
 
 const resetAll = () => {
-  for (const store of [calls, firstResults, selectResults, updateResults]) {
+  for (const store of [calls, firstResults, selectResults, updateResults, sumResults]) {
     for (const key of Object.keys(store)) delete store[key];
   }
   jest.clearAllMocks();
   recallEnabledSpy.mockReturnValue(true);
-  recallStoreVideoLocallySpy.mockReturnValue(false);
+  resolveTranscriptsSettingsSpy.mockResolvedValue(defaultSettings());
 };
 
 beforeEach(resetAll);
@@ -168,6 +190,60 @@ describe("_onRecordingDone claim guard", () => {
 
     // Claim refused -> no transcript may be requested.
     expect(createAsyncTranscriptSpy).not.toHaveBeenCalled();
+  });
+
+  // Final fix wave, Finding 2: a duplicate recording.done re-delivered
+  // against a job a human already signed off on (status "reviewed") must
+  // not walk it backwards into "transcribing" and re-run the transcription.
+  test("does not resurrect a reviewed job: the atomic claim excludes 'reviewed'", async () => {
+    // Simulate the DB refusing the claim (row is reviewed): update returns 0.
+    updateResults[JOBS] = [0];
+
+    await recallService._onRecordingDone("job-1", "rec-1");
+
+    const notIn = (calls[`${JOBS}.whereNotIn`] ?? []).find(
+      (args) => args[0] === "status",
+    );
+    expect(notIn).toBeDefined();
+    expect(notIn![1]).toEqual(expect.arrayContaining(["reviewed"]));
+
+    // Claim refused -> no re-transcription, and the human's sign-off stands.
+    expect(createAsyncTranscriptSpy).not.toHaveBeenCalled();
+  });
+});
+
+// Final fix wave, Finding 2: a duplicate transcript.done re-delivered
+// against a reviewed job must also be a no-op — otherwise it overwrites
+// raw_segments and resets status back to "awaiting_review", silently
+// reverting the human's sign-off even though reviewed_at survives.
+describe("_onTranscriptDone idempotency guard", () => {
+  test("a re-delivered transcript.done against a reviewed job leaves status and raw_segments untouched", async () => {
+    const reviewedRow = {
+      id: "job-1",
+      source: "recall",
+      status: "reviewed",
+      recall_bot_id: "bot-1",
+      recall_recording_id: "rec-1",
+      recall_transcript_id: "tr-1",
+      bot_status: "done",
+      language: null,
+      raw_segments: [{ start: 0, end: 2, text: "Hello world", speaker: "Alice" }],
+      speakers: null,
+      post_processing_prompts: null,
+      post_processing_outputs: null,
+      created_by: 7,
+      join_at: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    firstResults[JOBS] = [reviewedRow];
+
+    await recallService._onTranscriptDone("job-1", "tr-1", "rec-1");
+
+    // Already-processed guard fires before any download or write — status
+    // and raw_segments stay exactly as they were.
+    expect(downloadTranscriptSpy).not.toHaveBeenCalled();
+    expect(calls[`${JOBS}.update`] ?? []).toEqual([]);
   });
 });
 
@@ -455,6 +531,162 @@ describe("createMeetingBot input normalization", () => {
     expect(inserts).toHaveLength(1);
     expect(inserts[0].post_processing_prompts).toBeNull();
   });
+
+  test("dispatches the workspace bot name and resolved retention when the request supplies none", async () => {
+    await recallService.createMeetingBot({
+      userId: 7,
+      meeting_url: "https://meet.example/abc",
+    });
+
+    expect(createBotSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bot_name: "IMP Notetaker",
+        notifyChat: undefined,
+        retentionHours: 2160,
+      }),
+    );
+  });
+
+  test("resolves settings exactly once per dispatch — not once for the cap check and again for bot identity", async () => {
+    await recallService.createMeetingBot({
+      userId: 7,
+      meeting_url: "https://meet.example/abc",
+    });
+
+    expect(resolveTranscriptsSettingsSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("a per-request bot name and notice win when recorders may override", async () => {
+    await recallService.createMeetingBot({
+      userId: 7,
+      meeting_url: "https://meet.example/abc",
+      bot_name: "Standup bot",
+      notify_chat: true,
+    });
+
+    expect(createBotSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bot_name: "Standup bot",
+        notifyChat: { message: "This meeting is being recorded and transcribed." },
+      }),
+    );
+  });
+
+  test("a per-request bot name and notice are ignored when recorders may not override", async () => {
+    resolveTranscriptsSettingsSpy.mockResolvedValue({
+      ...defaultSettings(),
+      recordersMayOverrideBot: resolved(false),
+    });
+
+    await recallService.createMeetingBot({
+      userId: 7,
+      meeting_url: "https://meet.example/abc",
+      bot_name: "Standup bot",
+      notify_chat: true,
+    });
+
+    expect(createBotSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bot_name: "IMP Notetaker",
+        notifyChat: undefined,
+      }),
+    );
+  });
+
+  test("passes the resolved videoRetentionHours through verbatim, including the 'forever' sentinel", async () => {
+    resolveTranscriptsSettingsSpy.mockResolvedValue({
+      ...defaultSettings(),
+      videoRetentionHours: resolved("forever" as const),
+    });
+
+    await recallService.createMeetingBot({
+      userId: 7,
+      meeting_url: "https://meet.example/abc",
+    });
+
+    expect(createBotSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ retentionHours: "forever" }),
+    );
+  });
+});
+
+describe("capSecondsFrom — pure minutes-to-seconds conversion for an already-resolved cap", () => {
+  test('"none" means no cap', () => {
+    expect(capSecondsFrom("none")).toBeNull();
+  });
+
+  test("a number of minutes converts to seconds", () => {
+    expect(capSecondsFrom(10)).toBe(600);
+    expect(capSecondsFrom(0)).toBe(0);
+  });
+});
+
+describe("monthly recording cap (resolved from settings, not read from env directly)", () => {
+  test("getUsage reports a stored cap — converted from minutes to seconds — regardless of the env var", async () => {
+    resolveTranscriptsSettingsSpy.mockResolvedValue({
+      ...defaultSettings(),
+      monthlyRecordingLimitMinutes: resolved(10), // 600s cap
+    });
+    sumResults[JOBS] = [400];
+
+    const usage = await recallService.getUsage();
+
+    expect(usage).toEqual({
+      enabled: true,
+      used_seconds: 400,
+      limit_seconds: 600,
+      percent: (400 / 600) * 100,
+      exceeded: false,
+    });
+  });
+
+  test('getUsage reports no cap when the resolved setting is "none", however much is used', async () => {
+    // defaultSettings() already resolves to "none"; this is the no-stored-row,
+    // no-env-var deployment, and also a deployment where the env var is set
+    // but the admin explicitly chose "none" — the resolver (tested in Task 2)
+    // already picked "none" by the time service.ts sees it.
+    sumResults[JOBS] = [999_999];
+
+    const usage = await recallService.getUsage();
+
+    expect(usage).toEqual({
+      enabled: false,
+      used_seconds: 999_999,
+      limit_seconds: null,
+      percent: null,
+      exceeded: false,
+    });
+  });
+
+  test("createMeetingBot enforces a stored cap even when usage already meets it", async () => {
+    resolveTranscriptsSettingsSpy.mockResolvedValue({
+      ...defaultSettings(),
+      monthlyRecordingLimitMinutes: resolved(5), // 300s cap
+    });
+    sumResults[JOBS] = [300]; // at the cap
+
+    await expect(
+      recallService.createMeetingBot({
+        userId: 7,
+        meeting_url: "https://meet.example/abc",
+      }),
+    ).rejects.toThrow(/RECORDING_LIMIT_REACHED/);
+
+    // Rejected before ever inserting the job row or dispatching a bot.
+    expect(calls[`${JOBS}.insert`]).toBeUndefined();
+    expect(createBotSpy).not.toHaveBeenCalled();
+  });
+
+  test('createMeetingBot never enforces when the resolved cap is "none", however much is used', async () => {
+    sumResults[JOBS] = [999_999]; // defaultSettings() cap is "none"
+
+    await recallService.createMeetingBot({
+      userId: 7,
+      meeting_url: "https://meet.example/abc",
+    });
+
+    expect(createBotSpy).toHaveBeenCalled();
+  });
 });
 
 describe("reconcileOnce recovery paths and post-processing crash-safety", () => {
@@ -513,7 +745,10 @@ describe("reconcileOnce recovery paths and post-processing crash-safety", () => 
   });
 
   test("stores a local video copy when RECALL_STORE_VIDEO_LOCALLY is on, alongside the transcript", async () => {
-    recallStoreVideoLocallySpy.mockReturnValue(true);
+    resolveTranscriptsSettingsSpy.mockResolvedValue({
+      ...defaultSettings(),
+      storeVideoLocally: resolved(true),
+    });
     const row = jobRow({
       status: "transcribing",
       recall_recording_id: "rec-1",
@@ -550,7 +785,7 @@ describe("reconcileOnce recovery paths and post-processing crash-safety", () => 
     );
   });
 
-  test("does not attempt video storage when RECALL_STORE_VIDEO_LOCALLY is off (the default)", async () => {
+  test("does not attempt video storage when storeVideoLocally resolves to off (the default)", async () => {
     const row = jobRow({
       status: "transcribing",
       recall_recording_id: "rec-1",
@@ -802,6 +1037,34 @@ describe("reconcileOnce recovery paths and post-processing crash-safety", () => 
 
     expect(result.status).toBe("done");
     expect(generateTextSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("feeds the prompt a timestamped transcript so summaries can cite passages", async () => {
+    // The reading view turns [mm:ss] in an output back into a seek; the
+    // model can only emit them if it saw them.
+    const row = jobRow({
+      status: "awaiting_review",
+      raw_segments: JSON.stringify([
+        {
+          start: 1278,
+          end: 1281,
+          text: "Let's lock the budget line.",
+          speaker: "SPEAKER_00",
+        },
+      ]),
+      post_processing_outputs: null,
+    });
+    firstResults[JOBS] = [row, { ...row }];
+    firstResults["prompt_library"] = [
+      { id: "prompt-1", name: "Summary", content: "Summarize this meeting." },
+    ];
+    firstResults["users"] = [{ id: 7, email: "u@example.com" }];
+
+    await recallService.runOnePostProcessing("job-1", "prompt-1", "agent-1");
+
+    const { prompt } = generateTextSpy.mock.calls[0][0];
+    expect(prompt).toContain("[21:18]");
+    expect(prompt).not.toMatch(/^\s*SPEAKER_\d+: /m);
   });
 
   test("manual run merges instead of clobbering: a concurrent writer's outputs survive", async () => {

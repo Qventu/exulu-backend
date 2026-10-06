@@ -16,6 +16,8 @@ export type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts"
 export { ExuluContext } from "./exulu/context.ts"
 export { ExuluReadApi } from "./exulu/read-api.ts";
 export { postgresClient } from "./postgres/client";
+export { recallMemories } from "./exulu/memory/recall";
+export { checkMemoryBase } from "./exulu/memory/memory-base";
 export type { VectorSearchChunkResult } from "./graphql/resolvers/vector-search.ts";
 export { ExuluTool } from "./exulu/tool"
 export type {
@@ -168,3 +170,9 @@ export const ExuluPython = {
 
 export { CredentialInvalidError } from "./exulu/auth/errors";
 export { ExuluRecall } from "./exulu/recall/public";
+
+// Vector map (3c-1). Fitting a base is an operation, not only a script:
+// scripts/ is not part of the published package, so a deployment that consumes
+// the built one reaches the fit and the backfill through these.
+export { backfillCoordinates, fitContextProjection, listFittableContexts } from "./exulu/projection/fit";
+export { PROJECTION_VERSION } from "./exulu/projection/constants";

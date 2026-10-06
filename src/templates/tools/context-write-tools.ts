@@ -101,7 +101,7 @@ const buildWriteSchema = (
 // Case-insensitive canonicalization against enumValues. Returns an error
 // message (for the model to self-correct) instead of silently dropping the
 // value — a dropped required enum would otherwise vanish from the write.
-const canonicalizeEnumFields = (
+export const canonicalizeEnumFields = (
   context: ExuluContext,
   params: Record<string, unknown>,
 ): string | undefined => {

@@ -1,0 +1,353 @@
+import { computeTopics, kmeans, lexemeCounts, pickLabel, topicCount } from "./topics";
+import { TOPIC_MIN_LEXEME } from "./constants";
+
+describe("topicCount", () => {
+  it("follows the data between its bounds", () => {
+    expect(topicCount(8)).toBe(3);       // floor
+    expect(topicCount(200)).toBe(10);    // round(sqrt(100))
+    expect(topicCount(100000)).toBe(12); // ceiling
+  });
+});
+
+describe("kmeans", () => {
+  const blob = (cx: number, cy: number, cz: number, n: number, spread: number) =>
+    Array.from({ length: n }, (_, i) => [cx + (i % 3) * spread, cy + (i % 2) * spread, cz + (i % 5) * spread]);
+
+  it("separates two well-separated blobs", () => {
+    const points = [...blob(0, 0, 0, 20, 0.01), ...blob(10, 10, 10, 20, 0.01)];
+    const { assignments, centroids } = kmeans(points, 2, 7);
+    expect(centroids).toHaveLength(2);
+    const first = new Set(assignments.slice(0, 20));
+    const second = new Set(assignments.slice(20));
+    expect(first.size).toBe(1);
+    expect(second.size).toBe(1);
+    expect([...first][0]).not.toBe([...second][0]);
+  });
+
+  it("is deterministic for one seed", () => {
+    const points = [...blob(0, 0, 0, 30, 0.5), ...blob(4, 4, 4, 30, 0.5)];
+    expect(kmeans(points, 3, 11).assignments).toEqual(kmeans(points, 3, 11).assignments);
+  });
+
+  it("returns all centroids finite and clusters only used sizes", () => {
+    const points = Array.from({ length: 10 }, () => [1, 1, 1]);
+    const { assignments, centroids } = kmeans(points, 4, 3);
+    expect(centroids.every((c) => c.every(Number.isFinite))).toBe(true);
+    // Ten identical points collapse to one cluster
+    const sizes = new Map<number, number>();
+    for (const a of assignments) sizes.set(a, (sizes.get(a) ?? 0) + 1);
+    expect(sizes.size).toBe(1); // Only one cluster is used
+    const clusterKey = [...sizes.keys()][0]!;
+    expect(clusterKey).toBe(0); // The first cluster
+    expect(sizes.get(clusterKey)).toBe(10); // All points in that cluster
+  });
+
+  // The loop assigns against the previous iteration's centres and then moves
+  // them, so whatever it returns describes a partition one step behind the
+  // centres it returns with it. computeTopics counts those assignments and the
+  // client recomputes "nearest centre" from the stored centroids, so on the
+  // iteration cap the chip's count and the dimmed dots disagreed on exactly the
+  // boundary points. At cap 1 this fixture had six of them.
+  it("returns assignments that agree with the centroids it returns, even at the iteration cap", () => {
+    const points = [...blob(0, 0, 0, 30, 0.5), ...blob(4, 4, 4, 30, 0.5)];
+    const { assignments, centroids } = kmeans(points, 2, 27, 1);
+    expect(assignments).toHaveLength(60);
+    expect(centroids).toHaveLength(2);
+    const nearest = (p: number[]) => {
+      let best = 0;
+      let bestD = Infinity;
+      for (let c = 0; c < centroids.length; c += 1) {
+        const d = (centroids[c]![0]! - p[0]!) ** 2
+          + (centroids[c]![1]! - p[1]!) ** 2 + (centroids[c]![2]! - p[2]!) ** 2;
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      return best;
+    };
+    expect(assignments).toEqual(points.map(nearest));
+  });
+
+  it("coerces non-finite coordinates to finite centres", () => {
+    const points = [[1, 1, 1], [2, 2, 2], [NaN, 5, 5]];
+    const { centroids } = kmeans(points, 2, 7);
+    expect(centroids.every((c) => c.every(Number.isFinite))).toBe(true);
+  });
+});
+
+describe("pickLabel", () => {
+  // Every expectation below is derived by hand from
+  //   score = (df / clusterSize) * ln(sampleSize / corpusDf)
+  // and the figure is quoted next to the lexeme it belongs to.
+  it("prefers a word frequent here and rare elsewhere over one frequent everywhere", () => {
+    const inCluster = new Map([["steuerblock", 8], ["ventil", 6], ["anlage", 8]]);
+    const corpus = new Map([["steuerblock", 9], ["ventil", 7], ["anlage", 400]]);
+    const clusterSize = 22; // Production: number of chunks in the cluster
+    const sampleSize = 500; // Production: number of chunks the fit sampled
+    // steuerblock (8/22)·ln(500/9) = 1.461 · ventil (6/22)·ln(500/7) = 1.164
+    // anlage (8/22)·ln(500/400) = 0.081 — four fifths of the base carries it
+    expect(pickLabel(inCluster, corpus, 0, clusterSize, sampleSize)).toBe("Steuerblock & Ventil");
+  });
+
+  it("ignores words under the document-frequency and length floors", () => {
+    const inCluster = new Map([["ab", 50], ["rare", 1], ["encoder", 4]]);
+    const corpus = new Map([["ab", 50], ["rare", 1], ["encoder", 5]]);
+    const clusterSize = 55; // Production: number of chunks in the cluster
+    const sampleSize = 60;  // Production: number of chunks the fit sampled
+    // Only encoder survives the floors: (4/55)·ln(60/5) = 0.181
+    expect(pickLabel(inCluster, corpus, 0, clusterSize, sampleSize)).toBe("Encoder");
+  });
+
+  it("falls back to an ordinal when nothing qualifies", () => {
+    const clusterSize = 9; // Production: number of chunks in the cluster
+    expect(pickLabel(new Map([["x", 9]]), new Map([["x", 9]]), 3, clusterSize, 20)).toBe("Topic 4");
+  });
+
+  it("skips a lexeme that is a prefix of or prefixed by an earlier one", () => {
+    const inCluster = new Map([["motor", 5], ["moto", 4], ["ventil", 3]]);
+    const corpus = new Map([["motor", 6], ["moto", 4], ["ventil", 4]]);
+    const clusterSize = 12; // Production: number of chunks in the cluster
+    const sampleSize = 100; // Production: number of chunks the fit sampled
+    // motor (5/12)·ln(100/6) = 1.172 beats moto (4/12)·ln(100/4) = 1.073 on
+    // coverage, so "moto" is the one skipped as a prefix; ventil 0.805 is second
+    expect(pickLabel(inCluster, corpus, 0, clusterSize, sampleSize)).toBe("Motor & Ventil");
+  });
+
+  it("sorts by score regardless of insertion order", () => {
+    // Regression: GROUP BY row order varies; sort must be deterministic
+    // Same data as first test but with frequent-everywhere word first
+    const inCluster = new Map([["anlage", 8], ["steuerblock", 8], ["ventil", 6]]);
+    const corpus = new Map([["anlage", 400], ["steuerblock", 9], ["ventil", 7]]);
+    const clusterSize = 22; // Production: number of chunks in the cluster
+    expect(pickLabel(inCluster, corpus, 0, clusterSize, 500)).toBe("Steuerblock & Ventil");
+  });
+
+  it("ignores prefix ties regardless of insertion order", () => {
+    // Regression: shorter stem inserted first
+    const inCluster = new Map([["moto", 4], ["motor", 5], ["ventil", 3]]);
+    const corpus = new Map([["moto", 4], ["motor", 6], ["ventil", 4]]);
+    const clusterSize = 12; // Production: number of chunks in the cluster
+    expect(pickLabel(inCluster, corpus, 0, clusterSize, 100)).toBe("Motor & Ventil");
+  });
+
+  // The case the old rarity factor got wrong, and the one that matters most:
+  // k-means on this kind of cloud routinely produces one dominant cluster, and
+  // the base's configured language often does not match its content, so German
+  // function words survive into the lexemes. (df/corpusDf) is not rarity — for
+  // a lexeme spread evenly it is the cluster's share of the corpus — so on a
+  // large cluster a word in every chunk of the base beat every exclusive term.
+  it("gives the largest cluster a distinctive name rather than a corpus-universal one", () => {
+    const inCluster = new Map([["und", 800], ["hydraulik", 120]]);
+    const corpus = new Map([["und", 1000], ["hydraulik", 130]]);
+    const clusterSize = 800; // four fifths of the sample in one region
+    const sampleSize = 1000;
+    // und (800/800)·ln(1000/1000) = 0 exactly · hydraulik (120/800)·ln(1000/130) = 0.306
+    expect(pickLabel(inCluster, corpus, 0, clusterSize, sampleSize)).toBe("Hydraulik");
+  });
+
+  it("will not name a region after a lexeme every sampled chunk carries", () => {
+    // Scoring zero is not the same as scoring lowest: with nothing else in the
+    // cluster the ordinal is the honest answer.
+    expect(pickLabel(new Map([["und", 50]]), new Map([["und", 50]]), 0, 50, 50)).toBe("Topic 1");
+  });
+
+  it("never names a region after a token with no letter in it", () => {
+    // Years, part numbers and identifiers are lexemes like any other, and a
+    // cluster-exclusive one outscores real words on coverage.
+    const inCluster = new Map([["2019", 10], ["2019-2020", 8], ["ventil", 3]]);
+    const corpus = new Map([["2019", 10], ["2019-2020", 8], ["ventil", 12]]);
+    // 2019 (10/20)·ln(100/10) = 1.151 and 2019-2020 (8/20)·ln(100/8) = 1.010
+    // both outscore ventil (3/20)·ln(100/12) = 0.318, and neither may be a label
+    expect(pickLabel(inCluster, corpus, 0, 20, 100)).toBe("Ventil");
+  });
+});
+
+describe("lexemeCounts", () => {
+  it("uses array binds and aggregates per cluster", async () => {
+    const log: any[] = [];
+    const rows = [
+      { cluster: 0, lexeme: "encoder", df: 3 },
+      { cluster: 1, lexeme: "ventil", df: 2 },
+    ];
+    const trx: any = {
+      raw: async (sql: string, bindings: any[]) => {
+        log.push(["raw", sql, bindings]);
+        return { rows };
+      },
+    };
+    const out = await lexemeCounts({
+      db: trx, chunksTable: "mem_chunks",
+      ids: ["a", "b", "c"], assignments: [0, 0, 1],
+    });
+    expect(out.get(0)?.get("encoder")).toBe(3);
+    expect(out.get(1)?.get("ventil")).toBe(2);
+    // Exactly one raw call with ids, assignments, table name, and minimum lexeme length
+    expect(log).toHaveLength(1);
+    const [cmd, sql, bindings] = log[0];
+    expect(cmd).toBe("raw");
+    expect(sql).toContain("unnest(?::uuid[], ?::int[])");
+    expect(sql).toContain("unnest(ch.fts)");
+    expect(sql).toContain("WHERE length(l.lexeme) >= ?");
+    expect(bindings).toHaveLength(4);
+    expect(bindings[0]).toEqual(["a", "b", "c"]); // ids array
+    expect(bindings[1]).toEqual([0, 0, 1]); // assignments array
+    expect(bindings[2]).toBe("mem_chunks"); // table name
+    expect(bindings[3]).toBe(TOPIC_MIN_LEXEME);
+  });
+});
+
+describe("computeTopics", () => {
+  const mockDb = () => {
+    const dbFn: any = (table: string) => ({
+      where: (filter: any) => ({
+        delete: async () => undefined,
+      }),
+      insert: async (values: any[]) => undefined,
+    });
+    dbFn.raw = async (sql: string, bindings?: any[]) => ({ rows: [] });
+    // A real knex transaction carries a schema builder, and computeTopics probes
+    // it for the topic table before writing; a stub without one would skip that
+    // probe and prove nothing about it.
+    dbFn.schema = { hasTable: async () => true };
+    return dbFn;
+  };
+
+  it("deletes old topics for the context before inserting new ones", async () => {
+    const operations: string[] = [];
+    const deletedContexts: any[] = [];
+    const db: any = (table: string) => ({
+      where: (filter: any) => {
+        deletedContexts.push(filter);
+        return {
+          delete: async () => { operations.push("delete"); },
+        };
+      },
+      insert: async (values: any[]) => { operations.push("insert"); },
+    });
+    db.raw = async (sql: string, bindings?: any[]) => ({ rows: [] });
+    db.schema = { hasTable: async () => true };
+    await computeTopics({
+      db, contextId: "ctx-1", ids: ["a", "b"], coordinates: [[0, 0, 0], [1, 1, 1]], seed: 1, fittedAt: new Date(),
+    });
+    expect(operations).toEqual(["delete", "insert"]);
+    expect(deletedContexts[0]?.context).toBe("ctx-1");
+  });
+
+  it("throws when ids and coordinates lengths differ", async () => {
+    const db = mockDb();
+    await expect(
+      computeTopics({
+        db, contextId: "ctx-1", ids: ["a", "b"], coordinates: [[0, 0, 0]], seed: 1, fittedAt: new Date(),
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("filters out empty clusters and only emits non-empty rows", async () => {
+    const inserted: any[] = [];
+    const db: any = (table: string) => ({
+      where: () => ({ delete: async () => undefined }),
+      insert: async (values: any[]) => { inserted.push(...values); },
+    });
+    // topicCount(10) = 3, so k-means will try 3 clusters
+    // Ten identical points will all be assigned to cluster 0, leaving clusters 1 and 2 empty
+    db.raw = async (sql: string, bindings?: any[]) => ({ rows: [] });
+    db.schema = { hasTable: async () => true };
+    await computeTopics({
+      db, contextId: "ctx-1",
+      ids: Array.from({ length: 10 }, (_, i) => `id-${i}`),
+      coordinates: Array.from({ length: 10 }, () => [0, 0, 0]),
+      seed: 1, fittedAt: new Date(),
+    });
+    // Should emit only 1 row (the non-empty cluster), not 3
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]?.count).toBe(10);
+  });
+
+  it("filters out rows with non-finite coordinates when clustering returns them", async () => {
+    const inserted: any[] = [];
+    const db: any = (table: string) => ({
+      where: () => ({ delete: async () => undefined }),
+      insert: async (values: any[]) => { inserted.push(...values); },
+    });
+    db.raw = async (sql: string, bindings?: any[]) => ({ rows: [] });
+    db.schema = { hasTable: async () => true };
+
+    // Inject a clustering function that returns a deliberately non-finite centroid and one all-finite
+    const malformedCluster = (points: number[][], k: number, seed: number) => ({
+      assignments: [0, 1], // Point 0 in cluster 0 (non-finite), point 1 in cluster 1 (finite)
+      centroids: [[NaN, Infinity, 5], [1, 1, 1]],
+    });
+
+    await computeTopics({
+      db, contextId: "ctx-1",
+      ids: ["a", "b"],
+      coordinates: [[0, 0, 0], [1, 1, 1]],
+      seed: 1, fittedAt: new Date(),
+      clusteringFn: malformedCluster,
+    });
+    // Non-finite cluster 0 should be filtered out; finite cluster 1 survives and is renumbered to topic_index 0
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]?.topic_index).toBe(0);
+    expect(inserted[0]?.label).toBe("Topic 1");
+  });
+
+  /** Records every topic-table operation, and can be told to fail them. */
+  const guardDb = (options: { exists?: boolean; fail?: () => never } = {}) => {
+    const operations: string[] = [];
+    const db: any = (table: string) => ({
+      where: () => ({
+        delete: async () => { operations.push(`delete ${table}`); options.fail?.(); },
+      }),
+      insert: async () => { operations.push(`insert ${table}`); options.fail?.(); },
+    });
+    db.raw = async () => ({ rows: [] });
+    if (options.exists !== undefined) db.schema = { hasTable: async () => options.exists };
+    db.__operations = operations;
+    return db;
+  };
+
+  // The table is created by the boot migration; the fit script opens its own
+  // pool and runs none. Probing first is what lets the caller's transaction
+  // commit the projection row: a statement that raises inside a transaction
+  // aborts it, so a catch would come too late.
+  it("writes nothing and returns 0 when the topic table does not exist", async () => {
+    const db = guardDb({ exists: false });
+    const topics = await computeTopics({
+      db, contextId: "ctx-1", ids: ["a", "b"], coordinates: [[0, 0, 0], [1, 1, 1]], seed: 1, fittedAt: new Date(),
+    });
+    expect(topics).toBe(0);
+    expect(db.__operations).toEqual([]);
+  });
+
+  it("returns 0 for an empty base without touching a table that is not there", async () => {
+    const db = guardDb({ exists: false });
+    const topics = await computeTopics({
+      db, contextId: "ctx-1", ids: [], coordinates: [], seed: 1, fittedAt: new Date(),
+    });
+    expect(topics).toBe(0);
+    expect(db.__operations).toEqual([]);
+  });
+
+  it("survives a missing-table error from the write itself", async () => {
+    // A connection with no schema builder cannot be probed, and the table could
+    // be dropped between the probe and the write.
+    const db = guardDb({
+      fail: () => { throw Object.assign(new Error('relation "context_map_topics" does not exist'), { code: "42P01" }); },
+    });
+    const topics = await computeTopics({
+      db, contextId: "ctx-1", ids: ["a", "b"], coordinates: [[0, 0, 0], [1, 1, 1]], seed: 1, fittedAt: new Date(),
+    });
+    expect(topics).toBe(0);
+    expect(db.__operations).toEqual(["delete context_map_topics"]);
+  });
+
+  it("still fails the fit when the topic write fails for any other reason", async () => {
+    // Swallowing everything would commit a projection row whose regions were
+    // deleted and never replaced, with nothing said about it.
+    const db = guardDb({
+      exists: true,
+      fail: () => { throw Object.assign(new Error("deadlock detected"), { code: "40P01" }); },
+    });
+    await expect(computeTopics({
+      db, contextId: "ctx-1", ids: ["a", "b"], coordinates: [[0, 0, 0], [1, 1, 1]], seed: 1, fittedAt: new Date(),
+    })).rejects.toThrow(/deadlock/);
+  });
+});

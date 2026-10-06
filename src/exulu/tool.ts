@@ -40,6 +40,12 @@ export class ExuluTool {
   public type: ToolType;
   public tool: Tool;
   public needsApproval: boolean;
+  /**
+   * Dynamic approval check (memory tools): decides per call whether the
+   * approval card is shown. When set, the AI SDK wrapper uses it instead of
+   * the boolean and never applies the "Allow for this chat" shortcut.
+   */
+  public needsApprovalFn?: (input: unknown, options: { toolCallId: string; messages: unknown[] }) => Promise<boolean>;
   public authentication?: ExuluAuthConfig;
   public config: {
     name: string;
@@ -58,6 +64,7 @@ export class ExuluTool {
     execute,
     config,
     needsApproval,
+    needsApprovalFn,
     authentication,
   }: {
     id: string;
@@ -73,6 +80,10 @@ export class ExuluTool {
       default?: string | boolean | number | object;
     }[];
     needsApproval?: boolean;
+    // Same intent as needsApproval but evaluated per call (memory tools: only
+    // approval-gate a write the caller may actually make). See the
+    // needsApprovalFn property doc above.
+    needsApprovalFn?: (input: unknown, options: { toolCallId: string; messages: unknown[] }) => Promise<boolean>;
     // When set, Exulu wraps execute with the appropriate authentication flow:
     // - oauth: 3-legged OAuth 2.0 (execute runs with a valid access token
     //   for the calling (toolId, userId); short-circuits with an authorization
@@ -115,6 +126,7 @@ export class ExuluTool {
     this.id = id;
     this.config = config;
     this.needsApproval = needsApproval ?? true;
+    this.needsApprovalFn = needsApprovalFn;
     this.category = category || "default";
     this.name = name;
     this.description = description;

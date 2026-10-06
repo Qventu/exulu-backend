@@ -161,6 +161,7 @@
     "safe-regex": "^2.1.1",
     "tiktoken": "^1.0.21",
     "turndown": "^7.2.2",
+    "umap-js": "^1.4.0",
     "uuid": "^11.1.0",
     "wink-nlp": "^2.4.0",
     "winston": "^3.17.0",

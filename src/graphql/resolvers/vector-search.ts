@@ -13,6 +13,7 @@ import type { User } from "@EXULU_TYPES/models/user";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics";
 import { updateStatistic } from "@SRC/exulu/statistics";
 import { resolveEmbedder } from "@SRC/exulu/resolve-embedder";
+import { ContextEmbedderNotConfiguredError } from "@SRC/exulu/embedder-not-configured";
 import { needsQueryEmbedding, boostsWithQueryEntities } from "./query-embedding-policy";
 import {
   applyEntityFilter,
@@ -153,7 +154,7 @@ export const vectorSearch = async ({
   const { id, queryRewriter, embedder, configuration, resultReranker } = context;
 
   if (!embedder) {
-    throw new Error("Embedder is not set for this context.");
+    throw new ContextEmbedderNotConfiguredError(id);
   }
 
   const mainTable = getTableName(id);

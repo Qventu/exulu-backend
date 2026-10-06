@@ -20,7 +20,9 @@ import type { Item } from "@EXULU_TYPES/models/item";
 import { randomUUID } from "node:crypto";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import type { Request } from "express";
-import { createNewMemoryItemTool } from "./memory-tool";
+import { createMemoryTools } from "@SRC/exulu/memory/tools";
+import { checkMemoryBase } from "@SRC/exulu/memory/memory-base";
+import { isMemoryToolId, type MemoryDecision } from "@SRC/exulu/memory/decisions";
 import { collectKbWriteTools } from "./context-write-tools";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import type { ExuluSkill } from "@EXULU_TYPES/skill";
@@ -185,6 +187,8 @@ export const convertExuluToolsToAiSdkTools = async (
   disabledTools?: string[],
   /** Owner of the session — session files are namespaced by owner, not by the speaker. */
   sessionOwnerId?: number | string,
+  /** Approved memory cards → edits keyed by toolCallId (spec §3.2). */
+  memoryDecisions?: Map<string, MemoryDecision>,
 ): Promise<Record<string, Tool>> => {
   if (!currentTools) return {};
 
@@ -215,6 +219,9 @@ export const convertExuluToolsToAiSdkTools = async (
         currentSkills || [],
         exuluConfig,
         sessionOwnerId ?? user?.id,
+        // Same agent descriptor the tool-call audit emitter uses below, so a
+        // skill.sandbox.created event can be joined to the agent that caused it.
+        agent ? { id: agent.id, name: agent.name, slug: (agent as any).slug } : undefined,
       );
     } catch (err) {
       console.error(
@@ -253,23 +260,26 @@ export const convertExuluToolsToAiSdkTools = async (
     }
   }
 
-  if (agent?.memory && contexts?.length) {
-
-    const context = contexts.find((context) => context.id === agent?.memory);
-    if (!context) {
-      throw new Error(
-        "Context was set for agent memory but not found in the contexts: " +
-        agent?.memory +
-        " please double check with a developer to see if the context was removed from code.",
+  if (agent?.memory) {
+    const memoryContext = contexts.find((context) => context.id === agent.memory);
+    if (!memoryContext) {
+      console.warn(
+        `[EXULU] memory: context "${agent.memory}" configured on agent "${agent.id}" was not found; memory tools off for this turn.`,
       );
-    }
-
-    const createNewMemoryTool = createNewMemoryItemTool(agent, context);
-    if (createNewMemoryTool && !disabled.has(createNewMemoryTool.id)) {
-      if (!currentTools) {
-        currentTools = [];
+    } else if (user?.id) {
+      const check = checkMemoryBase(memoryContext);
+      if (check.ok) {
+        for (const memoryTool of createMemoryTools({ agent, context: memoryContext, user })) {
+          if (!disabled.has(memoryTool.id)) {
+            currentTools = currentTools ?? [];
+            currentTools.push(memoryTool);
+          }
+        }
+      } else {
+        console.warn(
+          `[EXULU] memory: context "${memoryContext.id}" is not a valid memory base (missing: ${check.missing.join(", ")}); memory tools not registered.`,
+        );
       }
-      currentTools.push(createNewMemoryTool);
     }
   }
 
@@ -475,7 +485,11 @@ export const convertExuluToolsToAiSdkTools = async (
           description,
           // The approvedTools array uses the tool.name lookup as the frontend
           // Vercel AI SDK uses the sanitized tool name as the key, so this matches.
-          needsApproval: (approvedTools?.includes("tool-" + cur.name) || !cur.needsApproval) ? false : true, // todo make configurable
+          needsApproval: cur.needsApprovalFn
+            ? (input: unknown, opts: { toolCallId: string; messages: unknown[] }) => cur.needsApprovalFn!(input, opts)
+            : isMemoryToolId(cur.id)
+              ? true
+              : (approvedTools?.includes("tool-" + cur.name) || !cur.needsApproval) ? false : true, // todo make configurable
           // Auth-wrapped tools: the model sees scrub text instead of the
           // credentialRequest/oauth payload; the UI stream keeps the raw
           // output (spec 2026-07-22 §1.2).
@@ -597,6 +611,7 @@ export const convertExuluToolsToAiSdkTools = async (
                 sessionID: sessionID,
                 sessionItems: sessionItems,
                 memory: memoryItems,
+                memoryDecision: memoryDecisions?.get(options?.toolCallId ?? ""),
                 req: req,
                 // Convert config to object format if a config object
                 // is available, after we added the .value property

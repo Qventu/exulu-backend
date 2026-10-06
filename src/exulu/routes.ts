@@ -2,6 +2,7 @@ import { type Express, type Request, type Response, type NextFunction } from "ex
 import { requestValidators } from "../validators/requests.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { postgresClient } from "../postgres/client.ts";
+import { exportContentType, exportFilename, exportMarkdown, type ExportFormat } from "./markdown-export.ts";
 import express from "express";
 import { ApolloServer } from '@apollo/server';
 import cors from "cors";
@@ -62,11 +63,17 @@ import { resumeRoutineRunIfWaiting } from "@SRC/exulu/routines/run-state";
 import { compactSession, CompactionInsufficientError } from "./compact-session.ts";
 import { describeRequestError } from "./request-error.ts";
 import { finishTurnMetadata } from "./turn-metadata.ts";
+import { recalledMemoriesMetadata } from "./memory/recalled-metadata.ts";
+import { recordMemoryUsage } from "./memory/usage.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { transcriptionClient } from "./transcription/client.ts";
 import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts";
+import { registerTranscriptExportRoute } from "./transcription/export-route.ts";
 import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
 import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
+import { transcriptionService } from "./transcription/service.ts";
+import { testSource, type TranscriptionSource } from "./transcription/source-test.ts";
+import { findLiteLLMModel } from "./litellm/catalog.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
 import {
   generateImage,
@@ -115,7 +122,7 @@ import { handleOauthCallback } from "./auth/callback-handler.ts";
 import { handleCredentialSubmit } from "./auth/submit-handler.ts";
 import { handleCredentialList, handleCredentialDelete } from "./auth/manage-handlers.ts";
 import { OAUTH_CALLBACK_PATH } from "./auth/flow.ts";
-import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "./recall/env.ts";
+import { recallEnabled, recallApiBaseUrl, recallApiKey, RECALL_NOT_CONFIGURED_MESSAGE } from "./recall/env.ts";
 import { verifyRecallRequest } from "./recall/verify.ts";
 import { recallService } from "./recall/service.ts";
 import { handleRBACUpdate } from "@EE/rbac-update.ts";
@@ -136,6 +143,10 @@ import {
   guestMessageTooLong,
   guestRateLimitExceeded,
 } from "./guest-rate-limit.ts";
+import {
+  externalRateLimitExceeded,
+  isExternalUser,
+} from "./external-rate-limit.ts";
 import {
   resolveSkillByName,
   canAccessSkill,
@@ -640,7 +651,9 @@ export const createExpressRoutes = async (
       const user = authenticationResult.user;
 
       // Anonymous guest traffic: per-IP rate limits + message caps (§3.5).
-      // These run BEFORE the password gate so every attempt (including failed
+      // Authenticated external-role users: per-user rate limit instead (no
+      // message caps — those exist to bound cost from anonymous drive-bys).
+      // Both run BEFORE the password gate so every attempt (including failed
       // password guesses) consumes limiter budget — prevents bcrypt oracle.
       if (!user?.id) {
         const ip = extractClientIp(req as any);
@@ -650,6 +663,11 @@ export const createExpressRoutes = async (
         }
         if (guestMessageTooLong(req.body)) {
           res.status(413).json({ detail: "Message too long." });
+          return;
+        }
+      } else if (isExternalUser(user)) {
+        if (externalRateLimitExceeded(String(user.id))) {
+          res.status(429).json({ detail: "Too many requests. Try again later." });
           return;
         }
       }
@@ -841,7 +859,10 @@ export const createExpressRoutes = async (
               };
             }
             if (part.type === "finish") {
-              return finishTurnMetadata({ totalUsage: part.totalUsage, startedAt: turnStartedAt });
+              return {
+                ...finishTurnMetadata({ totalUsage: part.totalUsage, startedAt: turnStartedAt }),
+                ...recalledMemoriesMetadata({ recall: result.recall, agent, isGuest: !user?.id }),
+              };
             }
             return undefined;
           },
@@ -893,6 +914,19 @@ export const createExpressRoutes = async (
                   resumeError,
                 );
               }
+            }
+            // Usage tracking (memory usage spec §2.2): one row per recalled
+            // memory per answer, guests included. Never affects the answer.
+            if (agent.memory) {
+              await recordMemoryUsage({
+                db,
+                recall: result.recall,
+                contextId: agent.memory,
+                agentId: agent.id,
+                session: (headers.session as string | undefined) ?? null,
+                messageId: responseMessage?.id ?? messages[messages.length - 1]?.id ?? randomUUID(),
+                userId: user?.id ?? null,
+              });
             }
             const metadata = messages[messages.length - 1]?.metadata as any;
             console.log("[EXULU] Finished streaming", metadata);
@@ -1021,6 +1055,12 @@ export const createExpressRoutes = async (
         return;
       }
       const user = authenticationResult.user;
+      if (isExternalUser(user)) {
+        if (externalRateLimitExceeded(String(user.id))) {
+          res.status(429).json({ message: "Too many requests. Try again later." });
+          return;
+        }
+      }
       const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
       if (!hasAccessToAgent) {
         res.status(401).json({ message: "You don't have access to this agent." });
@@ -1125,6 +1165,13 @@ export const createExpressRoutes = async (
       return;
     }
     const user = authenticationResult.user;
+
+    if (isExternalUser(user)) {
+      if (externalRateLimitExceeded(String(user.id))) {
+        res.status(429).json({ detail: "Too many requests. Try again later." });
+        return;
+      }
+    }
 
     const scopeCheck = checkApiKeyScope(user, agentId);
     if (!scopeCheck.allowed) {
@@ -1329,6 +1376,109 @@ export const createExpressRoutes = async (
     buildTags,
     transcribe: transcribeAudio,
     service: liveRecordingService,
+  });
+
+  // Reading view's Export menu: a saved transcript as markdown, docx, pdf,
+  // csv or srt, built per request so the Include options can vary.
+  // Design doc: docs/superpowers/specs/2026-09-29-transcripts-redesign-design.md §3.2
+  registerTranscriptExportRoute(app, {
+    authenticate: (req) => requestValidators.authenticate(req),
+    getItem: async (itemId, user) => {
+      const context = contexts?.find((c) => c.id === "transcriptions");
+      if (!context) return undefined;
+      const [item] = await context.getItems({
+        filters: [{ id: { eq: itemId } }],
+        fields: [
+          "name",
+          "recording_source",
+          "recorded_at",
+          "duration_seconds",
+          "language",
+          "speakers",
+          "raw_segments",
+          "corrected_segments",
+          "post_processing",
+        ],
+        user: user as any,
+        role: (user as any).role?.id,
+      });
+      return item as never;
+    },
+    // A job that has been reviewed but not published has no item to read
+    // through getItems; the lookup applies the job's own ownership check
+    // instead (transcriptionService.exportableJob). Pass the whole user,
+    // not just its id — same as the GraphQL mutations do — so a
+    // super_admin who reviewed someone else's transcript can also export it
+    // (final fix wave, Finding 3).
+    getJob: (jobId, user) => transcriptionService.exportableJob(jobId, user),
+    convert: (markdown, format) => exportMarkdown(markdown, format),
+  });
+
+  // Sources section of the Transcripts settings page (spec §5): a per-source
+  // reachability check behind the admin's "Test" button. Deliberately a
+  // liveness probe, not a round trip through the model/bot itself — see
+  // testSource's own doc comment. super_admin-gated like setTranscriptsSettings
+  // (src/graphql/mutations/index.ts): the settings page is reachable from a
+  // menu every user sees, so this server-side check is the real protection.
+  const TRANSCRIPTION_SOURCES = ["upload", "meeting", "record"] as const;
+  app.get("/transcription-sources/:source/test", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+    if (!authResult.user.super_admin) {
+      res.status(403).json({ detail: "Only a super admin can test a transcription source." });
+      return;
+    }
+    const source = req.params.source ?? "";
+    if (!(TRANSCRIPTION_SOURCES as readonly string[]).includes(source)) {
+      res.status(400).json({ detail: `Unknown source "${source}".` });
+      return;
+    }
+    try {
+      const result = await testSource(source as TranscriptionSource, {
+        whisperConfigured: () => transcriptionClient.isConfigured(),
+        pingWhisper: async () => {
+          await transcriptionClient.health();
+        },
+        recallConfigured: () => recallEnabled(),
+        // A cheap authenticated GET (one bot, not a real listing) — enough to
+        // prove the API key + region actually work, without pulling a page
+        // of bots just to answer a liveness check.
+        pingRecall: async () => {
+          const url = `${recallApiBaseUrl()}/bot/?limit=1`;
+          const response = await fetch(url, {
+            headers: { Authorization: recallApiKey() as string, accept: "application/json" },
+            signal: AbortSignal.timeout(10_000),
+          }).catch((err) => {
+            throw new Error(`Unable to reach the Recall API: ${(err as Error).message}`);
+          });
+          if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`Recall API ${response.status}: ${body}`);
+          }
+        },
+        recordModelConfigured: () => liveRecordingEnabled(),
+        // Catalogue lookup, not a live transcription call: confirms
+        // TRANSCRIPTION_MODEL is actually declared (and active) in the
+        // deployed LiteLLM config, which is what "reachable" means for a
+        // model this check must never spend tokens on.
+        pingRecordModel: async () => {
+          const modelName = process.env.TRANSCRIPTION_MODEL as string;
+          const model = await findLiteLLMModel(modelName);
+          if (!model) {
+            throw new Error(`LiteLLM has no model named "${modelName}" (TRANSCRIPTION_MODEL).`);
+          }
+          if (model.active === false) {
+            throw new Error(`Model "${modelName}" is configured but marked inactive in LiteLLM.`);
+          }
+        },
+      });
+      res.status(200).json(result);
+    } catch (err) {
+      res.status(400).json({ detail: (err as Error).message });
+    }
   });
 
   // Text-to-speech. Forwards a JSON { text } payload to the LiteLLM proxy's
@@ -2335,6 +2485,80 @@ export const createExpressRoutes = async (
       } else {
         res.end();
       }
+    }
+  });
+
+  /**
+   * GET /contexts/:contextId/items/:itemId/export?field=<name>&format=docx|pdf
+   * Generic "download as Word/PDF" for any ExuluContext field of type
+   * "markdown" (e.g. a training guide's `guide` field) — works for any
+   * context, not just one specific one, since it only needs the field's
+   * declared type. Access to the item itself still goes through the
+   * context's own getItems(), so the same RBAC rules apply as everywhere
+   * else the item is readable.
+   */
+  app.get("/contexts/:contextId/items/:itemId/export", async (req: Request, res: Response) => {
+    const authenticationResult = await requestValidators.authenticate(req);
+    if (!authenticationResult.user?.id) {
+      res.status(authenticationResult.code || 401).json({ detail: authenticationResult.message });
+      return;
+    }
+    const user = authenticationResult.user;
+
+    const formatParam = req.query.format;
+    const format: ExportFormat | null =
+      formatParam === "docx" || formatParam === "pdf" ? formatParam : null;
+    if (!format) {
+      res.status(400).json({ detail: "Query param 'format' must be 'docx' or 'pdf'." });
+      return;
+    }
+
+    const context = contexts?.find((c) => c.id === req.params.contextId);
+    if (!context) {
+      res.status(404).json({ detail: "Context not found." });
+      return;
+    }
+
+    const fieldName = typeof req.query.field === "string" ? req.query.field : undefined;
+    const field = fieldName
+      ? context.fields?.find((f) => f.name === fieldName)
+      : undefined;
+    if (!field || field.type !== "markdown") {
+      res.status(400).json({
+        detail: "Query param 'field' must name a field of type 'markdown' on this context.",
+      });
+      return;
+    }
+
+    const [item] = await context.getItems({
+      filters: [{ id: { eq: req.params.itemId } }],
+      fields: ["name", fieldName as string],
+      user,
+      role: user.role?.id,
+    });
+    if (!item) {
+      res.status(404).json({ detail: "Item not found, or you do not have access to it." });
+      return;
+    }
+
+    const markdown = item[fieldName as string];
+    if (!markdown || typeof markdown !== "string") {
+      res.status(404).json({ detail: `Field '${fieldName}' is empty for this item.` });
+      return;
+    }
+
+    try {
+      const bytes = await exportMarkdown(markdown, format);
+      const filename = exportFilename(item.name ?? "export", field.name, format);
+      res.setHeader("Content-Type", exportContentType(format));
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${encodeURIComponent(filename)}"`,
+      );
+      res.send(bytes);
+    } catch (err) {
+      console.error("[EXULU] markdown export failed", err);
+      res.status(500).json({ detail: "Export failed." });
     }
   });
 

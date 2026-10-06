@@ -8,7 +8,8 @@ import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { ensureEntityTables } from "@SRC/exulu/entities";
 import { contextFieldsForSync } from "@SRC/exulu/context-fields-for-sync";
-import { getTableName } from "@SRC/exulu/table-names";
+import { getTableName, getChunksTableName } from "@SRC/exulu/table-names";
+import { hydrateContextEmbedders } from "@SRC/exulu/hydrate-embedders";
 
 const {
   agentsSchema,
@@ -33,8 +34,14 @@ const {
   jobResultsSchema,
   promptLibrarySchema,
   contextPresetsSchema,
+  contextProjectionsSchema,
+  contextMapTopicsSchema,
   entityTypeSettingsSchema,
   promptFavoritesSchema,
+  memoryUsagesSchema,
+  memoryConflictsSchema,
+  memoryJudgementsSchema,
+  memoryConflictScansSchema,
   transcriptionJobsSchema,
   imageGenerationsSchema,
   sharedArtifactsSchema,
@@ -93,18 +100,20 @@ export const migrateUserCredentialsDataColumn = async (knex: Knex): Promise<void
   }
 };
 
-export const migrateWorkflowTriggersToSecret = async (knex: Knex): Promise<void> => {
-  const hasAddress = await knex.schema.hasColumn("workflow_triggers", "address");
-  if (hasAddress) {
-    // Unshipped feature: old rows carry Mailgun addresses that no longer route.
-    // Clear them so addMissingFields can add the NOT NULL UNIQUE `secret` column.
-    console.log("[EXULU] Migrating workflow_triggers address -> secret (clearing unshipped dev rows).");
-    await knex("workflow_triggers").del();
-    await knex.schema.alterTable("workflow_triggers", (t) => t.dropColumn("address"));
-  }
-  // Remove the retired platform-level inbound config (spec §3.2).
-  await knex("platform_configurations").where({ config_key: "email_inbound" }).del();
-};
+/*
+ * There is deliberately no migration from the retired `workflow_triggers.address`
+ * column to `secret`, and none removing the retired `email_inbound` platform
+ * config. Removed 2026-10-05 (see init-exulu-db.destructive.test.ts).
+ *
+ * The delete was never needed: addMissingFields drops `required` and emits a
+ * nullable column, and Postgres allows many nulls in a unique index, so `secret`
+ * adds cleanly to a table that already has rows. Those rows then carry a null
+ * secret, which the webhook lookup can never match — visibly inert, rather than
+ * silently deleted. The stale `address` column and the orphan config row are
+ * read by nothing and are left in place on purpose: leaving dead data costs a
+ * column and a row, while guessing which deployments are disposable costs
+ * somebody's configuration.
+ */
 
 const up = async function (knex: Knex) {
   console.log("[EXULU] Database up.");
@@ -124,8 +133,14 @@ const up = async function (knex: Knex) {
     jobResultsSchema(),
     promptLibrarySchema(),
     contextPresetsSchema(),
+    contextProjectionsSchema(),
+    contextMapTopicsSchema(),
     entityTypeSettingsSchema(),
     promptFavoritesSchema(),
+    memoryUsagesSchema(),
+    memoryConflictsSchema(),
+    memoryJudgementsSchema(),
+    memoryConflictScansSchema(),
     transcriptionJobsSchema(),
     imageGenerationsSchema(),
     sharedArtifactsSchema(),
@@ -165,13 +180,13 @@ const up = async function (knex: Knex) {
     await createTable(schema);
   }
 
-  // User credentials table replaces oauth_tokens. No backfill is required —
-  // the feature had no production users. DROP IF EXISTS with CASCADE handles
-  // dev installs that had the earlier oauth_tokens table.
-  await knex.raw("DROP TABLE IF EXISTS oauth_tokens CASCADE;");
+  // The user_credentials table replaces the earlier oauth_tokens one. The drop
+  // that used to stand here was removed 2026-10-05: nothing in this package
+  // reads oauth_tokens any more, so an installation that still has it carries a
+  // dead table, which is cheaper to leave than a CASCADE is to get wrong — it
+  // would take whatever depends on the table with it.
   await knex.raw(userCredentialsSchema());
   await migrateUserCredentialsDataColumn(knex);
-  await migrateWorkflowTriggersToSecret(knex);
 
   // Email-trigger dedup (spec §4.4.5): Message-ID lookups per routine are
   // DB-backed so webhook retries, intake-job retries, and Redis restarts can
@@ -278,6 +293,21 @@ const up = async function (knex: Knex) {
     }
   }
 
+  // Review/publish split (spec 2026-10-06): rows already in the knowledge
+  // base were reviewed at the moment they were saved. Stamp them so the UI
+  // does not show every historical transcript as "needs review".
+  // Idempotent: the WHERE clause matches zero rows on every boot after the
+  // first.
+  if (await knex.schema.hasColumn("transcription_jobs", "reviewed_at")) {
+    const stamped = await knex("transcription_jobs")
+      .whereNotNull("saved_item_id")
+      .whereNull("reviewed_at")
+      .update({ reviewed_at: knex.ref("updatedAt") });
+    if (stamped) {
+      console.log(`[EXULU] Stamped reviewed_at on ${stamped} already-published transcripts.`);
+    }
+  }
+
   // Email-triggered routines (spec 2026-07-15 §3.3): job_results gets an
   // explicit `workflow` column (added above by addMissingFields from
   // jobResultsSchema). One-time backfill parses the legacy label format
@@ -311,6 +341,27 @@ const up = async function (knex: Knex) {
     );
   }
 
+  // Memory usage (sub-project 3a): idempotent writes + the aggregate paths.
+  if (await knex.schema.hasTable("memory_usages")) {
+    await knex.raw(
+      `CREATE UNIQUE INDEX IF NOT EXISTS memory_usages_message_memory_uidx
+          ON memory_usages (message_id, memory_id)`,
+    );
+    await knex.raw(
+      `CREATE INDEX IF NOT EXISTS memory_usages_context_memory_created_idx
+          ON memory_usages (context, memory_id, "createdAt")`,
+    );
+    await knex.raw(
+      `CREATE INDEX IF NOT EXISTS memory_usages_context_created_idx
+          ON memory_usages (context, "createdAt")`,
+    );
+  }
+
+  // Memory conflicts (sub-project 3b): upsert idempotence via key, query by context+status.
+  if (await knex.schema.hasTable("memory_conflicts")) {
+    await knex.raw(`CREATE INDEX IF NOT EXISTS memory_conflicts_context_status_idx ON memory_conflicts (context, status)`);
+  }
+
   /*  if (!await knex.schema.hasTable('sessions')) {
          await knex.schema.createTable('sessions', table => {
              table.increments('id').primary();
@@ -338,10 +389,19 @@ const contextDatabases = async (contexts: ExuluContext[]) => {
         contextFieldsForSync(context),
       );
     }
-    const chunksTableExists = await context.chunksTableExists();
-    if (!chunksTableExists && context.embedder) {
+    let hasChunksTable = await context.chunksTableExists();
+    if (!hasChunksTable && context.embedder) {
       console.log("[EXULU] chunks table does not exist, creating it.");
       await context.createChunksTable();
+      hasChunksTable = true;
+    }
+    // Vector map (3c-1): chunk tables have no field-sync path, so the three
+    // coordinate columns are added here. Idempotent on every boot.
+    if (hasChunksTable) {
+      const chunksTable = getChunksTableName(context.id);
+      for (const column of ["px", "py", "pz"]) {
+        await knex.raw(`ALTER TABLE ?? ADD COLUMN IF NOT EXISTS ?? real`, [chunksTable, column]);
+      }
     }
     // Create the entity-layer tables/columns for graph-enabled contexts.
     // No-op when the entity layer is disabled (no types declared/configured).
@@ -353,7 +413,37 @@ export const execute = async ({ contexts }: { contexts: ExuluContext[] }) => {
   const { db } = await postgresClient();
   console.log("[EXULU] Checking Exulu IMP database status.");
   await up(db);
+  // Apply stored embedder overrides before context tables are touched: a
+  // context whose embedder exists only as an override must already have it
+  // when contextDatabases decides whether to create its chunks table.
+  // platform_configurations is created by the core-schema loop above, so
+  // this is the earliest point the setting can be read.
+  await hydrateContextEmbedders(contexts);
   await contextDatabases(contexts);
+  // One-time backfill of the Transcripts home list columns (spec
+  // 2026-09-29 §2.1). addMissingFields has just added the columns as NULL;
+  // it cannot populate them from another table. Idempotent: matches zero
+  // rows on every boot after the first.
+  if (
+    (await db.schema.hasTable("transcriptions_items")) &&
+    (await db.schema.hasColumn("transcriptions_items", "recording_source"))
+  ) {
+    const backfilled = await db.raw(
+      `UPDATE transcriptions_items AS i
+          SET recording_source = COALESCE(j.source, 'whisper'),
+              job_id           = j.id,
+              recorded_at      = COALESCE(j.join_at, j."createdAt"),
+              project_id       = j.project_id
+         FROM transcription_jobs AS j
+        WHERE j.saved_item_id = i.id
+          AND i.recording_source IS NULL`,
+    );
+    if (backfilled?.rowCount) {
+      console.log(
+        `[EXULU] Backfilled transcripts list columns on ${backfilled.rowCount} rows.`,
+      );
+    }
+  }
   console.log("[EXULU] Inserting default user and admin role.");
   const existingAdminRole = await db.from("roles").where({ name: "admin" }).first();
   const existingDefaultRole = await db.from("roles").where({ name: "default" }).first();

@@ -10,6 +10,7 @@ export interface AuditLogger {
   failClosed: boolean;
   isBuiltin: (id: string) => boolean;
   shouldAuditTool: (id: string) => boolean;
+  shouldAuditSkillSandbox: () => boolean;
   record: (event: AuditEvent) => void;
   recordToolCall: (ctx: AuditToolCallInput) => Promise<void>;
   flush: () => Promise<void>;
@@ -21,6 +22,7 @@ const noop: AuditLogger = {
   failClosed: false,
   isBuiltin: () => false,
   shouldAuditTool: () => false,
+  shouldAuditSkillSandbox: () => false,
   record: () => {},
   recordToolCall: async () => {},
   flush: async () => {},
@@ -44,6 +46,9 @@ class RealAuditLogger implements AuditLogger {
     if (t.exclude.includes(id)) return false;
     if (t.include.length > 0) return t.include.includes(id);
     return true;
+  }
+  shouldAuditSkillSandbox(): boolean {
+    return this.resolved.skillSandbox.enabled;
   }
   record(event: AuditEvent) { this.sink.record(event); }
   async recordToolCall(ctx: AuditToolCallInput): Promise<void> {
