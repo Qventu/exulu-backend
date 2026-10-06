@@ -191,6 +191,60 @@ describe("_onRecordingDone claim guard", () => {
     // Claim refused -> no transcript may be requested.
     expect(createAsyncTranscriptSpy).not.toHaveBeenCalled();
   });
+
+  // Final fix wave, Finding 2: a duplicate recording.done re-delivered
+  // against a job a human already signed off on (status "reviewed") must
+  // not walk it backwards into "transcribing" and re-run the transcription.
+  test("does not resurrect a reviewed job: the atomic claim excludes 'reviewed'", async () => {
+    // Simulate the DB refusing the claim (row is reviewed): update returns 0.
+    updateResults[JOBS] = [0];
+
+    await recallService._onRecordingDone("job-1", "rec-1");
+
+    const notIn = (calls[`${JOBS}.whereNotIn`] ?? []).find(
+      (args) => args[0] === "status",
+    );
+    expect(notIn).toBeDefined();
+    expect(notIn![1]).toEqual(expect.arrayContaining(["reviewed"]));
+
+    // Claim refused -> no re-transcription, and the human's sign-off stands.
+    expect(createAsyncTranscriptSpy).not.toHaveBeenCalled();
+  });
+});
+
+// Final fix wave, Finding 2: a duplicate transcript.done re-delivered
+// against a reviewed job must also be a no-op — otherwise it overwrites
+// raw_segments and resets status back to "awaiting_review", silently
+// reverting the human's sign-off even though reviewed_at survives.
+describe("_onTranscriptDone idempotency guard", () => {
+  test("a re-delivered transcript.done against a reviewed job leaves status and raw_segments untouched", async () => {
+    const reviewedRow = {
+      id: "job-1",
+      source: "recall",
+      status: "reviewed",
+      recall_bot_id: "bot-1",
+      recall_recording_id: "rec-1",
+      recall_transcript_id: "tr-1",
+      bot_status: "done",
+      language: null,
+      raw_segments: [{ start: 0, end: 2, text: "Hello world", speaker: "Alice" }],
+      speakers: null,
+      post_processing_prompts: null,
+      post_processing_outputs: null,
+      created_by: 7,
+      join_at: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    firstResults[JOBS] = [reviewedRow];
+
+    await recallService._onTranscriptDone("job-1", "tr-1", "rec-1");
+
+    // Already-processed guard fires before any download or write — status
+    // and raw_segments stay exactly as they were.
+    expect(downloadTranscriptSpy).not.toHaveBeenCalled();
+    expect(calls[`${JOBS}.update`] ?? []).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------

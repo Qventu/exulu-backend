@@ -293,6 +293,21 @@ const up = async function (knex: Knex) {
     }
   }
 
+  // Review/publish split (spec 2026-10-06): rows already in the knowledge
+  // base were reviewed at the moment they were saved. Stamp them so the UI
+  // does not show every historical transcript as "needs review".
+  // Idempotent: the WHERE clause matches zero rows on every boot after the
+  // first.
+  if (await knex.schema.hasColumn("transcription_jobs", "reviewed_at")) {
+    const stamped = await knex("transcription_jobs")
+      .whereNotNull("saved_item_id")
+      .whereNull("reviewed_at")
+      .update({ reviewed_at: knex.ref("updatedAt") });
+    if (stamped) {
+      console.log(`[EXULU] Stamped reviewed_at on ${stamped} already-published transcripts.`);
+    }
+  }
+
   // Email-triggered routines (spec 2026-07-15 §3.3): job_results gets an
   // explicit `workflow` column (added above by addMissingFields from
   // jobResultsSchema). One-time backfill parses the legacy label format

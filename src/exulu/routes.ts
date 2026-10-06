@@ -71,6 +71,7 @@ import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts"
 import { registerTranscriptExportRoute } from "./transcription/export-route.ts";
 import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
 import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
+import { transcriptionService } from "./transcription/service.ts";
 import { testSource, type TranscriptionSource } from "./transcription/source-test.ts";
 import { findLiteLLMModel } from "./litellm/catalog.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
@@ -1379,6 +1380,13 @@ export const createExpressRoutes = async (
       });
       return item as never;
     },
+    // A job that has been reviewed but not published has no item to read
+    // through getItems; the lookup applies the job's own ownership check
+    // instead (transcriptionService.exportableJob). Pass the whole user,
+    // not just its id — same as the GraphQL mutations do — so a
+    // super_admin who reviewed someone else's transcript can also export it
+    // (final fix wave, Finding 3).
+    getJob: (jobId, user) => transcriptionService.exportableJob(jobId, user),
     convert: (markdown, format) => exportMarkdown(markdown, format),
   });
 

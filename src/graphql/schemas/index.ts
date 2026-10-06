@@ -1179,6 +1179,7 @@ type PageInfo {
   mutationDefs += `
     transcriptionJobStart(input: TranscriptionJobStartInput!): transcription_job
     transcriptionJobFinalize(id: ID!, input: TranscriptionJobFinalizeInput!): TranscriptionJobFinalizeResult
+    transcriptionJobMarkReviewed(id: ID!, input: TranscriptionJobFinalizeInput!): transcription_job
     transcriptionJobCancel(id: ID!): transcription_job
     meetingBotStart(input: MeetingBotStartInput!): transcription_job
     runTranscriptPostProcessing(id: ID!, prompt_id: ID!, agent_id: ID!): transcription_job
@@ -2537,6 +2538,19 @@ type EmbeddingModelOption {
       corrected_segments: args.input.corrected_segments,
     });
     return { job: row, item_id: item.id };
+  };
+
+  resolvers.Mutation["transcriptionJobMarkReviewed"] = async (_, args, context) => {
+    await assertOwnsTranscriptionJob(args.id, context);
+    return transcriptionService.markReviewed(args.id, {
+      title: args.input.title,
+      speakers: args.input.speakers,
+      project_id: args.input.project_id ?? null,
+      target_rights_mode: args.input.target_rights_mode ?? null,
+      target_rbac_users: args.input.target_rbac_users ?? undefined,
+      target_rbac_roles: args.input.target_rbac_roles ?? undefined,
+      corrected_segments: args.input.corrected_segments,
+    });
   };
 
   resolvers.Mutation["transcriptionJobCancel"] = async (_, args, context) => {

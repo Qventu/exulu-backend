@@ -851,6 +851,10 @@ const transcriptionJobsSchema: ExuluTableDefinition = {
     { name: "target_rbac_users", type: "json" },
     { name: "target_rbac_roles", type: "json" },
     { name: "saved_item_id", type: "uuid", required: false },
+    // Review is independent of publication: a transcript can be signed off
+    // without entering the knowledge base. `saved_item_id` still answers
+    // "published?"; this answers "reviewed?" (and when).
+    { name: "reviewed_at", type: "date", required: false },
     { name: "error", type: "text" },
     // Recall.ai meeting-bot fields. source discriminates the pipeline: whisper
     // rows are driven by the polling loop, recall rows by webhooks.
