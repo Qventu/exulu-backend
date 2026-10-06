@@ -292,6 +292,326 @@ export function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): 
   return operatorTypes;
 }
 
+/**
+ * The slice of the generated SDL that takes no argument from `createSDL` —
+ * exported so a GraphQL-parse regression test can reach it without building an
+ * executable schema or touching a resolver.
+ *
+ * A FUNCTION, deliberately, and it must stay one. It interpolates module-level
+ * runtime state — `ExuluQueues.list` for `QueueEnum`, among others — and a
+ * template literal is evaluated where it is written. As a module-level `const`
+ * it rendered at import time, before any `ExuluQueues.register()` call site has
+ * run (every one of them is inside a function body, and this module is imported
+ * transitively by `routes.ts` long before `ExuluApp.create()` executes). The
+ * result was `enum QueueEnum { NO_QUEUES }` baked into the schema, which still
+ * parses, still type-checks and still passes every test — while making
+ * `queue`, `jobs`, `drainQueue`, `pauseQueue`, `resumeQueue`, `deleteJob` and
+ * `retryJob` reject every call, since each takes a `QueueEnum!`.
+ */
+export function genericTypes(): string {
+  return `
+
+type AgentCapabilities {
+    text: Boolean
+    images: [String]
+    files: [String]
+    audio: [String]
+    video: [String]
+}
+
+type AgentEvalFunction {
+    id: ID!
+    name: String!
+    description: String!
+    config: [AgentEvalFunctionConfig!]
+}
+
+type AgentEvalFunctionConfig {
+    name: String!
+    description: String!
+}
+
+type ItemChunks {
+    chunk_id: String!
+    chunk_metadata: JSON!
+    chunk_index: Int!
+    chunk_content: String!
+    chunk_source: String!
+    chunk_created_at: Date!
+    chunk_updated_at: Date!
+}
+
+type Provider {
+  id: ID!
+  name: String!
+  description: String
+  providerName: String
+  provider: String
+  modelName: String
+  type: EnumProviderType!
+  authenticationInformation: String
+  maxContextLength: Int
+  capabilities: JSON
+}
+
+type Eval {
+    id: ID!
+    name: String!
+    description: String!
+    llm: Boolean!
+    config: [EvalConfig!]
+}
+
+type EvalConfig {
+    name: String!
+    description: String!
+}
+
+type Context {
+    id: ID!
+    name: String!
+    description: String
+    embedder: Embedder
+    slug: String
+    active: Boolean
+    fields: JSON
+    configuration: JSON
+    sources: [ContextSource]
+    processor: ContextProcessor
+    """
+    Health aggregates over non-archived items (knowledge V2 KB-3/KB-4).
+    Computed lazily — only when one of these fields is selected — so plain
+    context queries pay nothing. item_count: total; chunk_total: SUM of
+    chunks_count; stuck_count: items with 0/NULL chunks; stale_count: items
+    whose embeddings are older than 30 days.
+    """
+    item_count: Int
+    chunk_total: Int
+    stuck_count: Int
+    stale_count: Int
+    memoryBase: MemoryBaseCheck!
+}
+type MemoryBaseCheck {
+    ok: Boolean!
+    missing: [String!]!
+}
+type MemoryBaseUser {
+    id: Int!
+    name: String!
+}
+type MemoryBaseStats {
+    total: Int!
+    public: Int!
+    private: Int!
+    contributors: Int!
+    visible: Int!
+    lastSavedAt: String
+    lastSavedBy: MemoryBaseUser
+}
+type MemoryBaseAgent {
+    id: ID!
+    name: String!
+}
+type MemoryBase {
+    id: ID!
+    name: String!
+    description: String
+    valid: Boolean!
+    missing: [String!]!
+    missingFromCode: Boolean!
+    agents: [MemoryBaseAgent!]!
+    stats: MemoryBaseStats
+}
+type MemoryUsageSummary { memoryId: ID!  count: Int!  lastUsedAt: String }
+type MemoryUsageEntry {
+    sessionId: String
+    messageId: String!
+    usedAt: String!
+    agent: MemoryBaseAgent
+    user: MemoryBaseUser
+    title: String
+}
+type MemoryUsage { count: Int!  lastUsedAt: String  recent: [MemoryUsageEntry!]! }
+type MemoryWeekBucket { weekStart: String!  count: Int! }
+type MemoryMostUsed { id: ID!  information: String!  count: Int!  lastUsedAt: String }
+type MemoryBaseUsage {
+    used: Int!
+    neverUsed: Int!
+    stale: Int!
+    mostUsed: [MemoryMostUsed!]!
+    newPerWeek: [MemoryWeekBucket!]!
+}
+enum MemoryUnusedMode { NEVER  STALE }
+enum MemoryConflictAction { KEEP  MERGE  NOT_CONFLICT }
+input MemoryMergeInput { information: String!  type: String }
+type MemoryConflictMember { id: ID!  information: String!  type: String  author: MemoryBaseUser  createdAt: String!  usedCount: Int! }
+type MemoryConflict { id: ID!  kind: String!  status: String!  similarity: Float!  reason: String  members: [MemoryConflictMember!]!  scannedAt: String!  resolvedAt: String  resolution: String  mergedInto: ID }
+type MemoryConflictCounts { open: Int!  memoriesInvolved: Int!  lastScanAt: String }
+type MemoryConflictsForMemory { open: [MemoryConflict!]!  mergedFrom: [MemoryConflictMember!]! }
+type MemoryConflictScanResult { open: Int!  duplicateGroups: Int!  contradictionGroups: Int!  judged: Int!  unjudged: Int!  skipped: Int!  scannedAt: String! }
+type MemoryMergeSuggestion { information: String!  type: String }
+enum ContextMapMode { DOCUMENTS  PASSAGES }
+type ContextMapPoint {
+    id: ID!
+    itemId: ID!
+    x: Float!
+    y: Float!
+    z: Float!
+    label: String!
+    """
+    The name of the item this point came from. In PASSAGES mode the label is
+    the chunk's own opening — the matched text, header and all — while this is
+    what a reader calls the document; in DOCUMENTS mode the two agree. Empty
+    when the item has no name.
+    """
+    itemName: String!
+    group: String
+    chunks: Int!
+}
+type ContextMapPoints { points: [ContextMapPoint!]!  total: Int!  sampled: Boolean! }
+type ContextMapEdge { source: ID!  target: ID!  score: Float! }
+type ContextMapTopic {
+    id: ID!
+    label: String!
+    count: Int!
+    x: Float!
+    y: Float!
+    z: Float!
+}
+type ContextProjectionStatus {
+    fitted: Boolean!
+    method: String
+    fittedAt: String
+    sampleSize: Int
+    dims: Int
+    components: Int
+    residual: Float
+    mappedChunks: Int!
+    totalChunks: Int!
+}
+type Reranker {
+    id: ID!
+    name: String!
+    description: String
+}
+type Embedder {
+    model: String!
+    queue: String
+}
+type ContextProcessor {
+    name: String!
+    description: String
+    queue: String
+    trigger: String
+    timeoutInSeconds: Int
+    generateEmbeddings: Boolean
+}
+
+type ContextSource {
+    id: String!
+    name: String!
+    description: String!
+    config: ContextSourceConfig!
+}
+
+type ContextSourceConfig {
+    schedule: String
+    queue: String
+    retries: Int
+    backoff: ContextSourceBackoff
+    params: [ContextSourceParam!]
+}
+
+type ContextSourceParam {
+    name: String!
+    description: String!
+    default: String
+}
+
+type ContextSourceBackoff {
+    type: String
+    delay: Int
+}
+
+type RunEvalReturnPayload {
+    jobs: [String!]!
+    count: Int!
+}
+
+type RunWorkflowReturnPayload {
+    result: JSON
+    job: String
+    metadata: JSON
+}
+
+type WorkflowScheduleReturnPayload {
+    status: String!
+    job: String
+}
+
+type JobActionReturnPayload {
+    success: Boolean!
+}
+
+type ContextField {
+    name: String!
+    type: String!
+    unique: Boolean
+    label: String
+}
+
+type Tool {
+  id: ID!
+  name: String!
+  description: String
+  category: String
+  type: String
+  config: JSON
+}
+
+type Job {
+  id: String!
+  name: String!
+  returnvalue: JSON
+  stacktrace: [String]
+  finishedOn: Date
+  processedOn: Date
+  attemptsMade: Int
+  failedReason: String
+  state: String!
+  data: JSON
+  timestamp: Date
+}
+
+enum EnumProviderType {
+  agent
+}
+
+enum QueueEnum {
+  ${ExuluQueues.list.keys().toArray().length > 0 ? ExuluQueues.list.keys().toArray().join("\n") : "NO_QUEUES"}
+}
+
+enum JobStateEnum {
+  ${JOB_STATUS_ENUM.active}
+  ${JOB_STATUS_ENUM.waiting}
+  ${JOB_STATUS_ENUM.delayed}
+  ${JOB_STATUS_ENUM.failed}
+  ${JOB_STATUS_ENUM.completed}
+  ${JOB_STATUS_ENUM.paused}
+  ${JOB_STATUS_ENUM.stuck}
+  ${JOB_STATUS_ENUM.waiting_approval}
+  ${JOB_STATUS_ENUM.filtered}
+  ${JOB_STATUS_ENUM.cancelled}
+}
+
+type StatisticsResult {
+  group: String!
+  count: Int!
+}
+`;
+}
+
+
 export function createSDL(
   tables: ExuluTableDefinition[],
   contexts: ExuluContext[],
@@ -3035,302 +3355,9 @@ type EmbeddingModelOption {
   typeDefs += "}\n";
   mutationDefs += "}\n";
 
-  // Add generic types used across all tables
-  const genericTypes = `
-
-type AgentCapabilities {
-    text: Boolean
-    images: [String]
-    files: [String]
-    audio: [String]
-    video: [String]
-}
-
-type AgentEvalFunction {
-    id: ID!
-    name: String!
-    description: String!
-    config: [AgentEvalFunctionConfig!]
-}
-
-type AgentEvalFunctionConfig {
-    name: String!
-    description: String!
-}
-
-type ItemChunks {
-    chunk_id: String!
-    chunk_metadata: JSON!
-    chunk_index: Int!
-    chunk_content: String!
-    chunk_source: String!
-    chunk_created_at: Date!
-    chunk_updated_at: Date!
-}
-
-type Provider {
-  id: ID!
-  name: String!
-  description: String
-  providerName: String
-  provider: String
-  modelName: String
-  type: EnumProviderType!
-  authenticationInformation: String
-  maxContextLength: Int
-  capabilities: JSON
-}
-
-type Eval {
-    id: ID!
-    name: String!
-    description: String!
-    llm: Boolean!
-    config: [EvalConfig!]
-}
-
-type EvalConfig {
-    name: String!
-    description: String!
-}
-
-type Context {
-    id: ID!
-    name: String!
-    description: String
-    embedder: Embedder
-    slug: String
-    active: Boolean
-    fields: JSON
-    configuration: JSON
-    sources: [ContextSource]
-    processor: ContextProcessor
-    """
-    Health aggregates over non-archived items (knowledge V2 KB-3/KB-4).
-    Computed lazily — only when one of these fields is selected — so plain
-    context queries pay nothing. item_count: total; chunk_total: SUM of
-    chunks_count; stuck_count: items with 0/NULL chunks; stale_count: items
-    whose embeddings are older than 30 days.
-    """
-    item_count: Int
-    chunk_total: Int
-    stuck_count: Int
-    stale_count: Int
-    memoryBase: MemoryBaseCheck!
-}
-type MemoryBaseCheck {
-    ok: Boolean!
-    missing: [String!]!
-}
-type MemoryBaseUser {
-    id: Int!
-    name: String!
-}
-type MemoryBaseStats {
-    total: Int!
-    public: Int!
-    private: Int!
-    contributors: Int!
-    visible: Int!
-    lastSavedAt: String
-    lastSavedBy: MemoryBaseUser
-}
-type MemoryBaseAgent {
-    id: ID!
-    name: String!
-}
-type MemoryBase {
-    id: ID!
-    name: String!
-    description: String
-    valid: Boolean!
-    missing: [String!]!
-    missingFromCode: Boolean!
-    agents: [MemoryBaseAgent!]!
-    stats: MemoryBaseStats
-}
-type MemoryUsageSummary { memoryId: ID!  count: Int!  lastUsedAt: String }
-type MemoryUsageEntry {
-    sessionId: String
-    messageId: String!
-    usedAt: String!
-    agent: MemoryBaseAgent
-    user: MemoryBaseUser
-    title: String
-}
-type MemoryUsage { count: Int!  lastUsedAt: String  recent: [MemoryUsageEntry!]! }
-type MemoryWeekBucket { weekStart: String!  count: Int! }
-type MemoryMostUsed { id: ID!  information: String!  count: Int!  lastUsedAt: String }
-type MemoryBaseUsage {
-    used: Int!
-    neverUsed: Int!
-    stale: Int!
-    mostUsed: [MemoryMostUsed!]!
-    newPerWeek: [MemoryWeekBucket!]!
-}
-enum MemoryUnusedMode { NEVER  STALE }
-enum MemoryConflictAction { KEEP  MERGE  NOT_CONFLICT }
-input MemoryMergeInput { information: String!  type: String }
-type MemoryConflictMember { id: ID!  information: String!  type: String  author: MemoryBaseUser  createdAt: String!  usedCount: Int! }
-type MemoryConflict { id: ID!  kind: String!  status: String!  similarity: Float!  reason: String  members: [MemoryConflictMember!]!  scannedAt: String!  resolvedAt: String  resolution: String  mergedInto: ID }
-type MemoryConflictCounts { open: Int!  memoriesInvolved: Int!  lastScanAt: String }
-type MemoryConflictsForMemory { open: [MemoryConflict!]!  mergedFrom: [MemoryConflictMember!]! }
-type MemoryConflictScanResult { open: Int!  duplicateGroups: Int!  contradictionGroups: Int!  judged: Int!  unjudged: Int!  skipped: Int!  scannedAt: String! }
-type MemoryMergeSuggestion { information: String!  type: String }
-enum ContextMapMode { DOCUMENTS  PASSAGES }
-type ContextMapPoint {
-    id: ID!
-    itemId: ID!
-    x: Float!
-    y: Float!
-    z: Float!
-    label: String!
-    group: String
-    chunks: Int!
-}
-type ContextMapPoints { points: [ContextMapPoint!]!  total: Int!  sampled: Boolean! }
-type ContextMapEdge { source: ID!  target: ID!  score: Float! }
-type ContextMapTopic {
-    id: ID!
-    label: String!
-    count: Int!
-    x: Float!
-    y: Float!
-    z: Float!
-}
-type ContextProjectionStatus {
-    fitted: Boolean!
-    method: String
-    fittedAt: String
-    sampleSize: Int
-    dims: Int
-    components: Int
-    residual: Float
-    mappedChunks: Int!
-    totalChunks: Int!
-}
-type Reranker {
-    id: ID!
-    name: String!
-    description: String
-}
-type Embedder {
-    model: String!
-    queue: String
-}
-type ContextProcessor {
-    name: String!
-    description: String
-    queue: String
-    trigger: String
-    timeoutInSeconds: Int
-    generateEmbeddings: Boolean
-}
-
-type ContextSource {
-    id: String!
-    name: String!
-    description: String!
-    config: ContextSourceConfig!
-}
-
-type ContextSourceConfig {
-    schedule: String
-    queue: String
-    retries: Int
-    backoff: ContextSourceBackoff
-    params: [ContextSourceParam!]
-}
-
-type ContextSourceParam {
-    name: String!
-    description: String!
-    default: String
-}
-
-type ContextSourceBackoff {
-    type: String
-    delay: Int
-}
-
-type RunEvalReturnPayload {
-    jobs: [String!]!
-    count: Int!
-}
-
-type RunWorkflowReturnPayload {
-    result: JSON
-    job: String
-    metadata: JSON
-}
-
-type WorkflowScheduleReturnPayload {
-    status: String!
-    job: String
-}
-
-type JobActionReturnPayload {
-    success: Boolean!
-}
-
-type ContextField {
-    name: String!
-    type: String!
-    unique: Boolean
-    label: String
-}
-
-type Tool {
-  id: ID!
-  name: String!
-  description: String
-  category: String
-  type: String
-  config: JSON
-}
-
-type Job {
-  id: String!
-  name: String!
-  returnvalue: JSON
-  stacktrace: [String]
-  finishedOn: Date
-  processedOn: Date
-  attemptsMade: Int
-  failedReason: String
-  state: String!
-  data: JSON
-  timestamp: Date
-}
-
-enum EnumProviderType {
-  agent
-}
-
-enum QueueEnum {
-  ${ExuluQueues.list.keys().toArray().length > 0 ? ExuluQueues.list.keys().toArray().join("\n") : "NO_QUEUES"}
-}
-
-enum JobStateEnum {
-  ${JOB_STATUS_ENUM.active}
-  ${JOB_STATUS_ENUM.waiting}
-  ${JOB_STATUS_ENUM.delayed}
-  ${JOB_STATUS_ENUM.failed}
-  ${JOB_STATUS_ENUM.completed}
-  ${JOB_STATUS_ENUM.paused}
-  ${JOB_STATUS_ENUM.stuck}
-  ${JOB_STATUS_ENUM.waiting_approval}
-  ${JOB_STATUS_ENUM.filtered}
-  ${JOB_STATUS_ENUM.cancelled}
-}
-
-type StatisticsResult {
-  group: String!
-  count: Int!
-}
-`;
-
-  const fullSDL = typeDefs + mutationDefs + modelDefs + genericTypes;
+  // genericTypes (generic types used across all tables) is the module-level
+  // export above — see its comment for why it is a function and must stay one.
+  const fullSDL = typeDefs + mutationDefs + modelDefs + genericTypes();
 
   // -------------- Create Schema ------------------
 

@@ -88,13 +88,13 @@ describe("contextMapPoints", () => {
   it("returns one point per item in DOCUMENTS mode, scoped to the viewer's items", async () => {
     const db = fakeDb({
       mem_chunks: [
-        { id: "i1", itemId: "i1", x: "0.5", y: "-0.25", z: "0", label: "Encoder", group: "FACT", chunks: "3" },
+        { id: "i1", itemId: "i1", x: "0.5", y: "-0.25", z: "0", label: "Encoder", itemName: "Encoder", group: "FACT", chunks: "3" },
       ],
       "mem_chunks#first": [{ c: "1" }],
     });
     const out = await contextMapPoints({ db, context, user, mode: "DOCUMENTS", groupField: "type", limit: 10 });
     expect(out).toEqual({
-      points: [{ id: "i1", itemId: "i1", x: 0.5, y: -0.25, z: 0, label: "Encoder", group: "FACT", chunks: 3 }],
+      points: [{ id: "i1", itemId: "i1", x: 0.5, y: -0.25, z: 0, label: "Encoder", itemName: "Encoder", group: "FACT", chunks: 3 }],
       total: 1, sampled: false,
     });
     expect(db.__log.some((l: any[]) => l[1] === "whereNotNull" && String(l[2]).includes("px"))).toBe(true);
@@ -102,6 +102,63 @@ describe("contextMapPoints", () => {
     // Once for the total, once for the rows. Without the count, dropping the
     // gate from one of the two paths would still satisfy "was called".
     expect(accessControl()).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * The name of the item a point came from, which is what every surface showing
+   * a point calls it.
+   *
+   * In PASSAGES mode `label` is the chunk's own opening, and a corpus that
+   * injects a document header into every chunk therefore opens every passage
+   * with `--- Document (Exulu ID: …) ---`. The items table is already joined
+   * for the access-control gate, so the name costs nothing to carry — it was
+   * simply never selected, which left a tooltip, a panel heading and every
+   * neighbour row showing an identifier.
+   */
+  describe("itemName", () => {
+    /** Every emitted `… as "itemName"` expression. */
+    const nameSql = (db: any) =>
+      db.__log.filter((l: any[]) => l[0] === "raw" && String(l[1]).includes('as "itemName"')).map((l: any[]) => String(l[1]));
+
+    it("carries the item's name beside the passage opening in PASSAGES mode", async () => {
+      const header = "--- Document (Exulu ID: 6adc924b-1423-42ac-8b9d-0f0f0f0f0f0f) ---";
+      const db = fakeDb({
+        mem_chunks: [
+          { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", label: header, itemName: "Price list 2026", group: null, chunks: "1" },
+        ],
+        "mem_chunks#first": [{ c: "1" }],
+      });
+      const out = await contextMapPoints({ db, context, user, mode: "PASSAGES", limit: 10 });
+      // `label` is still the matched text, header and all: it is what the
+      // passage says, and the panel shows it as such.
+      expect(out.points[0]).toMatchObject({ label: header, itemName: "Price list 2026" });
+      expect(nameSql(db)).toContain('items.name as "itemName"');
+    });
+
+    it("carries it in DOCUMENTS mode too, where the name is also the label", async () => {
+      const db = fakeDb({
+        mem_chunks: [
+          { id: OWNER, itemId: OWNER, x: "0", y: "0", z: "0", label: "Price list 2026", itemName: "Price list 2026", group: null, chunks: "7" },
+        ],
+        "mem_chunks#first": [{ c: "1" }],
+      });
+      const out = await contextMapPoints({ db, context, user, mode: "DOCUMENTS", limit: 10 });
+      expect(out.points[0]).toMatchObject({ itemName: "Price list 2026" });
+      expect(nameSql(db)).toContain('items.name as "itemName"');
+    });
+
+    // `name` is nullable on an items table, and a null name reaching the client
+    // as the string "null" is the one answer worse than an empty heading.
+    it("answers an empty string for an item with no name", async () => {
+      const db = fakeDb({
+        mem_chunks: [
+          { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", label: "some text", itemName: null, group: null, chunks: "1" },
+        ],
+        "mem_chunks#first": [{ c: "1" }],
+      });
+      const out = await contextMapPoints({ db, context, user, mode: "PASSAGES", limit: 10 });
+      expect(out.points[0]?.itemName).toBe("");
+    });
   });
 
   it("flags a sampled result when the base is larger than the limit", async () => {
