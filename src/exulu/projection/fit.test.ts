@@ -479,10 +479,15 @@ describe("fitContextProjection", () => {
 
   // The fit computes a true position for every sampled chunk and then learns a
   // linear map, which is what places the chunks that arrive after it. Storing
-  // the approximation for the sampled ones too is what flattened the first real
-  // base (measured there: corr(px, py) = -0.80), because a linear map cannot
-  // reproduce a non-linear embedding and collapses it toward its dominant
-  // direction.
+  // the map's estimate for the sampled ones too would store an approximation of
+  // something the fit already knows exactly, which is why this contract exists
+  // and why it is worth pinning.
+  //
+  // It is not, despite an earlier version of this comment and the -0.80
+  // correlation it cited, what flattened the first real base: making the change
+  // moved that base's corr(px, py) from -0.795 to -0.779. The cause was the
+  // camera, and the rotation is what fixed it (see the test below, which pins
+  // that one).
   it("stores the layout position for a sampled chunk and the linear map for the rest", async () => {
     // Two kinds of chunk: ten in the fit's sample, one that arrived after it.
     const written: Record<string, number[]> = {};

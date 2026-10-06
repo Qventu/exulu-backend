@@ -188,12 +188,17 @@ export async function fitContextProjection({
     return { fitted: true, sampleSize: vectors.length, components: basis.length, residual, written: 0, heldOut, topics: 0 };
   }
 
-  // The fit computed a true position for every sampled chunk. Storing the linear
-  // approximation for those too is what flattened the cloud: a linear map cannot
-  // reproduce a non-linear embedding, so it collapses the structure toward its
-  // dominant direction (measured on a real base: corr(px, py) = -0.80). The map
-  // is still what places a chunk that arrives after the fit, which is all it was
-  // ever learned for.
+  // The fit computed a true position for every sampled chunk, so storing the
+  // linear map's estimate for those too would store an approximation of
+  // something this function already knows exactly. That is the whole reason for
+  // this contract. The map is still what places a chunk that arrives AFTER the
+  // fit, which is all it was ever learned for.
+  //
+  // What this is NOT is the fix for the flattened cloud, though an earlier
+  // version of this comment claimed exactly that and cited corr(px, py) = -0.80
+  // as the evidence. Making this change moved that correlation from -0.795 to
+  // -0.779, which is nothing. The cause was the camera, and the fix is the
+  // rotation 45 lines above.
   const sampledLayout = new Map<string, [number, number, number]>();
   for (const [i, s] of sampled.entries()) {
     const p = layout[i];
