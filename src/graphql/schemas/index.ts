@@ -292,11 +292,24 @@ export function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): 
   return operatorTypes;
 }
 
-// Hoisted to module scope (and exported) so a GraphQL-parse regression test can
-// import it directly without building an executable schema or touching resolvers.
-// It is parameter-independent: no reference to this function's tables/contexts/
-// tools/config/evals args, only module-level imports already in scope above.
-export const genericTypes = `
+/**
+ * The slice of the generated SDL that takes no argument from `createSDL` —
+ * exported so a GraphQL-parse regression test can reach it without building an
+ * executable schema or touching a resolver.
+ *
+ * A FUNCTION, deliberately, and it must stay one. It interpolates module-level
+ * runtime state — `ExuluQueues.list` for `QueueEnum`, among others — and a
+ * template literal is evaluated where it is written. As a module-level `const`
+ * it rendered at import time, before any `ExuluQueues.register()` call site has
+ * run (every one of them is inside a function body, and this module is imported
+ * transitively by `routes.ts` long before `ExuluApp.create()` executes). The
+ * result was `enum QueueEnum { NO_QUEUES }` baked into the schema, which still
+ * parses, still type-checks and still passes every test — while making
+ * `queue`, `jobs`, `drainQueue`, `pauseQueue`, `resumeQueue`, `deleteJob` and
+ * `retryJob` reject every call, since each takes a `QueueEnum!`.
+ */
+export function genericTypes(): string {
+  return `
 
 type AgentCapabilities {
     text: Boolean
@@ -596,6 +609,7 @@ type StatisticsResult {
   count: Int!
 }
 `;
+}
 
 
 export function createSDL(
@@ -3341,9 +3355,9 @@ type EmbeddingModelOption {
   typeDefs += "}\n";
   mutationDefs += "}\n";
 
-  // genericTypes (generic types used across all tables) is now the
-  // module-level export above — see its comment for why.
-  const fullSDL = typeDefs + mutationDefs + modelDefs + genericTypes;
+  // genericTypes (generic types used across all tables) is the module-level
+  // export above — see its comment for why it is a function and must stay one.
+  const fullSDL = typeDefs + mutationDefs + modelDefs + genericTypes();
 
   // -------------- Create Schema ------------------
 
