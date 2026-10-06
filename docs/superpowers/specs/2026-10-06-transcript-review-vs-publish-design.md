@@ -111,9 +111,11 @@ awaiting_review ──markReviewed──▶ reviewed ──publish──▶ save
 
 - **`transcriptionJobMarkReviewed(id, input)`** — new. Persists the same
   corrections `finalize` would (speakers, `corrected_segments`, title,
-  sharing intent, project), renders `transcript_text` so an export has
-  something to serve, sets `reviewed_at` and `status: "reviewed"`. Creates
-  no item.
+  sharing intent, project), sets `reviewed_at` and `status: "reviewed"`.
+  Creates no item, and renders no text: `transcript_text` is a field on the
+  context item, and the export builders already read `raw_segments` +
+  `corrected_segments` + `speakers`, all of which the job carries. A second
+  rendered copy on the job could drift from the corrections it came from.
 - **`transcriptionJobFinalize`** — unchanged in behaviour, now also accepted
   from `reviewed`. Sets `reviewed_at` if it is still null.
 - **`cancelJob`** — unchanged, and still reachable from `reviewed`.
@@ -130,9 +132,9 @@ upserts the existing item.
 - `schemas/index.ts`: the `transcriptionJobMarkReviewed` mutation, mirroring
   `transcriptionJobFinalize`'s input type.
 - `export-route.ts`: a second route, `GET /transcription-jobs/:jobId/export`,
-  serving the same formats from the job's rendered text. Same header auth,
-  same format set; it refuses a job with no `transcript_text` (i.e. one that
-  has not been reviewed) rather than exporting a raw transcript by accident.
+  serving the same formats from the job's own segments. Same header auth,
+  same format set; it refuses a job with no `reviewed_at` rather than
+  exporting an unchecked transcript as though it were signed off.
 
 **Frontend**
 - `types.ts`: a `reviewed` row state and its mapping; the job-row filter stops
@@ -157,22 +159,23 @@ existing, per the project convention. Nothing else moves.
   failure. The reviewer retries; nothing is half-applied, because the only
   write is one row update.
 - **Export of an unreviewed job** — 409 with a message naming the reason,
-  not a silent raw-transcript export.
+  not a silent export of the unchecked transcript.
 - **Publish of an already-published job** — unchanged: upsert.
 - **A reviewed job whose recording is deleted by retention** — unaffected;
-  the rendered text lives on the job.
+  the segments and the speaker map live on the job, and the export is built
+  from those, not from the media.
 
 ## Testing
 
 Backend (jest):
-- `markReviewed` from `awaiting_review` sets `reviewed_at`, status and
-  `transcript_text`, and creates no item.
+- `markReviewed` from `awaiting_review` sets `reviewed_at` and status,
+  persists the corrections, and creates no item.
 - `finalize` from `reviewed` publishes and leaves `reviewed_at` at its
   original value.
 - `finalize` from `awaiting_review` still stamps `reviewed_at` (the one-step
   path).
 - `markReviewed` from `saved` is refused.
-- The job export route refuses a job with no `transcript_text`.
+- The job export route refuses a job with no `reviewed_at`.
 
 Frontend (vitest): the three-way state derivation as a pure function —
 status + `saved_item_id` → `needs_review` | `reviewed` | `published`.
