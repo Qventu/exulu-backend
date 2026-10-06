@@ -107,6 +107,12 @@ export const ENV_CLASSIFICATION: Record<string, "secret" | "runtime"> = {
   AUTH_MODE: "runtime", // "password" | "otp" mode selector, echoed by GET /config
   DISABLE_SCHEMA_UPDATE: "runtime", // LiteLLM child-process flag
   EXULU_ENTITY_EXTRACTION_MODEL: "runtime",
+  // Request-rate ceilings for external users, classified exactly as their
+  // guest counterparts below: a number of requests is a setting, not a
+  // credential. Arrived with the external-rate-limit PR, which predates this
+  // inventory and so could not have classified them itself.
+  EXULU_EXTERNAL_RATE_PER_HOUR: "runtime",
+  EXULU_EXTERNAL_RATE_PER_MINUTE: "runtime",
   EXULU_GUEST_MAX_MESSAGE_CHARS: "runtime",
   EXULU_GUEST_MAX_TOTAL_CHARS: "runtime",
   EXULU_GUEST_RATE_PER_HOUR: "runtime",
