@@ -3185,6 +3185,13 @@ type ContextMapPoint {
     y: Float!
     z: Float!
     label: String!
+    """
+    The name of the item this point came from. In PASSAGES mode the label is
+    the chunk's own opening — the matched text, header and all — while this is
+    what a reader calls the document; in DOCUMENTS mode the two agree. Empty
+    when the item has no name.
+    """
+    itemName: String!
     group: String
     chunks: Int!
 }

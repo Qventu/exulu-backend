@@ -12,7 +12,18 @@ import { chooseFullTextQuery, resolveSearchQueryTexts } from "@SRC/utils/query-p
 import { sanitizeName } from "@SRC/utils/sanitize-name";
 
 export type MapMode = "DOCUMENTS" | "PASSAGES";
-export type MapPoint = { id: string; itemId: string; x: number; y: number; z: number; label: string; group: string | null; chunks: number };
+/**
+ * One point of the cloud.
+ *
+ * `label` and `itemName` are two different things and both are needed. In
+ * PASSAGES mode `label` is the chunk's own opening — the matched text — while
+ * `itemName` names the document it came from. A corpus that injects a document
+ * header into every chunk opens every passage with
+ * `--- Document (Exulu ID: …) ---`, so a surface that titles a point by its
+ * `label` titles it with an identifier; the name is what a reader calls it.
+ * In DOCUMENTS mode a point IS an item, so the two agree.
+ */
+export type MapPoint = { id: string; itemId: string; x: number; y: number; z: number; label: string; itemName: string; group: string | null; chunks: number };
 export type MapPoints = { points: MapPoint[]; total: number; sampled: boolean };
 export type MapEdge = { source: string; target: string; score: number };
 export type MapTopic = { id: string; label: string; count: number; x: number; y: number; z: number };
@@ -215,7 +226,8 @@ export async function contextMapPoints({
         .select([
           db.raw("items.id as id"), db.raw("items.id as \"itemId\""),
           db.raw("AVG(chunks.px) as x"), db.raw("AVG(chunks.py) as y"), db.raw("AVG(chunks.pz) as z"),
-          db.raw("items.name as label"), db.raw(group ? `items."${group}" as "group"` : "NULL as \"group\""),
+          db.raw("items.name as label"), db.raw("items.name as \"itemName\""),
+          db.raw(group ? `items."${group}" as "group"` : "NULL as \"group\""),
           db.raw("COUNT(chunks.id) as chunks"),
         ])
     : await base()
@@ -225,6 +237,9 @@ export async function contextMapPoints({
           db.raw("chunks.id as id"), db.raw("chunks.source as \"itemId\""),
           db.raw("chunks.px as x"), db.raw("chunks.py as y"), db.raw("chunks.pz as z"),
           db.raw("LEFT(COALESCE(chunks.content, items.name), 120) as label"),
+          // Not LEFT(…): a name is short, and the point of carrying it is that
+          // a surface can title a passage with something a reader recognises.
+          db.raw("items.name as \"itemName\""),
           db.raw(group ? `items."${group}" as "group"` : "NULL as \"group\""),
           db.raw("1 as chunks"),
         ]);
@@ -233,7 +248,8 @@ export async function contextMapPoints({
     points: rows.map((r) => ({
       id: String(r.id), itemId: String(r.itemId),
       x: num(r.x), y: num(r.y), z: num(r.z),
-      label: String(r.label ?? ""), group: r.group == null ? null : String(r.group), chunks: num(r.chunks),
+      label: String(r.label ?? ""), itemName: String(r.itemName ?? ""),
+      group: r.group == null ? null : String(r.group), chunks: num(r.chunks),
     })),
     total,
     sampled: total > capped,
