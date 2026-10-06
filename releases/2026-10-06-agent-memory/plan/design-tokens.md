@@ -1,20 +1,16 @@
-# Design tokens — extracted from the live frontend on 2026-10-06
+# Not the palette for this release — see `design.md`
 
-Source: `frontend/app/globals.css` `:root`. Re-extract every run; these drift.
+Extracting the product's own tokens is what the release-page skill's Step 3
+says to do, and it is **stale**. The release shorts standardized on the
+**website CI** at the 2026-07 reskin, and that design.md supersedes the
+product-CI one by name.
 
-| Token | Hex |
-|---|---|
-| `--primary` | `#7033FF` |
-| `--primary-foreground` | `#FFFFFF` |
-| `--background` | `#FDFDFD` |
-| `--foreground` | `#000000` |
-| `--accent` | `#E2EBFF` |
-| `--muted` | `#F5F5F5` |
-| `--muted-foreground` | `#525252` |
-| `--border` | `#E7E7EE` |
-| `--card` | `#FDFDFD` |
-| `--chart-1` | `#4AC885` |
+For the record, the product tokens as of 2026-10-06 are `--primary #7033FF`
+(violet) on `#FDFDFD`, Inter / JetBrains Mono, radius `0.4rem`. They are what
+the *product* looks like and are correct for anything rendered inside the app.
 
-Fonts: **Inter** (sans), **JetBrains Mono** (code). Radius `0.4rem`. Light theme.
+They are **not** what release shorts look like. The website CI is cream
+`#f8f6f1` / ink `#241f1a` / lime `#6f9a37`, and it states the rule plainly:
+*"NO purple, NO cool blue-gray anywhere."*
 
-The primary is the product's own violet. The release page matches the product; it is not a palette choice made here.
+Use `design.md` in this folder.
