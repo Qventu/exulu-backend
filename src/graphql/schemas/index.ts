@@ -81,7 +81,7 @@ import { memoryBaseContributors } from "@SRC/graphql/resolvers/memory-base-contr
 import { listMemoryBases, countAgents } from "@SRC/graphql/resolvers/memory-bases";
 import { memoryBaseUnusedIds, memoryBaseUsage, memoryUsage, memoryUsageByIds } from "@SRC/graphql/resolvers/memory-usage";
 import { hydrateConflictRow, memoryConflictCounts, memoryConflicts, memoryConflictsForMemory } from "@SRC/graphql/resolvers/memory-conflicts";
-import { contextMapEdges, contextMapPoints, contextMapTopics, contextProjectionStatus } from "@SRC/graphql/resolvers/context-map";
+import { contextMapEdges, contextMapItem, contextMapPoints, contextMapTopics, contextProjectionStatus } from "@SRC/graphql/resolvers/context-map";
 import { EDGE_LIMIT_DEFAULT, POINTS_LIMIT_DEFAULT } from "@SRC/exulu/projection/constants";
 import { resolveConflict, suggestMerge } from "@SRC/exulu/memory/conflicts/resolve";
 import { runScan } from "@SRC/exulu/memory/conflicts/scan";
@@ -467,6 +467,31 @@ type ContextMapPoint {
     itemName: String!
     group: String
     chunks: Int!
+    """
+    When this point's ITEM was created, as epoch milliseconds, or null when the
+    base never recorded it. Milliseconds rather than a date string because the
+    field rides on every point and the client compares it against a slider.
+    Never 0 for a missing value: 0 is 1970, which would park the point at the
+    far left of every time filter instead of outside it.
+    """
+    createdAtMs: Float
+}
+"""
+One item's own metadata, read when a point is selected. Separate from
+ContextMapPoint on purpose: this is shown for one item at a time, and carrying
+these columns on every point to serve a single selection is the wrong trade.
+"""
+type ContextMapItem {
+    id: ID!
+    name: String!
+    "Chunks this item was split into, or null when the base never recorded it."
+    chunks: Int
+    "Characters of extracted text, or null when never recorded."
+    textLength: Int
+    "How the item entered the base, when recorded."
+    source: String
+    createdAt: String
+    updatedAt: String
 }
 type ContextMapPoints { points: [ContextMapPoint!]!  total: Int!  sampled: Boolean! }
 type ContextMapEdge { source: ID!  target: ID!  score: Float! }
@@ -1075,6 +1100,8 @@ type PageInfo {
     contextMapPoints(contextId: ID!, mode: ContextMapMode = DOCUMENTS, groupField: String, search: String, limit: Int = ${POINTS_LIMIT_DEFAULT}): ContextMapPoints
     contextMapEdges(contextId: ID!, nodeId: ID!, mode: ContextMapMode = DOCUMENTS, limit: Int = ${EDGE_LIMIT_DEFAULT}): [ContextMapEdge!]!
     contextMapTopics(contextId: ID!): [ContextMapTopic!]!
+    "Null when the item does not exist, is archived, or the viewer may not read it."
+    contextMapItem(contextId: ID!, itemId: ID!): ContextMapItem
     contextProjectionStatus(contextId: ID!): ContextProjectionStatus
     `;
 
@@ -3092,6 +3119,13 @@ type EmbeddingModelOption {
     const target = memoryContextOf(args.contextId);
     if (!context.user || !target) return [];
     return contextMapTopics({ db: context.db, context: target });
+  };
+  // Scoped per item inside the resolver, by applyAccessControl with the
+  // "items" prefix, exactly as the points query is.
+  resolvers.Query["contextMapItem"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!context.user || !target) return null;
+    return contextMapItem({ db: context.db, context: target, user: context.user, itemId: args.itemId });
   };
   resolvers.Query["contextProjectionStatus"] = async (_, args, context) => {
     const target = memoryContextOf(args.contextId);
