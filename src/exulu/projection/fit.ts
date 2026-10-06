@@ -260,6 +260,11 @@ export const residualScope = (heldOut: number): string =>
  * what it was learned for. It is optional because this is exported from the
  * package entry point: given none, every row goes through the map, exactly as
  * before.
+ *
+ * Calling it that way on a base that has ALREADY been fitted is destructive:
+ * nothing but px/py/pz persists a sampled chunk's true layout position, so
+ * every one of them is overwritten with the map's linear estimate and only a
+ * refit brings them back.
  */
 export async function backfillCoordinates({
   db, contextId, projection, layout, batch = BACKFILL_BATCH, log = () => undefined,

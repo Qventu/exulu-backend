@@ -513,6 +513,43 @@ describe("fitContextProjection", () => {
     expect(out.written).toBe(PAIRED_SAMPLE + 1);
   });
 
+  /**
+   * The one mistake this code has already made once: building the
+   * sampled-position lookup from the RAW rows instead of the paired list. An
+   * unparseable embedding leaves `sampleRows` but not `sampled`, so every id
+   * behind it would be handed its neighbour's coordinate.
+   *
+   * No fixture paired the two until this one. The unparseable row lived with
+   * the linear fake, whose layout is a function of the embedding so a swapped
+   * id still lands somewhere defensible, and the lobe fake lived with rows that
+   * all parse - so a lookup rebuilt from the raw rows passed every assertion on
+   * this branch. Here the bad row is FIRST, which shifts every surviving id by
+   * one, and the two lobes are a full radius apart, so the wrong lobe cannot be
+   * mistaken for rounding.
+   */
+  it("keeps every surviving id on its own lobe when a sampled embedding is unparseable", async () => {
+    const written: Record<string, number[]> = {};
+    const db = fakeDb({
+      // `embeddings`, not `rows`, because only the raw form can carry a value
+      // that does not parse. Ids are regenerated id-0..id-10, so the ten that
+      // parse are id-1..id-10 and the layout's first lobe is the ODD ones.
+      embeddings: ["not a vector", ...pairedRows().map((r) => toSql(r.embedding))],
+      onCoordinateWrite: (id, xyz) => { written[id] = xyz; },
+    });
+    const out = await fitContextProjection({
+      db, contextId: "mem", sample: PAIRED_SAMPLE + 1, components: 2, umapFactory: lobeUmap,
+    });
+    expect(out.fitted).toBe(true);
+    expect(out.sampleSize).toBe(PAIRED_SAMPLE);
+    expect(written["id-1"]).toEqual(LAYOUT_OF_ID_0);
+    expect(written["id-2"]).toEqual(LAYOUT_OF_ID_1);
+    // The last id is the one a raw-row lookup runs off the end of entirely: it
+    // would fall through to the linear estimate at the origin instead.
+    expect(written["id-10"]).toEqual(LAYOUT_OF_ID_1);
+    // And the row that did not parse is written from nothing at all.
+    expect(written["id-0"]).toBeUndefined();
+  });
+
   // The layout's long axis can be anywhere; the camera cannot move. So the fit
   // rotates the layout onto its own axes before storing it, which is rigid -
   // every distance and every neighbour survives - and points the cloud's widest
