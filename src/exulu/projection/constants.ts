@@ -6,14 +6,33 @@ export const FIT_SAMPLE = 20000;
 export const UMAP_NEIGHBORS = 15;
 export const UMAP_MIN_DIST = 0.1;
 export const POWER_ITERATIONS = 3;
-/** Subspace-iteration passes for the 3-dimension layout rotation (principalRotation).
- *  Separate from POWER_ITERATIONS, which is tuned for the 1536-dimension reduction
- *  where a pass costs `rows · dims · k`; here dims and k are both 3, so the whole
- *  iteration is free and can run to convergence instead of stopping at a usable
- *  approximation. Measured on a cloud carrying the real base's covariance, the
- *  residual correlation between the first two rotated axes was 0.072 after 3 passes
- *  and 0.000 from 12 on - and a rotation that does not decorrelate has not done its
- *  job. 24 is twice the measured convergence point, for a differently shaped base. */
+/**
+ * Subspace-iteration passes for the 3-dimension layout rotation
+ * (principalRotation). Deliberately not POWER_ITERATIONS.
+ *
+ * POWER_ITERATIONS = 3 is enough for what the reduction needs, which is the
+ * dominant SPAN. This rotation needs something strictly harder: the individual
+ * axes, in order, within that span. The two converge at very different rates -
+ * a pass shrinks the misalignment between adjacent axes geometrically, by
+ * roughly their variance ratio, so axes with similar spreads separate slowly
+ * while the span they share settles almost immediately. Measured on a cloud
+ * carrying the real base's covariance, 3 passes had the span to 1e-4 but the
+ * ordering within it only to 1e-2.
+ *
+ * So the pass count is not a precision knob here, it is the difference between
+ * an answer and an approximation, and the geometry is what argues for a high
+ * count rather than any single measurement: each pass multiplies the residual
+ * by ~0.3 on that base, so a handful of extra passes buy orders of magnitude.
+ * Three passes leave a margin set entirely by the random starting basis
+ * (observed between 1e-3 and 1e-1 across realisations - not a property to rely
+ * on); by 24 the residual has reached the float32 floor of the basis itself,
+ * ~1e-8, and stops improving.
+ *
+ * The cost argument is the other half: a pass here is `rows · 9` multiplies
+ * against the reduction's `rows · 1536 · 50`, so convergence is free. Raising
+ * POWER_ITERATIONS to 24 instead would have made the reduction eight times
+ * slower for no benefit.
+ */
 export const ROTATION_ITERATIONS = 24;
 export const RIDGE_LAMBDA = 1e-3;
 export const BACKFILL_BATCH = 500;

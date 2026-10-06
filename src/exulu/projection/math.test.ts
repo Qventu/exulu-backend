@@ -72,6 +72,38 @@ describe("randomizedPCA", () => {
     const basis = randomizedPCA(rows, 3, 2, 1, 3);
     for (const b of basis) for (const x of b) expect(Number.isFinite(x)).toBe(true);
   });
+
+  // A base of near-duplicate boilerplate chunks is numerically low-rank: far
+  // fewer independent directions than the components asked for. The iteration's
+  // accumulators then cancel almost completely, and whatever survives that is
+  // normalised back up to unit length - so this is where a basis stops being a
+  // basis. It was measured doing exactly that: a 9.7e-2 dot product between two
+  // of its own vectors at the production shape (1536 dimensions, 50 components),
+  // and 4.9e-1 at shapes this size. Nothing downstream breaks loudly - the ridge
+  // absorbs near-collinear columns - which is why it needs asserting here.
+  //
+  // What it returns is its own business: fewer vectors than asked for is the
+  // documented answer to a short-rank cloud. That they are mutually orthogonal
+  // is not.
+  it("returns an orthonormal basis for a cloud with less rank than the components asked", () => {
+    const dims = 120, rank = 6, k = 20;
+    const r = rng(5);
+    const planted = Array.from({ length: rank }, () => Float32Array.from({ length: dims }, () => r() - 0.5));
+    const rows = Array.from({ length: 80 }, () => {
+      const w = Array.from({ length: rank }, () => r() - 0.5);
+      return Float32Array.from({ length: dims }, (_, d) =>
+        w.reduce((s, weight, c) => s + weight * (planted[c]?.[d] ?? 0), 0));
+    });
+    const basis = randomizedPCA(rows, dims, k, 7, 3);
+    expect(basis.length).toBeGreaterThanOrEqual(rank);
+    for (const b of basis) near(Math.hypot(...Array.from(b)), 1, 1e-5);
+    for (let a = 0; a < basis.length; a += 1) {
+      for (let c = a + 1; c < basis.length; c += 1) {
+        const dot = Array.from(basis[a] ?? []).reduce((s, x, d) => s + x * (basis[c]?.[d] ?? 0), 0);
+        near(dot, 0, 1e-5);
+      }
+    }
+  });
 });
 
 describe("ridgeFit + applyMap", () => {
@@ -209,6 +241,48 @@ const spread = (points: number[][], j: number): number => {
 const distance = (a: number[], b: number[]): number =>
   Math.hypot((a[0] ?? 0) - (b[0] ?? 0), (a[1] ?? 0) - (b[1] ?? 0), (a[2] ?? 0) - (b[2] ?? 0));
 
+/** Normally distributed numbers, from the module's own deterministic PRNG. */
+const gaussian = (seed: number) => {
+  const r = rng(seed);
+  return () => Math.sqrt(-2 * Math.log(Math.max(1e-12, r()))) * Math.cos(2 * Math.PI * r());
+};
+
+/**
+ * `n` points spread by `sd` along three SKEW directions. Skew on purpose: a
+ * cloud built along x, y and z is already aligned with the camera, so it cannot
+ * tell a working rotation from no rotation at all - which is exactly how the
+ * first version of these tests passed while covering nothing.
+ */
+const ellipsoid = (sd: [number, number, number], n: number, seed: number): number[][] => {
+  const g = gaussian(seed);
+  const u = [[0.6, 0.8, 0], [-0.48, 0.36, 0.8], [0.64, -0.48, 0.6]];        // orthonormal
+  return Array.from({ length: n }, () => {
+    const c = sd.map((s) => g() * s);
+    return [0, 1, 2].map((d) => u.reduce((acc, axis, k) => acc + (axis[d] ?? 0) * (c[k] ?? 0), 0));
+  });
+};
+
+/** Three perpendicular unit rows - the property that makes the transform rigid,
+ *  and so the only reason a stored distance still means what it meant. */
+const expectOrthonormal = (rotation: number[][]) => {
+  expect(rotation).toHaveLength(3);
+  for (const row of rotation) {
+    expect(row).toHaveLength(3);
+    near(Math.hypot(...row), 1, 1e-12);
+  }
+  for (const [i, j] of [[0, 1], [0, 2], [1, 2]] as const) {
+    near(rotation[i]!.reduce((s, x, d) => s + x * (rotation[j]![d] ?? 0), 0), 0, 1e-12);
+  }
+};
+
+/** The component the sign convention pins positive: the largest in magnitude,
+ *  first one winning a tie, matching the implementation. */
+const leadComponent = (axis: number[]): number =>
+  axis.reduce((lead, v) => (Math.abs(v) > Math.abs(lead) ? v : lead), axis[0] ?? 0);
+
+/** The real base's measured shape - 0.42 / 0.25 / 0.10 - lying skew. */
+const tilted = ellipsoid([0.42, 0.25, 0.1], 300, 11);
+
 describe("principalRotation", () => {
   // A cloud stretched along the x=-y diagonal: exactly the shape measured on the
   // real base (corr_xy = -0.78), and the one the camera sees edge-on.
@@ -222,10 +296,64 @@ describe("principalRotation", () => {
     expect(Math.abs(correlation(rotated, 0, 1))).toBeLessThan(0.05);
   });
 
+  // The same thing asked of the real base's shape, where all three pairs can be
+  // correlated at once and no axis of the cloud lines up with an axis of the map.
+  it("decorrelates all three pairs of a skew ellipsoid", () => {
+    expect(Math.abs(correlation(tilted, 0, 1))).toBeGreaterThan(0.3);        // worth fixing
+    const rotated = rotateLayout(tilted, principalRotation(tilted, 7));
+    for (const [i, j] of [[0, 1], [0, 2], [1, 2]] as const) {
+      expect(Math.abs(correlation(rotated, i, j))).toBeLessThan(1e-3);
+    }
+  });
+
   it("puts the widest spread on the first axis", () => {
     const rotated = rotateLayout(diagonal, principalRotation(diagonal, 7));
     expect(spread(rotated, 0)).toBeGreaterThan(spread(rotated, 1));
     expect(spread(rotated, 1)).toBeGreaterThanOrEqual(spread(rotated, 2));
+  });
+
+  // The sort is one of the things this function adds to randomizedPCA, and the
+  // test above cannot see it: on a cloud whose spreads differ by three orders of
+  // magnitude the iteration returns them ordered anyway. The iteration converges
+  // on the SPAN fast and on the ORDER within it only as fast as the spreads
+  // differ, so two axes of nearly equal spread come back in whichever order the
+  // random start happened to favour. Without the sort, three of the twelve seeds
+  // below return this cloud's first two axes inverted.
+  it("orders the axes by spread even when the iteration does not", () => {
+    const close = ellipsoid([1, 0.99, 0.1], 240, 99);
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+      const rotated = rotateLayout(close, principalRotation(close, seed));
+      expect(spread(rotated, 0)).toBeGreaterThan(spread(rotated, 1));
+      expect(spread(rotated, 1)).toBeGreaterThan(spread(rotated, 2));
+    }
+  });
+
+  // An axis and its negation describe the same rotation, so the iteration is
+  // free to return either - and a refit that picks the other one mirrors the
+  // cloud and rewrites every stored coordinate for nothing. Convention: the
+  // largest-magnitude component is positive. It bites on both clouds here; the
+  // iteration returns the diagonal's long axis as (-0.707, +0.707, ...).
+  it("pins each axis's sign, so a refit cannot mirror the cloud", () => {
+    for (const cloud of [diagonal, tilted]) {
+      for (const axis of principalRotation(cloud, 7)) expect(leadComponent(axis)).toBeGreaterThan(0);
+    }
+  });
+
+  // Determinism worth the name. Calling a pure function twice in one process
+  // proves nothing - every implementation passes that, including one that reads
+  // the seed and returns garbage. The property that matters is that the axes are
+  // a property of the DATA: a converged iteration finds the same ones from any
+  // starting basis, and one that stops early does not. At three passes the seeds
+  // below disagree by 2e-1 on this cloud.
+  it("reaches the same axes from any random start", () => {
+    const reference = principalRotation(tilted, 7);
+    expect(principalRotation(tilted, 7)).toEqual(reference);          // same seed, bit for bit
+    for (const seed of [99, 4242, 123456]) {
+      const rotation = principalRotation(tilted, seed);
+      for (const [i, row] of rotation.entries()) {
+        for (const [j, v] of row.entries()) near(v, reference[i]![j] ?? 0, 1e-6);
+      }
+    }
   });
 
   it("preserves every pairwise distance, because it is a rotation", () => {
@@ -235,14 +363,50 @@ describe("principalRotation", () => {
     }
   });
 
-  it("is deterministic for one seed", () => {
-    expect(principalRotation(diagonal, 7)).toEqual(principalRotation(diagonal, 7));
+  // Rigidity stated as the property rather than sampled as three pairs: three
+  // perpendicular unit rows cannot change a distance, whatever the cloud.
+  it("is orthonormal for every shape of cloud", () => {
+    for (const cloud of [diagonal, tilted, ellipsoid([1, 1, 1], 50, 3), ellipsoid([1, 0, 0], 50, 4)]) {
+      expectOrthonormal(principalRotation(cloud, 7));
+    }
   });
 
-  it("returns an identity-like rotation for a cloud with no dominant direction", () => {
+  // No dominant direction to find, and the answer still has to BE a rotation.
+  // The version of this test that only counted the rows and checked for NaN
+  // passed against a transform that was not orthogonal at all.
+  it("returns an orthonormal triple when no direction dominates", () => {
     const ball = Array.from({ length: 60 }, (_, i) => [Math.sin(i), Math.cos(i), Math.sin(i * 2)]);
-    const rotated = rotateLayout(ball, principalRotation(ball, 3));
+    const rotation = principalRotation(ball, 3);
+    expectOrthonormal(rotation);
+    const rotated = rotateLayout(ball, rotation);
     expect(rotated).toHaveLength(60);
+    expect(rotated.every((p) => p.every(Number.isFinite))).toBe(true);
+    expect(spread(rotated, 0)).toBeGreaterThanOrEqual(spread(rotated, 1));
+    expect(spread(rotated, 1)).toBeGreaterThanOrEqual(spread(rotated, 2));
+    for (const [i, j] of [[0, 17], [5, 59]] as const) {
+      expect(distance(rotated[i]!, rotated[j]!)).toBeCloseTo(distance(ball[i]!, ball[j]!), 9);
+    }
+  });
+
+  // Degenerate layouts reach this from the real fit - a base of near-duplicate
+  // boilerplate is collinear, and `finite` upstream means a corrupt coordinate
+  // arrives as a 0 rather than being rejected. None of them may yield anything
+  // but a rotation: a non-finite coordinate in the database poisons a whole map
+  // silently, and a non-orthogonal one is a map that lies about distance.
+  const degenerate: [string, number[][]][] = [
+    ["empty", []],
+    ["single-point", [[1, 2, 3]]],
+    ["repeated-point", Array.from({ length: 5 }, () => [1, 1, 1])],
+    ["collinear", Array.from({ length: 5 }, (_, i) => [i, 2 * i, 3 * i])],
+    ["flat", Array.from({ length: 8 }, (_, i) => [Math.sin(i), Math.cos(i), 0])],
+    ["ragged", [[1, 2], [3], [4, 5, 6], []]],
+    ["non-finite", [[NaN, 1, 2], [Infinity, 0, 0], [1, 2, 3], [-1, -2, -3]]],
+  ];
+  it.each(degenerate)("still returns a rotation for a %s layout", (_name, cloud) => {
+    const rotation = principalRotation(cloud, 5);
+    expectOrthonormal(rotation);
+    const rotated = rotateLayout(cloud, rotation);
+    expect(rotated).toHaveLength(cloud.length);
     expect(rotated.every((p) => p.every(Number.isFinite))).toBe(true);
   });
 });

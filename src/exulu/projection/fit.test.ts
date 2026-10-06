@@ -18,7 +18,7 @@ jest.mock("./math", () => {
 
 import { backfillCoordinates, fitContextProjection, listFittableContexts } from "./fit";
 import type { StoredProjection } from "./fit";
-import { normalizeLayout, ridgeFit } from "./math";
+import { normalizeLayout, principalRotation, ridgeFit, rotateLayout } from "./math";
 
 const solveSizes = () => (ridgeFit as unknown as jest.Mock).mock.calls.map((c: any[]) => c[0].length);
 beforeEach(() => (ridgeFit as unknown as jest.Mock).mockClear());
@@ -179,7 +179,15 @@ const umapFactory = () => ({ fit: (rows: number[][]) => rows.map((r) => [r[0] ??
  */
 const LOBE = 10;
 const lobeLayout = (n: number): number[][] =>
-  Array.from({ length: n }, (_, i) => [i % 2 === 0 ? LOBE : -LOBE, 0, 0]);
+  Array.from({ length: n }, (_, i) => {
+    const x = i % 2 === 0 ? LOBE : -LOBE;
+    // On the x=y DIAGONAL, not on an axis: `[x + y, x - y, 0]` with y = 0. A
+    // layout that already lies on a canonical axis makes the fit's rotation of
+    // it the identity, so every coordinate below would read the same whether
+    // the fit rotated or not - which is how the first version of these
+    // assertions passed while covering nothing.
+    return [x, x, 0];
+  });
 const lobeUmap = () => ({ fit: (rows: number[][]) => lobeLayout(rows.length) });
 
 /** Five embeddings, each of them twice; ids the backfill's keyset can order. */
@@ -188,13 +196,25 @@ const pairedRows = (): Row[] =>
   [[1, 0, 0], [0, 1, 0], [1, 1, 0], [2, 1, 0], [1, 2, 0]]
     .flatMap((embedding, pair) => [0, 1].map((half) => ({ id: `id-${pair * 2 + half}`, embedding })));
 
-// Where the fit stores a sampled chunk of that fixture, once normalizeLayout has
-// centred the two lobes on the origin and scaled their radius to 1. Derived from
-// the fake layout rather than written out, so the expectation is the fake's own
-// definition and not a second one that could drift from it.
-const normalizedLobes = normalizeLayout(lobeLayout(PAIRED_SAMPLE)).points;
-const LAYOUT_OF_ID_0 = normalizedLobes[0] ?? [];        // [1, 0, 0]
+// Where the fit stores a sampled chunk of that fixture: the layout rotated onto
+// its own axes and then centred on the origin with its radius scaled to 1.
+// Derived by running the fit's own two steps over the fake layout, so the
+// expectation is the fake's definition rather than a second one that could drift
+// from it - and so that deleting either step from the fit breaks these tests.
+//
+// Any seed will do for the rotation: this layout's one direction of variance is
+// exact, so the iteration has nothing to converge towards and the axes come back
+// identical whatever basis it starts from, down to the sign of a zero component.
+// `rotates the layout onto its own axes before storing` below pins that, rather
+// than leaving it assumed.
+const lobeRotation = principalRotation(lobeLayout(PAIRED_SAMPLE), 0);
+const normalizedLobes = normalizeLayout(rotateLayout(lobeLayout(PAIRED_SAMPLE), lobeRotation)).points;
+const LAYOUT_OF_ID_0 = normalizedLobes[0] ?? [];        // [1, 0, 0] - the diagonal, rotated onto x
 const LAYOUT_OF_ID_1 = normalizedLobes[1] ?? [];        // [-1, 0, 0]
+/** The same layout WITHOUT the rotation: [0.707, 0.707, 0]. What the fit would
+ *  store if the rotation were dropped, and so what the assertions below have to
+ *  be able to tell apart from the real thing. */
+const unrotatedLobes = normalizeLayout(lobeLayout(PAIRED_SAMPLE)).points;
 
 function cluster(n: number, centre: number[], spread: number, seed: number, offset: number): Row[] {
   let s = seed;
@@ -486,6 +506,54 @@ describe("fitContextProjection", () => {
     expect(written["id-unsampled"]).not.toEqual(LAYOUT_OF_ID_1);
     for (const v of written["id-unsampled"] ?? []) expect(v).toBeCloseTo(0, 9);
     expect(out.written).toBe(PAIRED_SAMPLE + 1);
+  });
+
+  // The layout's long axis can be anywhere; the camera cannot move. So the fit
+  // rotates the layout onto its own axes before storing it, which is rigid -
+  // every distance and every neighbour survives - and points the cloud's widest
+  // spread across the screen instead of into the depth. On a real base of 1134
+  // chunks the long axis lay diagonally across two axes and the map rendered as
+  // a streak (corr(px, py) = -0.78); after this it is 0.001.
+  //
+  // This fixture's lobes lie on the x=y diagonal, so the rotation is a real
+  // 45-degree turn and the coordinates say whether it happened.
+  it("rotates the layout onto its own axes before storing", async () => {
+    const written: Record<string, number[]> = {};
+    const db = fakeDb({ rows: pairedRows(), onCoordinateWrite: (id, xyz) => { written[id] = xyz; } });
+    const out = await fitContextProjection({
+      db, contextId: "mem", sample: PAIRED_SAMPLE, components: 2, umapFactory: lobeUmap,
+    });
+    expect(out.fitted).toBe(true);
+
+    expect(written["id-0"]).toEqual(LAYOUT_OF_ID_0);
+    expect(written["id-1"]).toEqual(LAYOUT_OF_ID_1);
+    // The lobes come out on ONE axis, with nothing left on the other two.
+    for (const [id, x] of [["id-0", 1], ["id-1", -1]] as const) {
+      const xyz = written[id] ?? [];
+      expect(xyz[0]).toBeCloseTo(x, 12);
+      expect(xyz[1]).toBeCloseTo(0, 12);
+      expect(xyz[2]).toBeCloseTo(0, 12);
+    }
+    // Which is not where the unrotated layout puts them: that one spends 0.707
+    // of its one axis on x and the same again on y, with the camera on z seeing
+    // the pair at 45 degrees. Without these three lines the assertions above
+    // would pass just as well on a fixture that never needed rotating.
+    expect(unrotatedLobes[0]?.[1] ?? 0).toBeCloseTo(Math.SQRT1_2, 12);
+    expect(written["id-0"]).not.toEqual(unrotatedLobes[0]);
+    expect(written["id-1"]).not.toEqual(unrotatedLobes[1]);
+
+    // Rigid: the two lobes are as far apart after the rotation as before it.
+    const gap = (a: number[], b: number[]) => Math.hypot(...a.map((v, i) => v - (b[i] ?? 0)));
+    const before = gap(unrotatedLobes[0] ?? [], unrotatedLobes[1] ?? []);
+    expect(gap(written["id-0"] ?? [], written["id-1"] ?? [])).toBeCloseTo(before, 12);
+
+    // And the rotation this fixture gets does not depend on the fit's seed, which
+    // is what lets the expectations above be derived with an arbitrary one. Only
+    // the sign of a zero component varies between seeds - IEEE -0, which no
+    // coordinate can tell from 0 - so this compares values, not bits.
+    for (const [i, row] of principalRotation(lobeLayout(PAIRED_SAMPLE), 12345).entries()) {
+      for (const [j, v] of row.entries()) expect(v).toBeCloseTo(lobeRotation[i]?.[j] ?? 0, 15);
+    }
   });
 
   // Regions are drawn over the dots, so they have to be clustered on the same

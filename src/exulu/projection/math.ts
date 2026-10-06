@@ -65,6 +65,39 @@ export function meanVector(rows: ArrayLike<number>[], dims: number): Float32Arra
   return out;
 }
 
+/**
+ * An orthonormal basis for the span of `vectors`, by Gram-Schmidt, dropping any
+ * direction already covered by the ones before it (so the result can be shorter
+ * than the input - see randomizedPCA's contract).
+ *
+ * The candidate is scaled to unit length BEFORE anything is projected out of
+ * it, and that is what keeps the output orthonormal. The reason is the 1e-8 bar
+ * below, which decides "already covered" in ABSOLUTE terms while the quantity
+ * it judges is relative. Accepted basis vectors are stored as float32, so a
+ * residual that is orthogonal to them is still off the true directions by about
+ * 6e-8 of the candidate's own length - the noise floor this bar has to stay
+ * above. randomizedPCA passes its `next` accumulators, and on a low-rank base
+ * their lengths span five orders of magnitude: measured on one at the real
+ * base's shape (1129 rows, 1024 dimensions, rank 20, 50 components asked) they
+ * ran from 6.2e+1 down to 1.1e-6, putting the noise floor of the longest at
+ * 3.7e-6, far above the bar. Every residual in between is pure float32 noise
+ * that clears the bar anyway, gets normalised back up to unit length, and comes
+ * out pointing wherever the noise pointed - measured on that base, a 1.4e-1 dot
+ * product between two of the basis's own vectors, and 8.5e-2 at the 1536-
+ * dimension shape. Unit-length candidates put the floor at a fixed 6e-8 for
+ * every one of them, and the same measurements give 2.5e-9 and 1.9e-9.
+ *
+ * This is reachable from the real fit: embeddings arrive here l2-normalised, so
+ * row length is not what varies - the accumulators do, whenever a base has
+ * fewer independent directions than the components asked for, which is what a
+ * base of near-duplicate boilerplate chunks is. Nothing downstream breaks
+ * loudly (the ridge absorbs near-collinear columns) but a basis that is not a
+ * basis should not be stored.
+ *
+ * The second sweep is belt-and-braces, not the fix - re-projecting an
+ * already-orthogonalised vector is the standard remedy for the same arithmetic,
+ * and it costs `k · k · dims` against the data pass's `rows · dims · k`.
+ */
 function orthonormalize(vectors: ArrayLike<number>[], dims: number): Float32Array[] {
   const out: Float32Array[] = [];
   for (const candidate of vectors) {
@@ -72,10 +105,20 @@ function orthonormalize(vectors: ArrayLike<number>[], dims: number): Float32Arra
     // a direction is accepted into the basis.
     const v = new Float64Array(dims);
     for (let d = 0; d < dims; d += 1) v[d] = candidate[d] ?? 0;
-    for (const basis of out) {
-      let dot = 0;
-      for (let d = 0; d < dims; d += 1) dot += (v[d] ?? 0) * (basis[d] ?? 0);
-      for (let d = 0; d < dims; d += 1) v[d] = (v[d] ?? 0) - dot * (basis[d] ?? 0);
+    let scale = 0;
+    for (let d = 0; d < dims; d += 1) {
+      const vd = v[d] ?? 0;
+      scale += vd * vd;
+    }
+    scale = Math.sqrt(scale);
+    if (!Number.isFinite(scale) || scale === 0) continue;   // nothing to normalise
+    for (let d = 0; d < dims; d += 1) v[d] = (v[d] ?? 0) / scale;
+    for (let sweep = 0; sweep < 2; sweep += 1) {
+      for (const basis of out) {
+        let dot = 0;
+        for (let d = 0; d < dims; d += 1) dot += (v[d] ?? 0) * (basis[d] ?? 0);
+        for (let d = 0; d < dims; d += 1) v[d] = (v[d] ?? 0) - dot * (basis[d] ?? 0);
+      }
     }
     let norm = 0;
     for (let d = 0; d < dims; d += 1) {
@@ -306,23 +349,26 @@ export function fitResidual(
  * An exactly orthonormal triple built from `candidates`, completed with the
  * canonical axes when the candidates do not span three dimensions.
  *
- * `orthonormalize` above cannot be used for this: it runs ONE Gram-Schmidt
- * sweep with an ABSOLUTE length threshold, which is right for its own job
- * (finding a k-dimensional subspace of a 1536-dimension cloud, where k is far
- * below the data's rank) but wrong here, where k equals the dimension. A
- * candidate that already lies in the accepted span cancels to rounding noise;
- * one sweep then leaves a residual whose error is the same size as the residual
- * itself, and a vector of length 100 with a 1e-13 residual clears a 1e-8
- * absolute bar. Normalising that amplifies the noise into an axis that is not
- * even orthogonal to the others - measured on a flat cloud, randomizedPCA
- * returned a third axis that was the NEGATION of its first. Rotating by that
- * is not rigid, and the distances it changes are exactly what this task
- * promises to preserve.
+ * What this adds over randomizedPCA's own basis is the COMPLETION. A rotation
+ * has to be a full three axes or it is not a rotation at all, and randomizedPCA
+ * promises only the span: a flat cloud - every layout with a direction of no
+ * variance - yields two axes, and rotating by two is not a thing you can do.
+ * The brief's answer was to fall back to the identity, which would have left
+ * exactly the flat layouts this task exists to reorient unrotated.
  *
- * So: two sweeps, and a threshold relative to the candidate's own length.
- * Deterministic - the candidates keep their order and the canonical axes are
- * always tried in x, y, z order - so a refit of unchanged data rebuilds the
- * same triple.
+ * The other load-bearing detail is that the candidates arriving here are
+ * already unit length (randomizedPCA normalises its output, and the canonical
+ * axes are unit by construction). That is what makes a dependent candidate
+ * recognisable: its residual lands near the float64 floor rather than near some
+ * fraction of its own length, so it falls below the bar below and is dropped
+ * instead of being normalised back up into noise. The second sweep and the
+ * threshold's relative form are defensive against a future caller passing
+ * something longer - neither is what makes this correct today, so do not read
+ * them as the fix.
+ *
+ * Deterministic: the candidates keep randomizedPCA's order and the canonical
+ * axes are always tried in x, y, z order, so a refit of unchanged data rebuilds
+ * the same triple.
  */
 function orthonormalTriple(candidates: number[][]): number[][] {
   const out: number[][] = [];
