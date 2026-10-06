@@ -10,7 +10,7 @@ jest.mock("@SRC/graphql/utilities/convert-context-to-table-definition", () => ({
 }));
 
 import { EDGE_LIMIT_DEFAULT, EDGE_LIMIT_MAX, EDGE_QUERY_TERMS, PROJECTION_VERSION } from "@SRC/exulu/projection/constants";
-import { clearMapColumnProbes, contextMapEdges, contextMapPoints, contextMapTopics, contextProjectionStatus } from "./context-map";
+import { clearMapColumnProbes, contextMapEdges, contextMapItem, contextMapPoints, contextMapTopics, contextProjectionStatus } from "./context-map";
 
 /** Keys on the first word, because the resolvers call `db("mem_chunks as chunks")`. */
 function fakeDb(
@@ -88,13 +88,13 @@ describe("contextMapPoints", () => {
   it("returns one point per item in DOCUMENTS mode, scoped to the viewer's items", async () => {
     const db = fakeDb({
       mem_chunks: [
-        { id: "i1", itemId: "i1", x: "0.5", y: "-0.25", z: "0", label: "Encoder", itemName: "Encoder", group: "FACT", chunks: "3" },
+        { id: "i1", itemId: "i1", x: "0.5", y: "-0.25", z: "0", itemName: "Encoder", group: "FACT", chunks: "3" },
       ],
       "mem_chunks#first": [{ c: "1" }],
     });
     const out = await contextMapPoints({ db, context, user, mode: "DOCUMENTS", groupField: "type", limit: 10 });
     expect(out).toEqual({
-      points: [{ id: "i1", itemId: "i1", x: 0.5, y: -0.25, z: 0, label: "Encoder", itemName: "Encoder", group: "FACT", chunks: 3 }],
+      points: [{ id: "i1", itemId: "i1", x: 0.5, y: -0.25, z: 0, itemName: "Encoder", group: "FACT", chunks: 3, createdAtMs: null }],
       total: 1, sampled: false,
     });
     expect(db.__log.some((l: any[]) => l[1] === "whereNotNull" && String(l[2]).includes("px"))).toBe(true);
@@ -106,45 +106,50 @@ describe("contextMapPoints", () => {
 
   /**
    * The name of the item a point came from, which is what every surface showing
-   * a point calls it.
+   * a point calls it — and now the only text the answer carries.
    *
-   * In PASSAGES mode `label` is the chunk's own opening, and a corpus that
-   * injects a document header into every chunk therefore opens every passage
-   * with `--- Document (Exulu ID: …) ---`. The items table is already joined
-   * for the access-control gate, so the name costs nothing to carry — it was
-   * simply never selected, which left a tooltip, a panel heading and every
-   * neighbour row showing an identifier.
+   * The chunk's own opening used to ride along as `label`. A corpus that
+   * injects a document header into every chunk opens every passage with
+   * `--- Document (Exulu ID: …) ---`, so it was an identifier rather than a
+   * title; once nothing read it, selecting it for every row was megabytes out
+   * of Postgres to serve nobody.
    */
   describe("itemName", () => {
     /** Every emitted `… as "itemName"` expression. */
     const nameSql = (db: any) =>
       db.__log.filter((l: any[]) => l[0] === "raw" && String(l[1]).includes('as "itemName"')).map((l: any[]) => String(l[1]));
 
-    it("carries the item's name beside the passage opening in PASSAGES mode", async () => {
-      const header = "--- Document (Exulu ID: 6adc924b-1423-42ac-8b9d-0f0f0f0f0f0f) ---";
+    it("carries the item's name in PASSAGES mode, and no passage text", async () => {
       const db = fakeDb({
         mem_chunks: [
-          { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", label: header, itemName: "Price list 2026", group: null, chunks: "1" },
+          { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", itemName: "Price list 2026", group: null, chunks: "1" },
         ],
         "mem_chunks#first": [{ c: "1" }],
       });
       const out = await contextMapPoints({ db, context, user, mode: "PASSAGES", limit: 10 });
-      // `label` is still the matched text, header and all: it is what the
-      // passage says, and the panel shows it as such.
-      expect(out.points[0]).toMatchObject({ label: header, itemName: "Price list 2026" });
+      expect(out.points[0]).toMatchObject({ itemName: "Price list 2026" });
       expect(nameSql(db)).toContain('items.name as "itemName"');
+      // The expensive half, gone: nothing selects the chunk's text. This is
+      // the assertion that keeps it gone - at POINTS_LIMIT_MAX it was about
+      // 2.4 MB of a 5.8 MB answer.
+      const selects = db.__log.filter((l: any[]) => l[0] === "raw").map((l: any[]) => String(l[1]));
+      expect(selects.some((sql) => sql.includes("chunks.content"))).toBe(false);
+      expect(selects.some((sql) => / as "?label"?/.test(sql))).toBe(false);
     });
 
-    it("carries it in DOCUMENTS mode too, where the name is also the label", async () => {
+    it("carries it in DOCUMENTS mode too, without duplicating it as a label", async () => {
       const db = fakeDb({
         mem_chunks: [
-          { id: OWNER, itemId: OWNER, x: "0", y: "0", z: "0", label: "Price list 2026", itemName: "Price list 2026", group: null, chunks: "7" },
+          { id: OWNER, itemId: OWNER, x: "0", y: "0", z: "0", itemName: "Price list 2026", group: null, chunks: "7" },
         ],
         "mem_chunks#first": [{ c: "1" }],
       });
       const out = await contextMapPoints({ db, context, user, mode: "DOCUMENTS", limit: 10 });
       expect(out.points[0]).toMatchObject({ itemName: "Price list 2026" });
       expect(nameSql(db)).toContain('items.name as "itemName"');
+      // It used to be selected twice, byte-identical, in this mode.
+      const selects = db.__log.filter((l: any[]) => l[0] === "raw").map((l: any[]) => String(l[1]));
+      expect(selects.filter((sql) => sql.includes("items.name")).length).toBe(1);
     });
 
     // `name` is nullable on an items table, and a null name reaching the client
@@ -152,7 +157,7 @@ describe("contextMapPoints", () => {
     it("answers an empty string for an item with no name", async () => {
       const db = fakeDb({
         mem_chunks: [
-          { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", label: "some text", itemName: null, group: null, chunks: "1" },
+          { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", itemName: null, group: null, chunks: "1" },
         ],
         "mem_chunks#first": [{ c: "1" }],
       });
@@ -785,5 +790,152 @@ describe("contextMapTopics", () => {
     expect(await contextMapTopics({ db, context })).toEqual([]);
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
+  });
+});
+
+/**
+ * When each point's item was created, as epoch milliseconds.
+ *
+ * The memory pages filter the cloud by it: a memory base grows over time, so
+ * "what did I know in August" is a real question there. A knowledge base
+ * bulk-imported in one afternoon has every item on one day, which is why the
+ * control that uses this is shown only where the data can answer.
+ *
+ * Milliseconds rather than an ISO string on purpose: the field rides on every
+ * point, and at the cap of 20,000 points an ISO string costs ~480 KB on the
+ * wire where a number costs a fraction of that. The client needs it as a
+ * number to compare against a slider anyway.
+ */
+describe("createdAtMs", () => {
+  const createdSql = (db: any) =>
+    db.__log.filter((l: any[]) => l[0] === "raw" && String(l[1]).includes('as "createdAt"')).map((l: any[]) => String(l[1]));
+
+  it("carries the item's creation time in PASSAGES mode", async () => {
+    const when = new Date("2026-08-14T09:30:00.000Z");
+    const db = fakeDb({
+      mem_chunks: [
+        { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", itemName: "Note", group: null, chunks: "1", createdAt: when },
+      ],
+      "mem_chunks#first": [{ c: "1" }],
+    });
+    const out = await contextMapPoints({ db, context, user, mode: "PASSAGES", limit: 10 });
+    expect(out.points[0]?.createdAtMs).toBe(when.getTime());
+    expect(createdSql(db)).toContain('items."createdAt" as "createdAt"');
+  });
+
+  it("carries it in DOCUMENTS mode, where the point is the item", async () => {
+    const when = new Date("2026-09-28T12:00:00.000Z");
+    const db = fakeDb({
+      mem_chunks: [
+        { id: OWNER, itemId: OWNER, x: "0", y: "0", z: "0", itemName: "Note", group: null, chunks: "4", createdAt: when },
+      ],
+      "mem_chunks#first": [{ c: "1" }],
+    });
+    const out = await contextMapPoints({ db, context, user, mode: "DOCUMENTS", limit: 10 });
+    expect(out.points[0]?.createdAtMs).toBe(when.getTime());
+    // Grouped by the item, so the column has to be grouped too rather than
+    // selected bare - Postgres would reject it otherwise.
+    expect(db.__log.some((l: any[]) => l[1] === "groupBy" && l.includes('items.createdAt'))).toBe(true);
+  });
+
+  // An unparseable or absent timestamp must not become 0, which is 1970 and
+  // would park the point at the far left of every time filter.
+  it.each([
+    ["absent", undefined],
+    ["null", null],
+    ["unparseable", "whenever"],
+  ])("answers null for a %s creation time", async (_label, value) => {
+    const db = fakeDb({
+      mem_chunks: [
+        { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", itemName: "N", group: null, chunks: "1", createdAt: value },
+      ],
+      "mem_chunks#first": [{ c: "1" }],
+    });
+    const out = await contextMapPoints({ db, context, user, mode: "PASSAGES", limit: 10 });
+    expect(out.points[0]?.createdAtMs).toBeNull();
+  });
+});
+
+/**
+ * One item's own metadata, read when a point is selected.
+ *
+ * Not fields on ContextMapPoint: the panel shows this for ONE item at a time,
+ * and carrying four more columns on every one of up to 20,000 points to serve
+ * a single selection is the wrong trade.
+ */
+describe("contextMapItem", () => {
+  // Keyed as Postgres would answer the SELECT, i.e. by the aliases the
+  // resolver asks for - the physical column names are pinned separately
+  // below, since a fixture cannot catch a wrong column on its own.
+  const row = {
+    id: OWNER, name: "Betriebsanleitung AZSTB", chunksCount: "42",
+    textLength: "81233", source: "upload",
+    createdAt: new Date("2026-07-20T08:00:00.000Z"),
+    updatedAt: new Date("2026-09-04T16:20:00.000Z"),
+  };
+
+  it("returns the item's metadata, scoped to the viewer", async () => {
+    const db = fakeDb({ "mem_items#first": [row] });
+    const out = await contextMapItem({ db, context, user, itemId: OWNER });
+    expect(out).toEqual({
+      id: OWNER, name: "Betriebsanleitung AZSTB", chunks: 42, textLength: 81233,
+      source: "upload",
+      createdAt: "2026-07-20T08:00:00.000Z",
+      updatedAt: "2026-09-04T16:20:00.000Z",
+    });
+    expect(accessControl()).toHaveBeenCalledWith(expect.anything(), expect.anything(), user, "items");
+    // The physical columns, which the fixture above cannot pin: reading
+    // items."chunks" or items."length" would answer undefined for every item
+    // and the fixture would never notice.
+    const selected = db.__log.filter((l: any[]) => l[0] === "raw").map((l: any[]) => String(l[1]));
+    expect(selected).toContain('items."chunks_count" as "chunksCount"');
+    expect(selected).toContain('items."textlength" as "textLength"');
+    // The identity predicate. fakeDb answers mem_items#first whatever the
+    // query says, so without this the resolver could drop the id filter
+    // entirely and still pass every assertion here - returning the context's
+    // first readable item for every selection.
+    expect(db.__log).toContainEqual(["mem_items", "where", "items.id", OWNER]);
+  });
+
+  it("returns null when the viewer may not read the item, or it does not exist", async () => {
+    const db = fakeDb({ "mem_items#first": [] });
+    expect(await contextMapItem({ db, context, user, itemId: OWNER })).toBeNull();
+  });
+
+  /**
+   * items.id is a uuid column, so a non-uuid reaches Postgres as 22P02 - a
+   * failed field rather than "no such item". The edges resolver guards the
+   * same way for chunks.source.
+   */
+  it("answers null for a non-uuid id without querying", async () => {
+    const db = fakeDb({ "mem_items#first": [row] });
+    expect(await contextMapItem({ db, context, user, itemId: "not-a-uuid" })).toBeNull();
+    expect(db).not.toHaveBeenCalled();
+  });
+
+  // A base that never recorded a size or a chunk count has no size, which is
+  // not the same claim as "zero bytes, zero chunks".
+  it("keeps missing numbers null rather than reporting zero", async () => {
+    const db = fakeDb({
+      "mem_items#first": [{ id: OWNER, name: "Note", chunksCount: null, textLength: null, source: null, createdAt: null, updatedAt: null }],
+    });
+    const out = await contextMapItem({ db, context, user, itemId: OWNER });
+    expect(out).toMatchObject({ chunks: null, textLength: null, source: null, createdAt: null, updatedAt: null });
+  });
+
+  it("answers an empty string for an item with no name", async () => {
+    const db = fakeDb({ "mem_items#first": [{ ...row, name: null }] });
+    expect((await contextMapItem({ db, context, user, itemId: OWNER }))?.name).toBe("");
+  });
+
+  // The exact clause, not a substring match on "archived": the harness cannot
+  // evaluate predicates, so `includes("archived")` would pass against
+  // `IS TRUE` - the inverse - and against `IS NOT FALSE`. IS NOT TRUE is also
+  // what the points query uses, which matters because `archived` is nullable
+  // on rows that predate the column.
+  it("never returns an archived item", async () => {
+    const db = fakeDb({ "mem_items#first": [row] });
+    await contextMapItem({ db, context, user, itemId: OWNER });
+    expect(db.__log).toContainEqual(["mem_items", "whereRaw", "items.archived IS NOT TRUE"]);
   });
 });

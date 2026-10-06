@@ -15,15 +15,26 @@ export type MapMode = "DOCUMENTS" | "PASSAGES";
 /**
  * One point of the cloud.
  *
- * `label` and `itemName` are two different things and both are needed. In
- * PASSAGES mode `label` is the chunk's own opening — the matched text — while
- * `itemName` names the document it came from. A corpus that injects a document
- * header into every chunk opens every passage with
- * `--- Document (Exulu ID: …) ---`, so a surface that titles a point by its
- * `label` titles it with an identifier; the name is what a reader calls it.
- * In DOCUMENTS mode a point IS an item, so the two agree.
+ * It carries no passage text. The answer used to include the chunk's opening
+ * as `label`, which was ~2.4 MB of a 5.8 MB response at POINTS_LIMIT_MAX —
+ * sent for every row to serve the one that gets selected. It was unusable as
+ * a title anyway: this product's ingestion injects a document header into
+ * every chunk, so the opening read `--- Document (Exulu ID: …) ---`. Surfaces
+ * title a point by `itemName`, and a selection reads the rest through
+ * `contextMapItem`.
  */
-export type MapPoint = { id: string; itemId: string; x: number; y: number; z: number; label: string; itemName: string; group: string | null; chunks: number };
+export type MapPoint = { id: string; itemId: string; x: number; y: number; z: number; itemName: string; group: string | null; chunks: number; createdAtMs: number | null };
+/**
+ * One item's own metadata, for the panel that opens on a selection.
+ *
+ * Deliberately NOT fields on MapPoint. The panel shows this for one item at a
+ * time, and the points answer carries up to POINTS_LIMIT_MAX rows — four more
+ * columns on every one of them to serve a single selection is the wrong trade.
+ */
+export type MapItem = {
+  id: string; name: string; chunks: number | null; textLength: number | null;
+  source: string | null; createdAt: string | null; updatedAt: string | null;
+};
 export type MapPoints = { points: MapPoint[]; total: number; sampled: boolean };
 export type MapEdge = { source: string; target: string; score: number };
 export type MapTopic = { id: string; label: string; count: number; x: number; y: number; z: number };
@@ -43,6 +54,16 @@ const maybeNum = (v: unknown): number | null => {
 const iso = (d: unknown): string | null => {
   const date = d instanceof Date ? d : typeof d === "string" || typeof d === "number" ? new Date(d) : null;
   return date && Number.isFinite(date.getTime()) ? date.toISOString() : null;
+};
+/**
+ * The same parse as `iso`, as epoch milliseconds.
+ *
+ * Never 0 for a missing or unparseable value: 0 is 1970, which would park the
+ * point at the far left of a time filter instead of outside it.
+ */
+const epochMs = (d: unknown): number | null => {
+  const date = d instanceof Date ? d : typeof d === "string" || typeof d === "number" ? new Date(d) : null;
+  return date && Number.isFinite(date.getTime()) ? date.getTime() : null;
 };
 /** chunks.source is a uuid column; anything else is 22P02, not "no edges". */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -220,15 +241,16 @@ export async function contextMapPoints({
 
   const rows: any[] = mode === "DOCUMENTS"
     ? await base()
-        .groupBy("items.id", "items.name", ...(group ? [`items.${group}`] : []))  // knex quotes these itself
+        .groupBy("items.id", "items.name", "items.createdAt", ...(group ? [`items.${group}`] : []))  // knex quotes these itself
         .orderByRaw("md5(items.id::text || ?)", [salt])
         .limit(capped)
         .select([
           db.raw("items.id as id"), db.raw("items.id as \"itemId\""),
           db.raw("AVG(chunks.px) as x"), db.raw("AVG(chunks.py) as y"), db.raw("AVG(chunks.pz) as z"),
-          db.raw("items.name as label"), db.raw("items.name as \"itemName\""),
+          db.raw("items.name as \"itemName\""),
           db.raw(group ? `items."${group}" as "group"` : "NULL as \"group\""),
           db.raw("COUNT(chunks.id) as chunks"),
+          db.raw("items.\"createdAt\" as \"createdAt\""),
         ])
     : await base()
         .orderByRaw("md5(chunks.id::text || ?)", [salt])
@@ -236,23 +258,82 @@ export async function contextMapPoints({
         .select([
           db.raw("chunks.id as id"), db.raw("chunks.source as \"itemId\""),
           db.raw("chunks.px as x"), db.raw("chunks.py as y"), db.raw("chunks.pz as z"),
-          db.raw("LEFT(COALESCE(chunks.content, items.name), 120) as label"),
-          // Not LEFT(…): a name is short, and the point of carrying it is that
-          // a surface can title a passage with something a reader recognises.
+          // No chunks.content here, by design: see MapPoint. Nothing reads a
+          // passage's text from this answer, and selecting LEFT(content, 120)
+          // for every row moved megabytes out of Postgres to serve nobody.
           db.raw("items.name as \"itemName\""),
           db.raw(group ? `items."${group}" as "group"` : "NULL as \"group\""),
           db.raw("1 as chunks"),
+          // The ITEM's creation time, not the chunk's: the time filter asks
+          // when the thing entered the base, and re-chunking a document does
+          // not make it newer.
+          db.raw("items.\"createdAt\" as \"createdAt\""),
         ]);
 
   return {
     points: rows.map((r) => ({
       id: String(r.id), itemId: String(r.itemId),
       x: num(r.x), y: num(r.y), z: num(r.z),
-      label: String(r.label ?? ""), itemName: String(r.itemName ?? ""),
+      itemName: String(r.itemName ?? ""),
       group: r.group == null ? null : String(r.group), chunks: num(r.chunks),
+      createdAtMs: epochMs(r.createdAt),
     })),
     total,
     sampled: total > capped,
+  };
+}
+
+/**
+ * One item's metadata, for the panel a selection opens.
+ *
+ * Access-controlled the same way the points query is — by the "items" prefix,
+ * on the items table itself — so selecting a point whose item the viewer may
+ * not read answers null rather than leaking a name, a size or a date. The
+ * points query already excludes those items, so this is the second gate on a
+ * path that should never be reachable; it is here because "unreachable" is a
+ * claim about today's client.
+ *
+ * Archived items are excluded for the same reason the cloud excludes them:
+ * they are not part of the base a reader is looking at.
+ */
+export async function contextMapItem({
+  db, context, user, itemId,
+}: { db: any; context: ExuluContext; user: User; itemId: string }): Promise<MapItem | null> {
+  // items.id is a uuid column. Anything else reaches Postgres as 22P02 — a
+  // failed field, where "no such item" is the honest answer.
+  if (!UUID.test(itemId)) return null;
+  const items = getTableName(context.id);
+  const table = convertContextToTableDefinition(context);
+  let q = db(`${items} as items`)
+    .where("items.id", itemId)
+    .whereRaw("items.archived IS NOT TRUE");
+  q = applyAccessControl(table, q, user, "items");
+  const row = await q
+    .select([
+      db.raw("items.id as id"),
+      db.raw("items.name as name"),
+      // Every items table the provider creates carries these; verified across
+      // all 31 on a restored production copy.
+      db.raw('items."chunks_count" as "chunksCount"'),
+      db.raw('items."textlength" as "textLength"'),
+      db.raw('items."source" as "source"'),
+      db.raw('items."createdAt" as "createdAt"'),
+      db.raw('items."updatedAt" as "updatedAt"'),
+    ])
+    .first();
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    // `name` is nullable, and the string "null" in a heading is worse than no
+    // heading at all.
+    name: String(row.name ?? ""),
+    // maybeNum, not num: a base that never recorded a size has no size, which
+    // is a different claim from "zero bytes".
+    chunks: maybeNum(row.chunksCount),
+    textLength: maybeNum(row.textLength),
+    source: row.source == null ? null : String(row.source),
+    createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
   };
 }
 
