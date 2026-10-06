@@ -144,6 +144,10 @@ import {
   guestRateLimitExceeded,
 } from "./guest-rate-limit.ts";
 import {
+  externalRateLimitExceeded,
+  isExternalUser,
+} from "./external-rate-limit.ts";
+import {
   resolveSkillByName,
   canAccessSkill,
   filterReadableSkills,
@@ -647,7 +651,9 @@ export const createExpressRoutes = async (
       const user = authenticationResult.user;
 
       // Anonymous guest traffic: per-IP rate limits + message caps (§3.5).
-      // These run BEFORE the password gate so every attempt (including failed
+      // Authenticated external-role users: per-user rate limit instead (no
+      // message caps — those exist to bound cost from anonymous drive-bys).
+      // Both run BEFORE the password gate so every attempt (including failed
       // password guesses) consumes limiter budget — prevents bcrypt oracle.
       if (!user?.id) {
         const ip = extractClientIp(req as any);
@@ -657,6 +663,11 @@ export const createExpressRoutes = async (
         }
         if (guestMessageTooLong(req.body)) {
           res.status(413).json({ detail: "Message too long." });
+          return;
+        }
+      } else if (isExternalUser(user)) {
+        if (externalRateLimitExceeded(String(user.id))) {
+          res.status(429).json({ detail: "Too many requests. Try again later." });
           return;
         }
       }
@@ -1044,6 +1055,12 @@ export const createExpressRoutes = async (
         return;
       }
       const user = authenticationResult.user;
+      if (isExternalUser(user)) {
+        if (externalRateLimitExceeded(String(user.id))) {
+          res.status(429).json({ message: "Too many requests. Try again later." });
+          return;
+        }
+      }
       const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
       if (!hasAccessToAgent) {
         res.status(401).json({ message: "You don't have access to this agent." });
@@ -1148,6 +1165,13 @@ export const createExpressRoutes = async (
       return;
     }
     const user = authenticationResult.user;
+
+    if (isExternalUser(user)) {
+      if (externalRateLimitExceeded(String(user.id))) {
+        res.status(429).json({ detail: "Too many requests. Try again later." });
+        return;
+      }
+    }
 
     const scopeCheck = checkApiKeyScope(user, agentId);
     if (!scopeCheck.allowed) {

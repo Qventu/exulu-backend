@@ -37,7 +37,8 @@ describe("createAgenticRetrievalTool", () => {
     const names = tool.config.map((c) => c.name).sort();
     expect(names).toEqual([
       "instructions", "knowledge_bases", "logging", "managed_context", "memory",
-      "max_steps", "project_search", "require_preselected_contexts", "reranker", "routing", "tuning", "utility_model", "vocabulary",
+      "max_steps", "project_search", "require_preselected_contexts", "reranker",
+      "routing", "show_sources_to_external_users", "tuning", "utility_model", "vocabulary",
     ].sort());
     expect(tool.config.filter((c) => c.type === "json").map((c) => c.name).sort())
       .toEqual(["knowledge_bases", "memory", "routing", "tuning", "vocabulary"].sort());
@@ -142,6 +143,87 @@ describe("payload deduplication", () => {
     expect(topLevel.chunk_content).toBe("FULL MAIN CONTENT");
     // Memory chunks no longer reach the top-level chunk list on their own.
     expect(last.chunks.find((c: any) => c.chunk_id === "m1")).toBeUndefined();
+  });
+});
+
+describe("source visibility for external / anonymous users", () => {
+  const SOURCE_FIELDS = ["item_id", "item_name", "item_external_id", "context", "chunk_id", "chunk_index"];
+  const richChunk = {
+    chunk_id: "c1", chunk_index: 3, chunk_content: "SECRET PASSAGE",
+    item_id: "i1", item_name: "Handbook.pdf", item_external_id: "ext-1", context: "docs",
+  };
+  const internalUser = { id: "u1", role: { name: "admin" } } as any;
+  const externalUser = { id: "u2", role: { name: "external" } } as any;
+
+  /**
+   * Seed both phases so a fully-populated chunk reaches the top-level list AND
+   * a step.
+   *
+   * The main search is what puts a chunk in `result.chunks`. Seeding only the
+   * memory phase used to be enough, because memory chunks were copied into
+   * that list — they no longer are ("recall once", asserted by the payload
+   * deduplication suite above), so a memory-only fixture leaves the top-level
+   * list empty and every assertion on `last.chunks[0]` reads undefined.
+   * Stripping itself is indifferent to where a chunk came from.
+   */
+  const seedRichChunk = () => {
+    jest.requireMock("./memory").runMemoryPhase.mockResolvedValueOnce({
+      memoryChunksForAnswer: [richChunk],
+      memoryOverride: { active: false, chunks: [], reason: "" },
+      memoryPinnedItemIdsByContext: new Map(), updatedQuestion: "q", updatedKeywords: ["k"],
+      updatedImportantKeyword: "k",
+      steps: [{ text: "memory step", chunks: [richChunk] }],
+    });
+    jest.requireMock("./rerank").rerankResults.mockResolvedValueOnce({
+      limited_results: [richChunk],
+      sorted_reranked_results: [],
+      rerank_score_max_genuine: 1,
+    });
+  };
+
+  const lastPayload = async (config: Record<string, unknown>, user: any) => {
+    seedRichChunk();
+    const out = await drain(makeTool(config, { user })(inputs));
+    return JSON.parse(out[out.length - 1].result);
+  };
+
+  it("strips source references for an external user when the flag is off", async () => {
+    const last = await lastPayload({ show_sources_to_external_users: false }, externalUser);
+    const topLevel = last.chunks[0];
+    expect(topLevel).toBeDefined();
+    for (const f of SOURCE_FIELDS) expect(topLevel[f]).toBeUndefined();
+    // the passage text itself still reaches the model — only the attribution is removed
+    expect(topLevel.chunk_content).toBe("SECRET PASSAGE");
+    const stepChunk = last.steps.find((s: any) => s.chunks?.length > 0).chunks[0];
+    for (const f of SOURCE_FIELDS) expect(stepChunk[f]).toBeUndefined();
+  });
+
+  it("strips source references for an anonymous guest when the flag is off", async () => {
+    const last = await lastPayload({ show_sources_to_external_users: false }, undefined);
+    for (const f of SOURCE_FIELDS) expect(last.chunks[0][f]).toBeUndefined();
+  });
+
+  it("keeps source references for an internal user even when the flag is off", async () => {
+    const last = await lastPayload({ show_sources_to_external_users: false }, internalUser);
+    expect(last.chunks[0].item_name).toBe("Handbook.pdf");
+    expect(last.chunks[0].chunk_id).toBe("c1");
+  });
+
+  it("keeps source references for external users when the flag is on", async () => {
+    const last = await lastPayload({ show_sources_to_external_users: true }, externalUser);
+    expect(last.chunks[0].item_name).toBe("Handbook.pdf");
+  });
+
+  it("defaults to showing sources when the flag is unset (backward compatible)", async () => {
+    const last = await lastPayload({}, externalUser);
+    expect(last.chunks[0].item_name).toBe("Handbook.pdf");
+    expect(last.chunks[0].chunk_id).toBe("c1");
+  });
+
+  it("still strips chunk_content from step chunks when sources are hidden", async () => {
+    const last = await lastPayload({ show_sources_to_external_users: false }, externalUser);
+    const stepChunk = last.steps.find((s: any) => s.chunks?.length > 0).chunks[0];
+    expect(stepChunk.chunk_content).toBeUndefined();
   });
 });
 
