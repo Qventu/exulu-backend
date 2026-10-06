@@ -95,6 +95,33 @@ The Embedder converts chunks into vectors and writes them to the vector index. T
 - **Embedder identity** — the model and provider used for embedding, displayed as "Embedder · `{id}`".
 - **Variable bindings** — any environment variables the embedder needs (API keys, endpoint URLs). Bindings are listed with their current status; unconfigured bindings show "No variable bindings configured."
 
+### Choosing the embedding model
+
+The model is set per knowledge base, not only per deployment. **Change model**
+on the Embedder card opens **Embedding model**, listing each available model
+with its dimensionality, an optional **Queue**, and **Use the platform
+default** to hand the choice back to the deployment.
+
+The dialog states the consequences before you confirm, because they are not
+reversible by changing the setting back:
+
+- Existing chunks are deleted, and **every item has to be re-embedded before
+  it can be searched again**.
+- If the new model has a different vector dimension, the chunks table is
+  **rebuilt** rather than emptied.
+- Search over this knowledge base returns nothing until regeneration finishes.
+- Clearing the model entirely stops search and Ask working for this base until
+  a new one is chosen.
+
+With no queue selected, embedding runs inline and will slow saves on large
+items — the dialog says so. Pick a queue for any base of real size.
+
+<Warning>
+Changing the model on a populated base is a re-index, not a setting. Plan it
+like one: expect a window where search returns nothing, and trigger a bulk
+regeneration straight afterwards.
+</Warning>
+
 ### Triggering the embedder
 
 Click **Trigger** to run the embedder in bulk on a filtered set of items. The "Generate embeddings in bulk" dialog lets you configure filters and preview the affected items.

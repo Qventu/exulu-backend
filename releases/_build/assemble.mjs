@@ -18,6 +18,7 @@ const warnings = [];
 // Display order, newest first. name = sidebar label; headline/lede override
 // the page hero where the original was generic ("What's new in Exulu.").
 const ORDER = [
+  { slug: '2026-10-06-agent-memory', name: 'Agent Memory' },
   { slug: '2026-07-22-usage-and-budgets', name: 'Usage & Budgets' },
   {
     // roundup release: split into one chapter per feature section
@@ -101,6 +102,10 @@ const ORDER = [
 ];
 
 const MONTHS = [
+  {
+    key: '2026-10', label: 'October 2026',
+    blurb: 'Agent memory end to end: the save card in chat, the Memory area, usage tracking, conflict detection, and a map that draws a whole base at once.',
+  },
   {
     key: '2026-07', label: 'July 2026',
     blurb: 'Agents step outside your org, routines answer email, agents write your knowledge, imports land a hundred items at a time — plus usage transparency, the connect-your-agent drop, projects, evals, and the July 8 platform drop.',

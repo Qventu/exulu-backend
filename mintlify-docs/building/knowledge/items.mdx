@@ -111,8 +111,28 @@ Select items using the checkbox in each row. A **selection bar** appears at the 
 
 - **`{n}` items selected** — count of selected items with a **Clear selection** link.
 - **Archive** — archives all selected items.
+- **Set access** — applies one access setting to every selected item.
 - **Delete** — permanently deletes all selected items and their embeddings (requires confirmation).
 - **Unarchive** — available in the Archived view.
+
+### Set access in bulk
+
+**Set access** opens the same access panel as a single item and applies the
+result to the whole selection — "Apply access settings to 12 selected items."
+Use it when a batch arrives with the wrong visibility, or when a knowledge
+base changes hands.
+
+It changes permissions only. Nothing is re-processed and nothing is
+re-embedded, so it is safe on a large selection and takes effect immediately
+for retrieval.
+
+The same action exists on memory bases, in the Memory area.
+
+<Info>
+To set access on items as they arrive rather than after, use **Access** in the
+import footer — see [Batch access](/building/knowledge/bulk-import#batch-access).
+That applies to newly created rows only; existing items keep what they have.
+</Info>
 
 For bulk pipeline operations (process or embed a filtered set), use the **Filters** dialog which exposes "Process items in bulk" and "Generate embeddings in bulk" with a filter-based item preview.
 

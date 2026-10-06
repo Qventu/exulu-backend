@@ -9,262 +9,428 @@
     "dark": "#557a26"
   },
   "background": {
-    "color": { "light": "#f8f6f1", "dark": "#1b1714" }
+    "color": {
+      "light": "#f8f6f1",
+      "dark": "#1b1714"
+    }
   },
   "logo": {
     "light": "/logo/imp-wordmark-light.svg",
     "dark": "/logo/imp-wordmark-dark.svg"
   },
   "favicon": "/logo/imp-icon.svg",
-  "icons": { "library": "lucide" },
+  "icons": {
+    "library": "lucide"
+  },
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "mcp", "cursor", "vscode"]
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "perplexity",
+      "mcp",
+      "cursor",
+      "vscode"
+    ]
   },
   "navigation": {
     "tabs": [
-      { "tab": "Get Started", "icon": "rocket", "groups": [
-        { "group": "Welcome", "pages": ["index", "get-started/what-is-imp", "get-started/where-do-i-start"] },
-        { "group": "Platform", "pages": ["get-started/concepts", "get-started/editions"] }
-      ] },
-      { "tab": "User Guide", "icon": "message-square", "groups": [
-        { "group": "Chat", "pages": [
-          "user-guide/chat/overview",
-          "user-guide/chat/conversations",
-          "user-guide/chat/attachments-and-session-files",
-          "user-guide/chat/dictation",
-          "user-guide/chat/prompts-in-chat",
-          "user-guide/chat/pinned-knowledge-and-presets",
-          "user-guide/chat/memory",
-          "user-guide/chat/tool-approvals",
-          "user-guide/chat/connecting-tools",
-          "user-guide/chat/budgets-in-chat",
-          "user-guide/chat/context-compaction",
-          "user-guide/chat/image-generation",
-          "user-guide/chat/artifacts-and-sharing",
-          "user-guide/chat/model-override-and-usage"
-        ] },
-        { "group": "Projects", "pages": [
-          "user-guide/projects/overview",
-          "user-guide/projects/working-in-a-project"
-        ] },
-        { "group": "Transcripts", "pages": [
-          "user-guide/transcripts/overview",
-          "user-guide/transcripts/recording-meetings",
-          "user-guide/transcripts/reviewing-and-saving"
-        ] },
-        { "group": "Personal", "pages": [
-          "user-guide/settings"
-        ] }
-      ] },
-      { "tab": "Building", "icon": "hammer", "groups": [
-        { "group": "Agents", "pages": [
-          "building/agents/overview",
-          "building/agents/workbench",
-          "building/agents/tools-and-skills",
-          "building/agents/access-and-safety",
-          "building/agents/guest-access",
-          "building/agents/knowledge-search"
-        ] },
-        { "group": "Knowledge", "pages": [
-          "building/knowledge/overview",
-          "building/knowledge/items",
-          "building/knowledge/bulk-import",
-          "building/knowledge/pipeline",
-          "building/knowledge/entities"
-        ] },
-        { "group": "Memory", "pages": [
-          "building/memory/overview"
-        ] },
-        { "group": "Prompts & Skills", "pages": [
-          "building/prompts",
-          "building/skills/overview",
-          "building/skills/editing-and-versions",
-          "building/skills/connect-your-agent"
-        ] },
-        { "group": "Routines", "pages": [
-          "building/routines/overview",
-          "building/routines/email-triggers",
-          "building/routines/email-integration",
-          "building/routines/runs-and-schedules"
-        ] },
-        { "group": "Evals", "pages": [
-          "building/evals/overview",
-          "building/evals/test-cases",
-          "building/evals/runs"
-        ] },
-        { "group": "More", "pages": [
-          "building/feedback"
-        ] }
-      ] },
-      { "tab": "Administration", "icon": "shield", "groups": [
-        { "group": "Users & access", "pages": [
-          "administration/users-access/overview",
-          "administration/users-access/roles",
-          "administration/users-access/teams"
-        ] },
-        { "group": "Platform", "pages": [
-          "administration/models",
-          "administration/budgets",
-          "administration/analytics"
-        ] },
-        { "group": "Governance", "pages": [
-          "administration/variables",
-          "administration/theme",
-          "administration/api-keys",
-          "administration/email-intake"
-        ] }
-      ] },
-      { "tab": "Self-Hosting", "icon": "server", "groups": [
-        { "group": "Deploy", "pages": [
-          "self-hosting/architecture",
-          "self-hosting/requirements",
-          "self-hosting/quickstart"
-        ] },
-        { "group": "Services", "pages": [
-          "self-hosting/services/postgres",
-          "self-hosting/services/redis",
-          "self-hosting/services/s3-storage",
-          "self-hosting/services/litellm",
-          "self-hosting/services/whisper",
-          "self-hosting/services/smtp-and-auth",
-          "self-hosting/services/observability"
-        ] },
-        { "group": "Operate", "pages": [
-          "self-hosting/containers",
-          "self-hosting/environment-variables",
-          "self-hosting/branding",
-          "self-hosting/database",
-          "self-hosting/operations",
-          "self-hosting/troubleshooting"
-        ] }
-      ] },
-      { "tab": "Developers", "icon": "code", "groups": [
-        { "group": "Start", "pages": [
-          "developers/setup",
-          "developers/getting-started"
-        ] },
-        { "group": "Tutorials", "pages": [
-          "developers/tutorials/first-app",
-          "developers/tutorials/defining-contexts",
-          "developers/tutorials/data-sources-and-sync",
-          "developers/tutorials/custom-processors",
-          "developers/tutorials/queues-and-workers",
-          "developers/tutorials/custom-tools",
-          "developers/tutorials/oauth-tools",
-          "developers/tutorials/user-credential-tools",
-          "developers/tutorials/running-evals",
-          "developers/tutorials/mcp"
-        ] },
-        { "group": "Recipes", "pages": [
-          "developers/recipes/s3-backed-context",
-          "developers/recipes/api-sync-ticketing",
-          "developers/recipes/sql-source",
-          "developers/recipes/incremental-sync"
-        ] },
-        { "group": "Core classes", "pages": [
-          { "group": "ExuluApp", "pages": [
-            "developers/core/exulu-app/introduction",
-            "developers/core/exulu-app/configuration",
-            "developers/core/exulu-app/api-reference"
-          ] },
-          { "group": "ExuluContext", "pages": [
-            "developers/core/exulu-context/introduction",
-            "developers/core/exulu-context/configuration",
-            "developers/core/exulu-context/api-reference"
-          ] },
-          { "group": "ExuluTool", "pages": [
-            "developers/core/exulu-tool/introduction",
-            "developers/core/exulu-tool/configuration",
-            "developers/core/exulu-tool/api-reference"
-          ] },
-          { "group": "ExuluProvider", "pages": [
-            "developers/core/exulu-provider/introduction",
-            "developers/core/exulu-provider/configuration",
-            "developers/core/exulu-provider/api-reference"
-          ] },
-          { "group": "ExuluEval", "pages": [
-            "developers/core/exulu-eval/introduction",
-            "developers/core/exulu-eval/configuration",
-            "developers/core/exulu-eval/api-reference"
-          ] },
-          { "group": "ExuluQueues", "pages": [
-            "developers/core/exulu-queues/introduction",
-            "developers/core/exulu-queues/configuration",
-            "developers/core/exulu-queues/api-reference"
-          ] },
-          { "group": "ExuluChunkers", "pages": [
-            "developers/core/exulu-chunkers/introduction",
-            "developers/core/exulu-chunkers/configuration",
-            "developers/core/exulu-chunkers/api-reference"
-          ] },
-          { "group": "ExuluDatabase", "pages": [
-            "developers/core/exulu-database/introduction",
-            "developers/core/exulu-database/configuration",
-            "developers/core/exulu-database/api-reference"
-          ] }
-        ] },
-        { "group": "Reference", "pages": [
-          "developers/reference/exulu-jobs",
-          "developers/reference/exulu-default-tools",
-          "developers/reference/exulu-default-providers",
-          "developers/reference/exulu-variables",
-          "developers/reference/exulu-authentication",
-          "developers/reference/exulu-document-processor",
-          "developers/reference/exulu-reranker",
-          "developers/reference/exulu-otel",
-          "developers/reference/exulu-python",
-          "developers/reference/exulu-read-api",
-          "developers/reference/exulu-storage",
-          "developers/reference/exulu-mcp",
-          "developers/reference/exulu-tokenizer",
-          "developers/reference/functions-and-types"
-        ] }
-      ] },
-      { "tab": "API Reference", "icon": "braces", "groups": [
-        { "group": "REST", "openapi": "/openapi/openapi.json", "pages": [
-          "api-reference/rest/introduction",
-          "api-reference/rest/public-agents",
-          "api-reference/rest/file-uploads",
-          "api-reference/rest/gateways-litellm",
-          "api-reference/rest/mcp",
-          "api-reference/rest/gdpr"
-        ] },
-        { "group": "GraphQL", "pages": [
-          "api-reference/graphql/introduction",
-          "api-reference/graphql/conventions",
-          "api-reference/graphql/dynamic-types",
-          "api-reference/graphql/vector-search",
-          "api-reference/graphql/routine-runs"
-        ] },
-        { "group": "Core types", "expanded": false, "pages": [
-          "api-reference/graphql/core-types/agents",
-          "api-reference/graphql/core-types/agent-messages",
-          "api-reference/graphql/core-types/agent-sessions",
-          "api-reference/graphql/core-types/context-presets",
-          "api-reference/graphql/core-types/entity-type-settings",
-          "api-reference/graphql/core-types/eval-runs",
-          "api-reference/graphql/core-types/eval-sets",
-          "api-reference/graphql/core-types/feedback",
-          "api-reference/graphql/core-types/job-results",
-          "api-reference/graphql/core-types/models",
-          "api-reference/graphql/core-types/platform-configurations",
-          "api-reference/graphql/core-types/projects",
-          "api-reference/graphql/core-types/prompt-favorites",
-          "api-reference/graphql/core-types/prompt-library",
-          "api-reference/graphql/core-types/roles",
-          "api-reference/graphql/core-types/skills",
-          "api-reference/graphql/core-types/teams",
-          "api-reference/graphql/core-types/test-cases",
-          "api-reference/graphql/core-types/tracking",
-          "api-reference/graphql/core-types/transcription-jobs",
-          "api-reference/graphql/core-types/users",
-          "api-reference/graphql/core-types/variables",
-          "api-reference/graphql/core-types/workflow-templates"
-        ] }
-      ] },
-      { "tab": "Changelog", "icon": "history", "groups": [
-        { "group": "Changelog", "pages": ["changelog/index"] }
-      ] }
+      {
+        "tab": "Get Started",
+        "icon": "rocket",
+        "groups": [
+          {
+            "group": "Welcome",
+            "pages": [
+              "index",
+              "get-started/what-is-imp",
+              "get-started/where-do-i-start"
+            ]
+          },
+          {
+            "group": "Platform",
+            "pages": [
+              "get-started/concepts",
+              "get-started/editions"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "User Guide",
+        "icon": "message-square",
+        "groups": [
+          {
+            "group": "Chat",
+            "pages": [
+              "user-guide/chat/overview",
+              "user-guide/chat/conversations",
+              "user-guide/chat/attachments-and-session-files",
+              "user-guide/chat/dictation",
+              "user-guide/chat/prompts-in-chat",
+              "user-guide/chat/pinned-knowledge-and-presets",
+              "user-guide/chat/memory",
+              "user-guide/chat/tool-approvals",
+              "user-guide/chat/connecting-tools",
+              "user-guide/chat/budgets-in-chat",
+              "user-guide/chat/context-compaction",
+              "user-guide/chat/image-generation",
+              "user-guide/chat/artifacts-and-sharing",
+              "user-guide/chat/model-override-and-usage"
+            ]
+          },
+          {
+            "group": "Projects",
+            "pages": [
+              "user-guide/projects/overview",
+              "user-guide/projects/working-in-a-project"
+            ]
+          },
+          {
+            "group": "Transcripts",
+            "pages": [
+              "user-guide/transcripts/overview",
+              "user-guide/transcripts/recording-meetings",
+              "user-guide/transcripts/reviewing-and-saving"
+            ]
+          },
+          {
+            "group": "Personal",
+            "pages": [
+              "user-guide/settings"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Building",
+        "icon": "hammer",
+        "groups": [
+          {
+            "group": "Agents",
+            "pages": [
+              "building/agents/overview",
+              "building/agents/workbench",
+              "building/agents/tools-and-skills",
+              "building/agents/access-and-safety",
+              "building/agents/guest-access",
+              "building/agents/knowledge-search"
+            ]
+          },
+          {
+            "group": "Knowledge",
+            "pages": [
+              "building/knowledge/overview",
+              "building/knowledge/items",
+              "building/knowledge/bulk-import",
+              "building/knowledge/pipeline",
+              "building/knowledge/entities"
+            ]
+          },
+          {
+            "group": "Memory",
+            "pages": [
+              "building/memory/overview"
+            ]
+          },
+          {
+            "group": "Prompts & Skills",
+            "pages": [
+              "building/prompts",
+              "building/skills/overview",
+              "building/skills/editing-and-versions",
+              "building/skills/connect-your-agent"
+            ]
+          },
+          {
+            "group": "Routines",
+            "pages": [
+              "building/routines/overview",
+              "building/routines/email-triggers",
+              "building/routines/email-integration",
+              "building/routines/runs-and-schedules"
+            ]
+          },
+          {
+            "group": "Evals",
+            "pages": [
+              "building/evals/overview",
+              "building/evals/test-cases",
+              "building/evals/runs"
+            ]
+          },
+          {
+            "group": "More",
+            "pages": [
+              "building/feedback"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Administration",
+        "icon": "shield",
+        "groups": [
+          {
+            "group": "Users & access",
+            "pages": [
+              "administration/users-access/overview",
+              "administration/users-access/roles",
+              "administration/users-access/teams"
+            ]
+          },
+          {
+            "group": "Platform",
+            "pages": [
+              "administration/models",
+              "administration/budgets",
+              "administration/analytics"
+            ]
+          },
+          {
+            "group": "Governance",
+            "pages": [
+              "administration/variables",
+              "administration/theme",
+              "administration/api-keys",
+              "administration/email-intake",
+              "administration/transcript-settings"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Self-Hosting",
+        "icon": "server",
+        "groups": [
+          {
+            "group": "Deploy",
+            "pages": [
+              "self-hosting/architecture",
+              "self-hosting/requirements",
+              "self-hosting/quickstart"
+            ]
+          },
+          {
+            "group": "Services",
+            "pages": [
+              "self-hosting/services/postgres",
+              "self-hosting/services/redis",
+              "self-hosting/services/s3-storage",
+              "self-hosting/services/litellm",
+              "self-hosting/services/whisper",
+              "self-hosting/services/smtp-and-auth",
+              "self-hosting/services/observability"
+            ]
+          },
+          {
+            "group": "Operate",
+            "pages": [
+              "self-hosting/containers",
+              "self-hosting/environment-variables",
+              "self-hosting/branding",
+              "self-hosting/database",
+              "self-hosting/operations",
+              "self-hosting/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Developers",
+        "icon": "code",
+        "groups": [
+          {
+            "group": "Start",
+            "pages": [
+              "developers/setup",
+              "developers/getting-started"
+            ]
+          },
+          {
+            "group": "Tutorials",
+            "pages": [
+              "developers/tutorials/first-app",
+              "developers/tutorials/defining-contexts",
+              "developers/tutorials/data-sources-and-sync",
+              "developers/tutorials/custom-processors",
+              "developers/tutorials/queues-and-workers",
+              "developers/tutorials/custom-tools",
+              "developers/tutorials/oauth-tools",
+              "developers/tutorials/user-credential-tools",
+              "developers/tutorials/running-evals",
+              "developers/tutorials/mcp"
+            ]
+          },
+          {
+            "group": "Recipes",
+            "pages": [
+              "developers/recipes/s3-backed-context",
+              "developers/recipes/api-sync-ticketing",
+              "developers/recipes/sql-source",
+              "developers/recipes/incremental-sync"
+            ]
+          },
+          {
+            "group": "Core classes",
+            "pages": [
+              {
+                "group": "ExuluApp",
+                "pages": [
+                  "developers/core/exulu-app/introduction",
+                  "developers/core/exulu-app/configuration",
+                  "developers/core/exulu-app/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluContext",
+                "pages": [
+                  "developers/core/exulu-context/introduction",
+                  "developers/core/exulu-context/configuration",
+                  "developers/core/exulu-context/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluTool",
+                "pages": [
+                  "developers/core/exulu-tool/introduction",
+                  "developers/core/exulu-tool/configuration",
+                  "developers/core/exulu-tool/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluProvider",
+                "pages": [
+                  "developers/core/exulu-provider/introduction",
+                  "developers/core/exulu-provider/configuration",
+                  "developers/core/exulu-provider/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluEval",
+                "pages": [
+                  "developers/core/exulu-eval/introduction",
+                  "developers/core/exulu-eval/configuration",
+                  "developers/core/exulu-eval/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluQueues",
+                "pages": [
+                  "developers/core/exulu-queues/introduction",
+                  "developers/core/exulu-queues/configuration",
+                  "developers/core/exulu-queues/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluChunkers",
+                "pages": [
+                  "developers/core/exulu-chunkers/introduction",
+                  "developers/core/exulu-chunkers/configuration",
+                  "developers/core/exulu-chunkers/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluDatabase",
+                "pages": [
+                  "developers/core/exulu-database/introduction",
+                  "developers/core/exulu-database/configuration",
+                  "developers/core/exulu-database/api-reference"
+                ]
+              }
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "developers/reference/exulu-jobs",
+              "developers/reference/exulu-default-tools",
+              "developers/reference/exulu-default-providers",
+              "developers/reference/exulu-variables",
+              "developers/reference/exulu-authentication",
+              "developers/reference/exulu-document-processor",
+              "developers/reference/exulu-reranker",
+              "developers/reference/exulu-otel",
+              "developers/reference/exulu-python",
+              "developers/reference/exulu-read-api",
+              "developers/reference/exulu-storage",
+              "developers/reference/exulu-mcp",
+              "developers/reference/exulu-tokenizer",
+              "developers/reference/functions-and-types"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "icon": "braces",
+        "groups": [
+          {
+            "group": "REST",
+            "openapi": "/openapi/openapi.json",
+            "pages": [
+              "api-reference/rest/introduction",
+              "api-reference/rest/public-agents",
+              "api-reference/rest/file-uploads",
+              "api-reference/rest/gateways-litellm",
+              "api-reference/rest/mcp",
+              "api-reference/rest/gdpr"
+            ]
+          },
+          {
+            "group": "GraphQL",
+            "pages": [
+              "api-reference/graphql/introduction",
+              "api-reference/graphql/conventions",
+              "api-reference/graphql/dynamic-types",
+              "api-reference/graphql/vector-search",
+              "api-reference/graphql/routine-runs"
+            ]
+          },
+          {
+            "group": "Core types",
+            "expanded": false,
+            "pages": [
+              "api-reference/graphql/core-types/agents",
+              "api-reference/graphql/core-types/agent-messages",
+              "api-reference/graphql/core-types/agent-sessions",
+              "api-reference/graphql/core-types/context-presets",
+              "api-reference/graphql/core-types/entity-type-settings",
+              "api-reference/graphql/core-types/eval-runs",
+              "api-reference/graphql/core-types/eval-sets",
+              "api-reference/graphql/core-types/feedback",
+              "api-reference/graphql/core-types/job-results",
+              "api-reference/graphql/core-types/models",
+              "api-reference/graphql/core-types/platform-configurations",
+              "api-reference/graphql/core-types/projects",
+              "api-reference/graphql/core-types/prompt-favorites",
+              "api-reference/graphql/core-types/prompt-library",
+              "api-reference/graphql/core-types/roles",
+              "api-reference/graphql/core-types/skills",
+              "api-reference/graphql/core-types/teams",
+              "api-reference/graphql/core-types/test-cases",
+              "api-reference/graphql/core-types/tracking",
+              "api-reference/graphql/core-types/transcription-jobs",
+              "api-reference/graphql/core-types/users",
+              "api-reference/graphql/core-types/variables",
+              "api-reference/graphql/core-types/workflow-templates"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Changelog",
+        "icon": "history",
+        "groups": [
+          {
+            "group": "Changelog",
+            "pages": [
+              "changelog/index"
+            ]
+          }
+        ]
+      }
     ]
   },
   "footer": {
@@ -272,7 +438,10 @@
       {
         "header": "IMP",
         "items": [
-          { "label": "Intelligence Management Platform", "href": "/get-started/what-is-imp" }
+          {
+            "label": "Intelligence Management Platform",
+            "href": "/get-started/what-is-imp"
+          }
         ]
       }
     ]

@@ -1,6 +1,6 @@
 ---
 title: "Recording meetings"
-description: "Send a bot to join a Zoom, Google Meet, or Teams meeting, then receive a transcript when it ends."
+description: "Send a bot to join a Zoom, Google Meet, or Teams meeting, or record a room with the device in front of you."
 icon: "video"
 ---
 
@@ -10,7 +10,7 @@ import { RightsCallout } from "/snippets/rights-callout.mdx";
 
 ## How meeting recording works
 
-When you record a meeting, a bot joins the call at the meeting URL you provide. It records the audio and, once the meeting ends, the recording flows through the same transcription and review pipeline as an uploaded audio file: the transcript lands in **Needs review**, you name the speakers, and then save it to Knowledge.
+When you record a meeting, a bot joins the call at the meeting URL you provide. It records the audio and, once the meeting ends, the recording flows through the same transcription and review pipeline as an uploaded audio file: the transcript lands in **Needs review**, you correct the speakers and text, and then mark it reviewed, publish it to the knowledge base, or both.
 
 <Note>
 Meeting recording requires a meeting bot integration configured by your administrator. If it is not configured, the **Record a meeting** mode is not available.
@@ -65,6 +65,32 @@ The reconcile sweep has a 24-hour limit measured from the meeting start. If a jo
 <Tip>
 A bot joining a meeting is visible to participants (it appears as a named participant). If your organization's policy requires disclosure of recording, check the **Notify participants in chat** option.
 </Tip>
+
+## Record on this device
+
+A meeting in a room does not need a bot. **New transcript → Record on this
+device** uses the microphone of the phone, tablet or laptop you are on: put
+the device on the table, press **Start recording**, and stop when the meeting
+ends.
+
+The audio is cut into short pieces as you go and transcribed continuously, so
+the transcript is already being written while the meeting runs rather than
+starting when it ends. Stopping uploads the audio and hands the transcript to
+review like any other source.
+
+<Warning>
+Keep the screen on. Recording pauses when the device locks, and IMP tells you
+so. If the microphone is interrupted — a call comes in, another tab takes the
+device — press **Stop** to keep what was captured up to that point.
+</Warning>
+
+Two ways out while recording:
+
+- **Stop** — the transcript so far is kept for review and the audio is uploaded.
+- **Discard** — the recording and its transcript are deleted.
+
+If you finish without uploading audio, the transcript captured so far still
+becomes a draft for review; no audio file is attached to it.
 
 ## Post-processing
 

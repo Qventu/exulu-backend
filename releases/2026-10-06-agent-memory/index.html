@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Agent memory — IMP release</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+    :root {
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em {
+      font-style: normal;
+      color: hsl(var(--primary));
+    }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 640px;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice + .slice { margin-top: 56px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    p code { font-family: 'JetBrains Mono', monospace; font-size: 0.88em; }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(0 0% 4%);
+      color: hsl(0 0% 96%);
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 24px 0 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .feature .extras p { margin: 0 0 16px; font-size: 16px; }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">6 October 2026</span>
+      <h1 class="hero">Agent memory, end to end</h1>
+      <p class="lede">Memory stopped being a hidden system-prompt injection and became something you can
+        see, correct, measure and argue with. Five parts shipped together: the save card in chat, the
+        Memory area, usage tracking, conflict detection, and a map of the whole base.</p>
+    </header>
+
+    <section class="feature">
+      <h2>Memory, in the open</h2>
+      <p class="one-liner">Your agent remembers — and you approve the words.</p>
+      <div class="slice">
+        <video src="./shorts/memory-in-chat.mp4" autoplay loop muted playsinline></video>
+      <p>Memory already worked. It was just invisible: a question in chat, a generic approval, a system-prompt injection nobody saw.</p>
+      <p>Now the agent has three tools — remember, update and forget — and the consent step <em>is</em> the save card. You approve the exact sentence that gets stored, and you can edit it before you do. Nothing reaches the base that you did not see.</p>
+      </div>
+    </section>
+    <section class="feature">
+      <h2>The Memory area</h2>
+      <p class="one-liner">One place that answers: what has this agent actually learned?</p>
+      <div class="slice">
+        <video src="./shorts/memory-area.mp4" autoplay loop muted playsinline></video>
+      <p>Under Build there is now a Memory area: every base, every agent, and one memory in full.</p>
+      <p>It is built over the knowledge workspace you already know, so filters, access control and the item dialogs behave exactly as they do everywhere else. A base page opens on a stats strip — how many memories, how many used this month, how many never used, how many in conflict.</p>
+      </div>
+    </section>
+    <section class="feature">
+      <h2>What the agent actually uses</h2>
+      <p class="one-liner">Half a base is never read. Now you can tell which half.</p>
+      <div class="slice">
+        <video src="./shorts/usage.mp4" autoplay loop muted playsinline></video>
+      <p>Every memory recalled into an answer is recorded — one record per recalled memory per answer, guest conversations included. Nothing about the content, only the fact of the use.</p>
+      <p>That gives a <strong>Last used</strong> column, a usage filter for never-used and stale memories, and a bulk <strong>Archive</strong> for the leftovers. Archived memories leave recall and the counts and can be restored from Knowledge — they are not deleted.</p>
+      </div>
+    </section>
+    <section class="feature">
+      <h2>Conflicts</h2>
+      <p class="one-liner">Two memories disagree. The agent believes both.</p>
+      <div class="slice">
+        <video src="./shorts/conflicts.mp4" autoplay loop muted playsinline></video>
+      <p>A base accumulates near-duplicates and outright contradictions, and until now nothing surfaced them.</p>
+      <p>A scan per base finds both: duplicates by similarity, contradictions judged by a structured model call per candidate pair. Three resolutions — keep one, merge into a single memory, or dismiss as not a conflict — and the decision is stored. Only shared memories are scanned; private memories never enter detection.</p>
+      <div class="snippet-label">Run a scan from the API</div>
+      <pre><code>mutation MemoryConflictsScan($contextId: ID!) {
+  memoryConflictsScan(contextId: $contextId) {
+    open
+    duplicateGroups
+    contradictionGroups
+    judged
+    scannedAt
+  }
+}</code></pre>
+      </div>
+    </section>
+    <section class="feature">
+      <h2>The map</h2>
+      <p class="one-liner">A list tells you what is in a base one row at a time. The map tells you what it is about.</p>
+      <div class="slice">
+        <video src="./shorts/memory-map.mp4" autoplay loop muted playsinline></video>
+      <p>Every passage carries a position computed from its embedding, so a base draws as a cloud where near means similar — and it works on knowledge bases as well as memory.</p>
+      <p>Regions are clusters, named from the distinctive words in the text index that search already keeps. <strong>No model is asked</strong>, so a region's name is the base's own vocabulary. Select a dot and the map draws lines to the passages worded most like it and opens the item beside the cloud. On a memory base, a slider filters by when a memory was added, so you can watch the base fill in.</p>
+      <p>Only passages you may read are drawn, and the caption says how many of how many are on screen.</p>
+      <div class="snippet-label">The map's read API</div>
+      <pre><code>query ContextMapPoints($contextId: ID!) {
+  contextMapPoints(contextId: $contextId, mode: PASSAGES, limit: 5000) {
+    points { id itemId x y z itemName group chunks createdAtMs }
+    total
+    sampled
+  }
+}</code></pre>
+      </div>
+    </section>
+
+    <footer>
+      <span>IMP · Agent memory</span>
+      <a href="https://docs.exulu.com/building/memory/overview">Read the documentation</a>
+    </footer>
+  </div>
+</body>
+</html>

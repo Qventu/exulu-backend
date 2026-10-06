@@ -1,0 +1,86 @@
+---
+title: "Transcript settings"
+description: "Workspace defaults for transcription sources, the meeting bot, recordings and retention."
+icon: "sliders"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="super admin" flags="Transcripts (a transcription backend or meeting bots must be configured)" />
+
+Everything on the Transcripts page draws its defaults from here. Open it from
+**Transcripts → Settings**; the page is marked **Admins only** and other users
+see "Ask an admin" instead of the controls.
+
+Each setting saves on change, and any setting left alone shows where its value
+comes from — *"Using the environment default"* when a deployment variable
+supplies it, or *"Using the built-in default"* when nothing does. **Reset to
+default** returns a setting to that inherited value rather than to a blank.
+
+## Sources
+
+The three ways a transcript can be created, each with a **Test** button that
+reports **Connected**, **Not configured** or **Unreachable**:
+
+- **File upload (Whisper)** — uploading an audio file
+- **Meeting bot (Recall)** — sending a bot to a meeting
+- **Record on this device** — recording the microphone in front of you
+
+A source that is not configured simply does not appear in the composer, so
+this section is where to look first when someone reports a missing option.
+
+### Make transcripts searchable
+
+Transcripts need an **embedding model** before they can be found by
+Ask-about-this-transcript or by knowledge search. Without one, transcripts are
+still created, corrected and exported — they are just invisible to search. The
+section header warns when no model is set, which is the single most common
+reason "ask about this transcript" returns nothing.
+
+## Meeting bot
+
+The name the bot joins under, and whether it announces in chat that the meeting
+is being recorded.
+
+**Recorders may set their own bot name and notice** decides whether those two
+are a workspace rule or a per-meeting choice. With it off, every bot uses the
+settings here even if a recorder tries to change them, and the composer tells
+them so.
+
+<Warning>
+Announcing the recording is a legal requirement in many jurisdictions. Turning
+the notice off is a decision for whoever owns that risk in your organization,
+not a convenience setting.
+</Warning>
+
+## Defaults
+
+- **Default sharing for new transcripts** — the sharing a transcript starts
+  with. It takes effect when the transcript is published; see
+  [Sign off, and publish](/user-guide/transcripts/reviewing-and-saving#sign-off-and-publish).
+- **Default summary presets** — pre-selected in every composer, and still
+  removable for a single recording. A preset whose prompt or agent has since
+  been deleted is flagged here rather than failing quietly later.
+
+## Recordings & storage
+
+- **Meeting video retention** — how long meeting video is kept, or **Keep
+  forever**.
+- **Keep a local copy of meeting video** — when off, playback uses a temporary
+  link from the meeting-bot provider instead of storage you pay for.
+- **Estimated storage cost per hour** — a rate you supply. IMP multiplies it by
+  the hours stored this month and shows the estimate; it bills nothing and
+  reads nothing from your provider.
+
+## Recording limits
+
+An optional **monthly recording cap**, in minutes, or **No cap**.
+
+## Knowledge base and agents
+
+Which agents can reach the transcripts knowledge base, and whether each can
+read, write, or write without reading. This answers "who can see what we
+record" in one place rather than agent by agent.
+
+An empty list is meaningful: **no agent uses this knowledge base yet, so
+transcripts are invisible to every agent** no matter how they are shared.
