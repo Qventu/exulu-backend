@@ -17,6 +17,8 @@
  * collapses to zeros rather than NaN.
  */
 
+import { ROTATION_ITERATIONS } from "./constants";
+
 /** A missing or non-finite component, read as 0. NaN that reaches the database
  * poisons a whole map silently, so every exported function must coerce to finite. */
 export function finite(x: number | undefined): number {
@@ -298,4 +300,91 @@ export function fitResidual(
     total += Math.hypot(x - finite(yi[0]), y - finite(yi[1]), z - finite(yi[2]));
   }
   return finite(total / Z.length);
+}
+
+/**
+ * An exactly orthonormal triple built from `candidates`, completed with the
+ * canonical axes when the candidates do not span three dimensions.
+ *
+ * `orthonormalize` above cannot be used for this: it runs ONE Gram-Schmidt
+ * sweep with an ABSOLUTE length threshold, which is right for its own job
+ * (finding a k-dimensional subspace of a 1536-dimension cloud, where k is far
+ * below the data's rank) but wrong here, where k equals the dimension. A
+ * candidate that already lies in the accepted span cancels to rounding noise;
+ * one sweep then leaves a residual whose error is the same size as the residual
+ * itself, and a vector of length 100 with a 1e-13 residual clears a 1e-8
+ * absolute bar. Normalising that amplifies the noise into an axis that is not
+ * even orthogonal to the others - measured on a flat cloud, randomizedPCA
+ * returned a third axis that was the NEGATION of its first. Rotating by that
+ * is not rigid, and the distances it changes are exactly what this task
+ * promises to preserve.
+ *
+ * So: two sweeps, and a threshold relative to the candidate's own length.
+ * Deterministic - the candidates keep their order and the canonical axes are
+ * always tried in x, y, z order - so a refit of unchanged data rebuilds the
+ * same triple.
+ */
+function orthonormalTriple(candidates: number[][]): number[][] {
+  const out: number[][] = [];
+  for (const candidate of [...candidates, [1, 0, 0], [0, 1, 0], [0, 0, 1]]) {
+    if (out.length === 3) break;
+    let v = [0, 1, 2].map((j) => finite(candidate[j]));
+    const length = Math.hypot(...v);
+    if (!Number.isFinite(length) || length < 1e-12) continue;
+    for (let sweep = 0; sweep < 2; sweep += 1) {
+      for (const basis of out) {
+        const dot = v.reduce((s, x, j) => s + x * (basis[j] ?? 0), 0);
+        v = v.map((x, j) => x - dot * (basis[j] ?? 0));
+      }
+    }
+    const norm = Math.hypot(...v);
+    if (!Number.isFinite(norm) || norm < 1e-7 * length) continue;   // dependent, drop it
+    out.push(v.map((x) => x / norm));
+  }
+  return out;
+}
+
+/**
+ * Three orthonormal axes ordered by how far the cloud spreads along them.
+ *
+ * Reuses randomizedPCA rather than adding a second eigensolver, with three
+ * things it does not guarantee layered on top: the axes are made exactly
+ * orthonormal and completed to three (see orthonormalTriple), they are SORTED
+ * by the data's spread along them, and each one's sign is pinned so a refit
+ * cannot mirror the cloud. Without the sort the "principal" axis is whichever
+ * the iteration happened to settle on; without the sign fix an eigenvector's
+ * negation is equally valid and the map would flip between fits of identical
+ * data.
+ */
+export function principalRotation(points: number[][], seed: number): number[][] {
+  const centre = [0, 1, 2].map((j) => points.reduce((s, p) => s + finite(p[j]), 0) / (points.length || 1));
+  const centred = points.map((p) => Float32Array.from([0, 1, 2].map((j) => finite(p[j]) - (centre[j] ?? 0))));
+  const found = randomizedPCA(centred, 3, 3, seed, ROTATION_ITERATIONS).map((b) => Array.from(b));
+  const basis = orthonormalTriple(found);
+  // Cannot happen - the canonical axes always complete the triple - but a
+  // half-defined rotation would silently stop being rigid, so guard it.
+  if (basis.length < 3) return [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+
+  const variance = basis.map((axis) =>
+    centred.reduce((s, p) => {
+      const d = axis.reduce((acc, a, j) => acc + a * (p[j] ?? 0), 0);
+      return s + d * d;
+    }, 0) / Math.max(1, centred.length));
+
+  return basis
+    .map((axis, i) => ({ axis, variance: variance[i] ?? 0 }))
+    .sort((a, b) => b.variance - a.variance)
+    // Sign convention: the largest-magnitude component is positive. Any axis and
+    // its negation describe the same rotation, so without this a refit of
+    // unchanged data can mirror the cloud and every stored coordinate changes.
+    .map(({ axis }) => {
+      let lead = 0;
+      for (const [j, v] of axis.entries()) if (Math.abs(v) > Math.abs(axis[lead] ?? 0)) lead = j;
+      return (axis[lead] ?? 0) < 0 ? axis.map((v) => -v) : axis;
+    });
+}
+
+/** Applies a rotation to every point. Rigid: distances and neighbours survive. */
+export function rotateLayout(points: number[][], rotation: number[][]): number[][] {
+  return points.map((p) => rotation.map((axis) => axis.reduce((s, a, j) => s + a * finite(p[j]), 0)));
 }

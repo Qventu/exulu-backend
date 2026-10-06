@@ -1,6 +1,6 @@
 import {
-  applyMap, fitResidual, l2normalize, meanVector, normalizeLayout, projectComponents,
-  randomizedPCA, ridgeFit, rng,
+  applyMap, fitResidual, l2normalize, meanVector, normalizeLayout, principalRotation,
+  projectComponents, randomizedPCA, ridgeFit, rng, rotateLayout,
 } from "./math";
 
 const near = (a: number, b: number, eps = 1e-5) => expect(Math.abs(a - b)).toBeLessThan(eps);
@@ -182,5 +182,67 @@ describe("meanVector precision", () => {
     const mean = meanVector(rows, 2);
     near(mean[0], exact, 2e-7);
     near(mean[1], 1, 1e-9);
+  });
+});
+
+/** Pearson correlation between two coordinates of a cloud; 0 when either is flat. */
+const correlation = (points: number[][], a: number, b: number): number => {
+  const n = points.length || 1;
+  const mean = (j: number) => points.reduce((s, p) => s + (p[j] ?? 0), 0) / n;
+  const ma = mean(a), mb = mean(b);
+  let cov = 0, va = 0, vb = 0;
+  for (const p of points) {
+    const da = (p[a] ?? 0) - ma, db = (p[b] ?? 0) - mb;
+    cov += da * db; va += da * da; vb += db * db;
+  }
+  const denominator = Math.sqrt(va * vb);
+  return denominator > 1e-12 ? cov / denominator : 0;
+};
+
+/** Standard deviation of one coordinate: how far the cloud spreads along that axis. */
+const spread = (points: number[][], j: number): number => {
+  const n = points.length || 1;
+  const m = points.reduce((s, p) => s + (p[j] ?? 0), 0) / n;
+  return Math.sqrt(points.reduce((s, p) => s + ((p[j] ?? 0) - m) ** 2, 0) / n);
+};
+
+const distance = (a: number[], b: number[]): number =>
+  Math.hypot((a[0] ?? 0) - (b[0] ?? 0), (a[1] ?? 0) - (b[1] ?? 0), (a[2] ?? 0) - (b[2] ?? 0));
+
+describe("principalRotation", () => {
+  // A cloud stretched along the x=-y diagonal: exactly the shape measured on the
+  // real base (corr_xy = -0.78), and the one the camera sees edge-on.
+  const diagonal = Array.from({ length: 200 }, (_, i) => {
+    const t = (i / 199) * 2 - 1;
+    return [t, -t, (i % 7) / 70];
+  });
+
+  it("decorrelates the axes of a diagonal cloud", () => {
+    const rotated = rotateLayout(diagonal, principalRotation(diagonal, 7));
+    expect(Math.abs(correlation(rotated, 0, 1))).toBeLessThan(0.05);
+  });
+
+  it("puts the widest spread on the first axis", () => {
+    const rotated = rotateLayout(diagonal, principalRotation(diagonal, 7));
+    expect(spread(rotated, 0)).toBeGreaterThan(spread(rotated, 1));
+    expect(spread(rotated, 1)).toBeGreaterThanOrEqual(spread(rotated, 2));
+  });
+
+  it("preserves every pairwise distance, because it is a rotation", () => {
+    const rotated = rotateLayout(diagonal, principalRotation(diagonal, 7));
+    for (const [i, j] of [[0, 1], [0, 150], [37, 180]] as const) {
+      expect(distance(rotated[i]!, rotated[j]!)).toBeCloseTo(distance(diagonal[i]!, diagonal[j]!), 6);
+    }
+  });
+
+  it("is deterministic for one seed", () => {
+    expect(principalRotation(diagonal, 7)).toEqual(principalRotation(diagonal, 7));
+  });
+
+  it("returns an identity-like rotation for a cloud with no dominant direction", () => {
+    const ball = Array.from({ length: 60 }, (_, i) => [Math.sin(i), Math.cos(i), Math.sin(i * 2)]);
+    const rotated = rotateLayout(ball, principalRotation(ball, 3));
+    expect(rotated).toHaveLength(60);
+    expect(rotated.every((p) => p.every(Number.isFinite))).toBe(true);
   });
 });

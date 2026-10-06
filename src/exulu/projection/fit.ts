@@ -7,8 +7,8 @@ import {
   PROJECTION_VERSION, RIDGE_LAMBDA, UMAP_MIN_DIST, UMAP_NEIGHBORS,
 } from "./constants";
 import {
-  applyMap, fitResidual, l2normalize, meanVector, normalizeLayout, projectComponents,
-  randomizedPCA, ridgeFit, rng,
+  applyMap, fitResidual, l2normalize, meanVector, normalizeLayout, principalRotation,
+  projectComponents, randomizedPCA, ridgeFit, rng, rotateLayout,
 } from "./math";
 import { computeTopics } from "./topics";
 
@@ -137,7 +137,17 @@ export async function fitContextProjection({
   log(`${contextId}: laying out ${reduced.length} points in 3d (the slow phase)`);
   const umap = (umapFactory ?? defaultUmap)(seed, reduced.length);
   const raw = umap.fit(reduced.map((z) => Array.from(z)));
-  const { points: layout, scale } = normalizeLayout(raw);
+  // The layout's long axis can lie anywhere; the camera does not move. Rotating
+  // onto the cloud's own axes is rigid - every distance survives - and puts the
+  // widest spread across the screen instead of into the depth. Measured on a
+  // real base of 1134 chunks the layout was a flattened ellipsoid lying
+  // diagonally, seen nearly edge-on; its principal spreads are 0.42 / 0.25 /
+  // 0.10, so there is a widest face and this points it at the camera.
+  // Everything downstream (the linear map, the residual, the
+  // clustering, the stored coordinates) is fitted on `layout`, so all of it
+  // follows the rotation with no further change.
+  const oriented = rotateLayout(raw, principalRotation(raw, seed));
+  const { points: layout, scale } = normalizeLayout(oriented);
   // scale 0 means the 99th-percentile radius was 0: the layout collapsed to a
   // single place. The ridge fit of a constant target succeeds with residual 0,
   // so without this check a useless map stores as a perfect one.

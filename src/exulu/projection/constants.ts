@@ -6,6 +6,15 @@ export const FIT_SAMPLE = 20000;
 export const UMAP_NEIGHBORS = 15;
 export const UMAP_MIN_DIST = 0.1;
 export const POWER_ITERATIONS = 3;
+/** Subspace-iteration passes for the 3-dimension layout rotation (principalRotation).
+ *  Separate from POWER_ITERATIONS, which is tuned for the 1536-dimension reduction
+ *  where a pass costs `rows · dims · k`; here dims and k are both 3, so the whole
+ *  iteration is free and can run to convergence instead of stopping at a usable
+ *  approximation. Measured on a cloud carrying the real base's covariance, the
+ *  residual correlation between the first two rotated axes was 0.072 after 3 passes
+ *  and 0.000 from 12 on - and a rotation that does not decorrelate has not done its
+ *  job. 24 is twice the measured convergence point, for a differently shaped base. */
+export const ROTATION_ITERATIONS = 24;
 export const RIDGE_LAMBDA = 1e-3;
 export const BACKFILL_BATCH = 500;
 export const POINTS_LIMIT_DEFAULT = 5000;
