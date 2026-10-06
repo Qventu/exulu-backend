@@ -23,15 +23,31 @@ Both flows are feature-gated. **Upload audio** requires a Whisper transcription 
 
 ## The transcripts page
 
-Open **Transcripts** from the app sidebar. The page is organized into three groups:
+Open **Transcripts** from the app sidebar. It is one library: every transcript
+you have, whatever made it and whatever state it is in, in a single list
+grouped by **This week** and **Earlier**.
 
-| Group | What it shows |
+Four tabs narrow it:
+
+| Tab | What it shows |
 | --- | --- |
-| **Needs review** | Transcripts that finished processing and are waiting for you to name speakers and save. |
-| **Processing** | Jobs currently queued or transcribing. If any failed, the heading reads "Processing & failed". Jobs stuck in Processing recover automatically — no action needed. |
-| **Saved** | Transcripts you have already reviewed and saved to Knowledge. |
+| **All** | Everything you can see |
+| **Needs review** | Finished transcribing, waiting for you to correct and sign off |
+| **Mine** | Transcripts you created |
+| **Shared with me** | Transcripts someone else shared with you |
 
-Use the **Search transcripts…** field to filter across all three groups by title.
+Each row carries its own state — **Recording**, **Queued**, **Transcribing**,
+**Needs review**, **Ready** or **Failed** — so work in progress sits alongside
+finished transcripts instead of in a separate queue. A collapsed **in progress**
+strip at the top summarizes anything still running; expand it with **Show what
+is running**. Jobs stuck transcribing recover on their own.
+
+Beyond the tabs, **Filter** narrows by **Source**, **Project** and **Date**, and
+**Search transcripts…** matches titles across the whole library. **Clear
+filters** resets them.
+
+**New transcript** opens one composer for all three sources — upload a file,
+send a meeting bot, or record on the device in front of you.
 
 ## Upload audio
 

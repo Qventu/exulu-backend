@@ -81,7 +81,9 @@ Every chunk can carry a position in three dimensions, computed from its embeddin
 
 The **Map** tab draws that cloud. One dot is one passage, not one item, and the cloud rotates. Named regions float over it, and are listed as chips underneath with how many passages each holds: a region is a cluster of positions, named from the words that set it apart from the rest of the base, read out of the text index the search already keeps. No model is asked, so a region's name is the base's own vocabulary, in the clipped form the index stores it in. Selecting a chip dims everything outside that region.
 
-Selecting a dot draws lines to the passages worded most like it and opens a panel with the opening of the passage, its type, its closest neighbours and a link to the item it came from. The panel shows an opening rather than the whole passage, and says so.
+Hovering a dot names the item it came from. Selecting one draws lines to the passages worded most like it and opens a panel on that item: whatever the base recorded about it — how many passages it was split into, how much text it holds, when it was added and when it last changed, and where it came from — a link to the item itself, and the items worded most like it. An item appears once in that list however many of its passages are related, so a long document no longer fills the panel with its own name.
+
+Selecting a region chip while no dot is selected opens the panel on the region instead, listing the items it holds and how many of each one's passages fall inside it.
 
 Only passages you may read are drawn. A large base is sampled and the caption says how many of how many passages are drawn, as it does when some of them have no position yet. A base that has never been fitted says so instead of drawing an empty cloud.
 
