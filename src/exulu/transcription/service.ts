@@ -38,7 +38,8 @@ export type JobStatus =
   | "transcribing"
   | "recording" // live browser recording in progress (chunks arriving)
   | "awaiting_review"
-  | "saved"
+  | "reviewed" // signed off by a human; NOT in the knowledge base
+  | "saved" // in the knowledge base (saved_item_id is set)
   | "failed"
   | "cancelled";
 
@@ -82,6 +83,7 @@ type JobRow = {
   target_rbac_users: { id: number; rights: "read" | "write" }[] | null;
   target_rbac_roles: { id: string; rights: "read" | "write" }[] | null;
   saved_item_id: string | null;
+  reviewed_at: string | null;
   error: string | null;
   rights_mode: ExuluRightsMode;
   created_by: number;

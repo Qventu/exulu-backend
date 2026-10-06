@@ -31,6 +31,13 @@ describe("transcription_jobs schema (live recording columns)", () => {
     expect(chunkCount).toMatchObject({ type: "number", default: 0 });
     expect(lastChunkAt).toMatchObject({ type: "date" });
   });
+
+  it("transcription_jobs carries reviewed_at, so review is independent of publication", () => {
+    const schema = coreSchemas.get().transcriptionJobsSchema();
+    const names = schema.fields.map((f) => f.name);
+    expect(names).toContain("reviewed_at");
+    expect(names).toContain("saved_item_id");
+  });
 });
 
 describe("memory_usages schema", () => {
