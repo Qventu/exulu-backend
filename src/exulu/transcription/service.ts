@@ -30,6 +30,8 @@ import {
 } from "./client";
 import { effectiveSegments, renderTranscript, type RawSegment, type SpeakerMap } from "./transcript-text";
 import { buildTranscriptItemInput } from "./build-transcript-item";
+import { assertOwnsTranscriptionJob } from "./authorize";
+import type { TranscriptExportItem } from "./transcript-export";
 
 const TABLE = "transcription_jobs";
 
@@ -568,6 +570,51 @@ export const transcriptionService = {
       .returning("*");
 
     return { item, row: this._rowFromDb(updated) };
+  },
+
+  /**
+   * Export-route lookup for a job that has been reviewed but not published.
+   *
+   * The item export route (export-route.ts) reads through the
+   * transcriptions context's own getItems({ user }), which is where RBAC
+   * lives for a saved item. A job that has not been saved has no item to
+   * hang that on, so this applies the job's own ownership check
+   * (assertOwnsTranscriptionJob — same helper the transcription mutations
+   * use) instead, and returns undefined for both "no such job" and "not
+   * yours" so the caller can answer the same 404 either way: a 403 would
+   * confirm to a stranger that the transcript exists.
+   *
+   * Goes through _rowFromDb so raw_segments / corrected_segments / speakers
+   * / post_processing_outputs come back parsed exactly like every other
+   * caller of this row.
+   */
+  async exportableJob(
+    jobId: string,
+    userId: number | string,
+  ): Promise<(TranscriptExportItem & { reviewed_at?: string | Date | null }) | undefined> {
+    const { db } = await postgresClient();
+    try {
+      await assertOwnsTranscriptionJob(db, { id: userId }, jobId);
+    } catch {
+      return undefined;
+    }
+
+    const dbRow = await db(TABLE).where({ id: jobId }).first();
+    if (!dbRow) return undefined;
+    const row = this._rowFromDb(dbRow);
+
+    return {
+      name: row.title,
+      recording_source: row.source ?? "whisper",
+      recorded_at: (row as any).join_at ?? row.createdAt,
+      duration_seconds: row.duration_seconds,
+      language: row.language,
+      speakers: row.speakers,
+      raw_segments: row.raw_segments,
+      corrected_segments: row.corrected_segments,
+      post_processing: row.post_processing_outputs as TranscriptExportItem["post_processing"],
+      reviewed_at: row.reviewed_at,
+    };
   },
 
   _rowFromDb(dbRow: any): JobRow {

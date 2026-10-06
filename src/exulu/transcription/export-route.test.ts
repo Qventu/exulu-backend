@@ -101,3 +101,46 @@ describe("GET /transcription-items/:itemId/export", () => {
     expect(JSON.stringify(res.body)).not.toContain("pandoc");
   });
 });
+
+describe("GET /transcription-jobs/:jobId/export", () => {
+  it("exports a reviewed job", async () => {
+    const res = await request(
+      app({
+        getJob: async () => ({
+          name: "Fertigungsplanung",
+          raw_segments: [{ start: 0, end: 2, speaker: "SPEAKER_00", text: "Also." }],
+          speakers: { SPEAKER_00: "Lena Brandt" },
+          reviewed_at: "2026-10-01T09:00:00.000Z",
+        }),
+      }),
+    ).get("/transcription-jobs/job-1/export?format=md");
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("Lena Brandt");
+  });
+
+  it("refuses a job that has not been reviewed", async () => {
+    // Exporting here would hand someone an uncorrected transcript that looks
+    // signed off.
+    const res = await request(
+      app({ getJob: async () => ({ name: "x", reviewed_at: null, raw_segments: [] }) }),
+    ).get("/transcription-jobs/job-1/export?format=md");
+    expect(res.status).toBe(409);
+    expect(res.body.detail).toMatch(/review/i);
+  });
+
+  it("404s a job the caller does not own", async () => {
+    const res = await request(app({ getJob: async () => undefined })).get(
+      "/transcription-jobs/job-1/export?format=md",
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects an unknown format before touching the job", async () => {
+    const getJob = jest.fn();
+    const res = await request(app({ getJob })).get(
+      "/transcription-jobs/job-1/export?format=exe",
+    );
+    expect(res.status).toBe(400);
+    expect(getJob).not.toHaveBeenCalled();
+  });
+});
