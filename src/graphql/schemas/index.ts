@@ -458,16 +458,14 @@ type ContextMapPoint {
     y: Float!
     z: Float!
     """
-    In PASSAGES mode the chunk's own opening, truncated; in DOCUMENTS mode the
-    item's name. Note that this product's ingestion injects a document header
-    into every chunk, so on such a corpus the opening begins with an
-    identifier rather than with the passage — which is why the client titles
-    points by itemName and no longer requests this field at all.
-    """
-    label: String!
-    """
     What a reader calls the document this point came from, or "" when the item
     has no name. This is what every surface titles a point with.
+
+    A point carries no passage text. The answer used to include the chunk's
+    opening, which was roughly 2.4 MB of a 5.8 MB response at the point cap,
+    sent for every row to serve the one that gets selected — and unusable as a
+    title anyway, since this product's ingestion injects a document header
+    into every chunk. Read a selected point's detail through contextMapItem.
     """
     itemName: String!
     group: String

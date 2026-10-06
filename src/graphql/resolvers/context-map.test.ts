@@ -88,13 +88,13 @@ describe("contextMapPoints", () => {
   it("returns one point per item in DOCUMENTS mode, scoped to the viewer's items", async () => {
     const db = fakeDb({
       mem_chunks: [
-        { id: "i1", itemId: "i1", x: "0.5", y: "-0.25", z: "0", label: "Encoder", itemName: "Encoder", group: "FACT", chunks: "3" },
+        { id: "i1", itemId: "i1", x: "0.5", y: "-0.25", z: "0", itemName: "Encoder", group: "FACT", chunks: "3" },
       ],
       "mem_chunks#first": [{ c: "1" }],
     });
     const out = await contextMapPoints({ db, context, user, mode: "DOCUMENTS", groupField: "type", limit: 10 });
     expect(out).toEqual({
-      points: [{ id: "i1", itemId: "i1", x: 0.5, y: -0.25, z: 0, label: "Encoder", itemName: "Encoder", group: "FACT", chunks: 3, createdAtMs: null }],
+      points: [{ id: "i1", itemId: "i1", x: 0.5, y: -0.25, z: 0, itemName: "Encoder", group: "FACT", chunks: 3, createdAtMs: null }],
       total: 1, sampled: false,
     });
     expect(db.__log.some((l: any[]) => l[1] === "whereNotNull" && String(l[2]).includes("px"))).toBe(true);
@@ -106,45 +106,50 @@ describe("contextMapPoints", () => {
 
   /**
    * The name of the item a point came from, which is what every surface showing
-   * a point calls it.
+   * a point calls it — and now the only text the answer carries.
    *
-   * In PASSAGES mode `label` is the chunk's own opening, and a corpus that
-   * injects a document header into every chunk therefore opens every passage
-   * with `--- Document (Exulu ID: …) ---`. The items table is already joined
-   * for the access-control gate, so the name costs nothing to carry — it was
-   * simply never selected, which left a tooltip, a panel heading and every
-   * neighbour row showing an identifier.
+   * The chunk's own opening used to ride along as `label`. A corpus that
+   * injects a document header into every chunk opens every passage with
+   * `--- Document (Exulu ID: …) ---`, so it was an identifier rather than a
+   * title; once nothing read it, selecting it for every row was megabytes out
+   * of Postgres to serve nobody.
    */
   describe("itemName", () => {
     /** Every emitted `… as "itemName"` expression. */
     const nameSql = (db: any) =>
       db.__log.filter((l: any[]) => l[0] === "raw" && String(l[1]).includes('as "itemName"')).map((l: any[]) => String(l[1]));
 
-    it("carries the item's name beside the passage opening in PASSAGES mode", async () => {
-      const header = "--- Document (Exulu ID: 6adc924b-1423-42ac-8b9d-0f0f0f0f0f0f) ---";
+    it("carries the item's name in PASSAGES mode, and no passage text", async () => {
       const db = fakeDb({
         mem_chunks: [
-          { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", label: header, itemName: "Price list 2026", group: null, chunks: "1" },
+          { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", itemName: "Price list 2026", group: null, chunks: "1" },
         ],
         "mem_chunks#first": [{ c: "1" }],
       });
       const out = await contextMapPoints({ db, context, user, mode: "PASSAGES", limit: 10 });
-      // `label` is still the matched text, header and all: it is what the
-      // passage says, and the panel shows it as such.
-      expect(out.points[0]).toMatchObject({ label: header, itemName: "Price list 2026" });
+      expect(out.points[0]).toMatchObject({ itemName: "Price list 2026" });
       expect(nameSql(db)).toContain('items.name as "itemName"');
+      // The expensive half, gone: nothing selects the chunk's text. This is
+      // the assertion that keeps it gone - at POINTS_LIMIT_MAX it was about
+      // 2.4 MB of a 5.8 MB answer.
+      const selects = db.__log.filter((l: any[]) => l[0] === "raw").map((l: any[]) => String(l[1]));
+      expect(selects.some((sql) => sql.includes("chunks.content"))).toBe(false);
+      expect(selects.some((sql) => / as "?label"?/.test(sql))).toBe(false);
     });
 
-    it("carries it in DOCUMENTS mode too, where the name is also the label", async () => {
+    it("carries it in DOCUMENTS mode too, without duplicating it as a label", async () => {
       const db = fakeDb({
         mem_chunks: [
-          { id: OWNER, itemId: OWNER, x: "0", y: "0", z: "0", label: "Price list 2026", itemName: "Price list 2026", group: null, chunks: "7" },
+          { id: OWNER, itemId: OWNER, x: "0", y: "0", z: "0", itemName: "Price list 2026", group: null, chunks: "7" },
         ],
         "mem_chunks#first": [{ c: "1" }],
       });
       const out = await contextMapPoints({ db, context, user, mode: "DOCUMENTS", limit: 10 });
       expect(out.points[0]).toMatchObject({ itemName: "Price list 2026" });
       expect(nameSql(db)).toContain('items.name as "itemName"');
+      // It used to be selected twice, byte-identical, in this mode.
+      const selects = db.__log.filter((l: any[]) => l[0] === "raw").map((l: any[]) => String(l[1]));
+      expect(selects.filter((sql) => sql.includes("items.name")).length).toBe(1);
     });
 
     // `name` is nullable on an items table, and a null name reaching the client
@@ -152,7 +157,7 @@ describe("contextMapPoints", () => {
     it("answers an empty string for an item with no name", async () => {
       const db = fakeDb({
         mem_chunks: [
-          { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", label: "some text", itemName: null, group: null, chunks: "1" },
+          { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", itemName: null, group: null, chunks: "1" },
         ],
         "mem_chunks#first": [{ c: "1" }],
       });
@@ -809,7 +814,7 @@ describe("createdAtMs", () => {
     const when = new Date("2026-08-14T09:30:00.000Z");
     const db = fakeDb({
       mem_chunks: [
-        { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", label: "text", itemName: "Note", group: null, chunks: "1", createdAt: when },
+        { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", itemName: "Note", group: null, chunks: "1", createdAt: when },
       ],
       "mem_chunks#first": [{ c: "1" }],
     });
@@ -822,7 +827,7 @@ describe("createdAtMs", () => {
     const when = new Date("2026-09-28T12:00:00.000Z");
     const db = fakeDb({
       mem_chunks: [
-        { id: OWNER, itemId: OWNER, x: "0", y: "0", z: "0", label: "Note", itemName: "Note", group: null, chunks: "4", createdAt: when },
+        { id: OWNER, itemId: OWNER, x: "0", y: "0", z: "0", itemName: "Note", group: null, chunks: "4", createdAt: when },
       ],
       "mem_chunks#first": [{ c: "1" }],
     });
@@ -842,7 +847,7 @@ describe("createdAtMs", () => {
   ])("answers null for a %s creation time", async (_label, value) => {
     const db = fakeDb({
       mem_chunks: [
-        { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", label: "t", itemName: "N", group: null, chunks: "1", createdAt: value },
+        { id: CHUNK, itemId: OWNER, x: "0", y: "0", z: "0", itemName: "N", group: null, chunks: "1", createdAt: value },
       ],
       "mem_chunks#first": [{ c: "1" }],
     });
