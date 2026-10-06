@@ -412,6 +412,11 @@ function orthonormalTriple(candidates: number[][]): number[][] {
  * the iteration happened to settle on; without the sign fix an eigenvector's
  * negation is equally valid and the map would flip between fits of identical
  * data.
+ *
+ * The result is a PROPER rotation - determinant +1, not merely orthonormal - so
+ * it preserves handedness as well as every distance. The two sign rules that
+ * get it there are different, and which one governs which axis is spelled out
+ * at the return below.
  */
 export function principalRotation(points: number[][], seed: number): number[][] {
   const centre = [0, 1, 2].map((j) => points.reduce((s, p) => s + finite(p[j]), 0) / (points.length || 1));
@@ -428,17 +433,46 @@ export function principalRotation(points: number[][], seed: number): number[][] 
       return s + d * d;
     }, 0) / Math.max(1, centred.length));
 
-  return basis
+  const ordered = basis
     .map((axis, i) => ({ axis, variance: variance[i] ?? 0 }))
     .sort((a, b) => b.variance - a.variance)
-    // Sign convention: the largest-magnitude component is positive. Any axis and
-    // its negation describe the same rotation, so without this a refit of
-    // unchanged data can mirror the cloud and every stored coordinate changes.
-    .map(({ axis }) => {
-      let lead = 0;
-      for (const [j, v] of axis.entries()) if (Math.abs(v) > Math.abs(axis[lead] ?? 0)) lead = j;
-      return (axis[lead] ?? 0) < 0 ? axis.map((v) => -v) : axis;
-    });
+    .map(({ axis }) => axis);
+
+  // Sign convention, in two parts - and the part that applies is not the same
+  // for all three axes, which is the thing to read before changing any of this.
+  //
+  // Any axis and its negation describe the same line, so the iteration is free
+  // to return either, and a refit that picked the other one would mirror the
+  // cloud and rewrite every stored coordinate for nothing. So each sign is
+  // pinned. THE FIRST TWO AXES take it from their own largest-magnitude
+  // component, which is positive.
+  //
+  // THE THIRD AXIS TAKES ITS SIGN FROM THE DETERMINANT instead, and the
+  // leading-component rule above does not apply to it. Once two perpendicular
+  // axes are fixed, the third's sign is the only freedom left in the triple, and
+  // it is exactly what decides whether this is a rotation or a reflection: both
+  // preserve every distance, only the rotation preserves handedness. Pinning it
+  // by its leading component left the determinant at -1 in roughly half of all
+  // frames (204 of 400 measured), which is an isometry but not a rotation - and
+  // "rigid rotation" is what the spec, the plan and the comments downstream all
+  // say this is. Nothing visible changes for a point cloud; the words become
+  // true.
+  //
+  // Determinism is unaffected, which is worth saying because the question is
+  // obvious: the determinant is as much a function of the data as the leading
+  // component was, computed from these same three axes with no state and no
+  // tolerance, so a refit of identical data still rebuilds the same triple.
+  const signed = ordered.map((axis, i) => {
+    if (i === 2) return axis;
+    let lead = 0;
+    for (const [j, v] of axis.entries()) if (Math.abs(v) > Math.abs(axis[lead] ?? 0)) lead = j;
+    return (axis[lead] ?? 0) < 0 ? axis.map((v) => -v) : axis;
+  });
+  const [a, b, c] = [signed[0] ?? [], signed[1] ?? [], signed[2] ?? []];
+  const determinant = (a[0] ?? 0) * ((b[1] ?? 0) * (c[2] ?? 0) - (b[2] ?? 0) * (c[1] ?? 0))
+    - (a[1] ?? 0) * ((b[0] ?? 0) * (c[2] ?? 0) - (b[2] ?? 0) * (c[0] ?? 0))
+    + (a[2] ?? 0) * ((b[0] ?? 0) * (c[1] ?? 0) - (b[1] ?? 0) * (c[0] ?? 0));
+  return determinant < 0 ? [a, b, c.map((v) => -v)] : signed;
 }
 
 /** Applies a rotation to every point. Rigid: distances and neighbours survive. */

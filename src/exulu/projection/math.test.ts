@@ -278,10 +278,27 @@ const expectOrthonormal = (rotation: number[][]) => {
   }
 };
 
-/** The component the sign convention pins positive: the largest in magnitude,
- *  first one winning a tie, matching the implementation. */
+/** The component the sign convention pins positive on the first two axes: the
+ *  largest in magnitude, first one winning a tie, matching the implementation. */
 const leadComponent = (axis: number[]): number =>
   axis.reduce((lead, v) => (Math.abs(v) > Math.abs(lead) ? v : lead), axis[0] ?? 0);
+
+/**
+ * The signed volume of the three rows, computed here rather than imported, so
+ * the assertion does not agree with the implementation by construction.
+ *
+ * +1 is a rotation and -1 is a reflection. Both are isometries - three
+ * perpendicular unit rows cannot change a distance either way, which is why
+ * `expectOrthonormal` passing says nothing about this - but only +1 preserves
+ * handedness, and only +1 makes "rotation" the right word for what the spec,
+ * the plan and the comments over `principalRotation` all call this.
+ */
+const determinant = (m: number[][]): number => {
+  const [a, b, c] = [m[0] ?? [], m[1] ?? [], m[2] ?? []];
+  return (a[0] ?? 0) * ((b[1] ?? 0) * (c[2] ?? 0) - (b[2] ?? 0) * (c[1] ?? 0))
+    - (a[1] ?? 0) * ((b[0] ?? 0) * (c[2] ?? 0) - (b[2] ?? 0) * (c[0] ?? 0))
+    + (a[2] ?? 0) * ((b[0] ?? 0) * (c[1] ?? 0) - (b[1] ?? 0) * (c[0] ?? 0));
+};
 
 /** The real base's measured shape - 0.42 / 0.25 / 0.10 - lying skew. */
 const tilted = ellipsoid([0.42, 0.25, 0.1], 300, 11);
@@ -331,14 +348,24 @@ describe("principalRotation", () => {
     }
   });
 
-  // An axis and its negation describe the same rotation, so the iteration is
-  // free to return either - and a refit that picks the other one mirrors the
-  // cloud and rewrites every stored coordinate for nothing. Convention: the
-  // largest-magnitude component is positive. It bites on both clouds here; the
-  // iteration returns the diagonal's long axis as (-0.707, +0.707, ...).
-  it("pins each axis's sign, so a refit cannot mirror the cloud", () => {
+  // An axis and its negation describe the same line, so the iteration is free
+  // to return either - and a refit that picks the other one mirrors the cloud
+  // and rewrites every stored coordinate for nothing. Convention for the FIRST
+  // TWO axes: the largest-magnitude component is positive. It bites on both
+  // clouds here; the iteration returns the diagonal's long axis as (-0.707,
+  // +0.707, ...).
+  //
+  // The third axis is deliberately NOT asserted here, because the
+  // largest-magnitude rule no longer governs it: once two axes are pinned the
+  // third's sign is the only freedom left, and it is what decides whether the
+  // transform is a rotation or a reflection, so the determinant takes it. That
+  // leaves it just as pinned - see the proper-rotation test above - so the
+  // property this test exists for still holds for all three.
+  it("pins the first two axes' signs, so a refit cannot mirror the cloud", () => {
     for (const cloud of [diagonal, tilted]) {
-      for (const axis of principalRotation(cloud, 7)) expect(leadComponent(axis)).toBeGreaterThan(0);
+      for (const axis of principalRotation(cloud, 7).slice(0, 2)) {
+        expect(leadComponent(axis)).toBeGreaterThan(0);
+      }
     }
   });
 
@@ -366,12 +393,26 @@ describe("principalRotation", () => {
     }
   });
 
+  /** One of each kind the rotation has to handle: the diagonal streak, the real
+   *  base's skew pancake, a ball with no dominant direction, and a line. */
+  const shapes = [diagonal, tilted, ellipsoid([1, 1, 1], 50, 3), ellipsoid([1, 0, 0], 50, 4)];
+
   // Rigidity stated as the property rather than sampled as three pairs: three
   // perpendicular unit rows cannot change a distance, whatever the cloud.
   it("is orthonormal for every shape of cloud", () => {
-    for (const cloud of [diagonal, tilted, ellipsoid([1, 1, 1], 50, 3), ellipsoid([1, 0, 0], 50, 4)]) {
-      expectOrthonormal(principalRotation(cloud, 7));
-    }
+    for (const cloud of shapes) expectOrthonormal(principalRotation(cloud, 7));
+  });
+
+  // Orthonormality makes the transform an isometry; it does NOT make it a
+  // rotation. At determinant -1 it is a reflection: every distance survives and
+  // handedness does not, so the cloud is mirrored. Nothing is visually wrong
+  // with a mirrored point cloud, but the spec, the plan and five comments all
+  // call this a rotation, so the code had better be one. Measured before the
+  // sign rule that fixes it: determinant -1 in 204 of 400 random frames here
+  // (192 of 400 on the reviewer's own generator), and in two of the four shapes
+  // above.
+  it("is a proper rotation and not a reflection, for every shape of cloud", () => {
+    for (const cloud of shapes) near(determinant(principalRotation(cloud, 7)), 1, 1e-12);
   });
 
   // No dominant direction to find, and the answer still has to BE a rotation.
@@ -408,6 +449,10 @@ describe("principalRotation", () => {
   it.each(degenerate)("still returns a rotation for a %s layout", (_name, cloud) => {
     const rotation = principalRotation(cloud, 5);
     expectOrthonormal(rotation);
+    // "A rotation", as the name says, and not merely an isometry: these are the
+    // clouds where the triple is completed from the canonical axes, which is
+    // where a reflection is easiest to produce by accident.
+    near(determinant(rotation), 1, 1e-12);
     const rotated = rotateLayout(cloud, rotation);
     expect(rotated).toHaveLength(cloud.length);
     expect(rotated.every((p) => p.every(Number.isFinite))).toBe(true);
