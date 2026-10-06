@@ -354,6 +354,66 @@ export const transcriptionService = {
   },
 
   /**
+   * Sign a transcript off without publishing it.
+   *
+   * Everything `finalize` does except creating the context item: the
+   * corrections are persisted, but the transcript does not enter the
+   * knowledge base and no agent can retrieve it. Publishing later goes
+   * through `finalize`, which upserts from this state.
+   *
+   * Deliberately does NOT render transcript_text: that field belongs to the
+   * context item (templates/contexts/transcriptions.ts), and the export
+   * builders read raw_segments + corrected_segments + speakers, which the job
+   * already has. A second rendered copy on the job could drift from the
+   * corrections it was rendered from.
+   *
+   * Sharing stays intent-only here (spec §"What happens today"): RBAC lives on
+   * the item, so an unpublished transcript is creator-only whatever
+   * target_rights_mode says.
+   */
+  async markReviewed(id: string, input: FinalizeInput): Promise<JobRow> {
+    const { db } = await postgresClient();
+    const dbRow = await db(TABLE).where({ id }).first();
+    if (!dbRow) throw new Error(`transcription_job ${id} not found`);
+    const row = this._rowFromDb(dbRow);
+
+    if (row.status !== "awaiting_review" && row.status !== "reviewed") {
+      throw new Error(
+        `transcription_job ${id} is in status '${row.status}'; can only mark reviewed from 'awaiting_review' or 'reviewed'`,
+      );
+    }
+    if (!row.raw_segments) {
+      throw new Error(`transcription_job ${id} has no raw_segments to review`);
+    }
+
+    // Same resolution rule as finalize: `!== undefined` so an explicit null
+    // means "reset the correction", not "keep what is stored".
+    const resolvedCorrected =
+      input.corrected_segments !== undefined
+        ? input.corrected_segments
+        : (row.corrected_segments ?? null);
+
+    const [updated] = await db(TABLE)
+      .where({ id })
+      .update({
+        status: "reviewed" as JobStatus,
+        reviewed_at: row.reviewed_at ?? new Date(),
+        title: input.title ?? row.title,
+        speakers: JSON.stringify(input.speakers),
+        corrected_segments:
+          resolvedCorrected === null ? null : JSON.stringify(resolvedCorrected),
+        project_id: input.project_id ?? row.project_id ?? null,
+        target_rights_mode: input.target_rights_mode ?? row.target_rights_mode ?? "private",
+        target_rbac_users: JSON.stringify(input.target_rbac_users ?? row.target_rbac_users ?? []),
+        target_rbac_roles: JSON.stringify(input.target_rbac_roles ?? row.target_rbac_roles ?? []),
+        error: null,
+        updatedAt: new Date(),
+      })
+      .returning("*");
+    return this._rowFromDb(updated);
+  },
+
+  /**
    * User clicked Save in the review panel.
    *
    * - From 'awaiting_review': render the speaker-labeled transcript, create a
@@ -369,9 +429,13 @@ export const transcriptionService = {
     if (!dbRow) throw new Error(`transcription_job ${id} not found`);
     const row = this._rowFromDb(dbRow);
 
-    if (row.status !== "awaiting_review" && row.status !== "saved") {
+    if (
+      row.status !== "awaiting_review" &&
+      row.status !== "reviewed" &&
+      row.status !== "saved"
+    ) {
       throw new Error(
-        `transcription_job ${id} is in status '${row.status}'; can only finalize from 'awaiting_review' or 'saved'`,
+        `transcription_job ${id} is in status '${row.status}'; can only finalize from 'awaiting_review', 'reviewed' or 'saved'`,
       );
     }
     if (!row.raw_segments) {
@@ -493,6 +557,7 @@ export const transcriptionService = {
       .where({ id })
       .update({
         status: "saved" as JobStatus,
+        reviewed_at: row.reviewed_at ?? new Date(),
         saved_item_id: itemId,
         title: input.title ?? row.title ?? null,
         speakers: JSON.stringify(input.speakers),

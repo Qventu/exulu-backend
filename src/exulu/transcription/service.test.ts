@@ -21,8 +21,19 @@ jest.mock("./client", () => ({
   TranscriptionServerUnavailable: class extends Error {},
 }));
 
+// Mutable so individual tests (markReviewed / finalize) can observe or stub
+// context.createItem without a second mocking harness. Name prefixed
+// "mock" per jest's out-of-scope-variable rule for jest.mock factories.
+let mockCreateItem: (...args: any[]) => any = jest.fn();
 jest.mock("@SRC/exulu/app/singleton", () => ({
-  exuluApp: { get: () => ({ _config: { fileUploads: { s3Bucket: "exulu" } } }) },
+  exuluApp: {
+    get: () => ({
+      _config: { fileUploads: { s3Bucket: "exulu" } },
+      context: (_name: string) => ({
+        createItem: (...args: any[]) => mockCreateItem(...args),
+      }),
+    }),
+  },
 }));
 
 jest.mock("@SRC/uppy", () => ({
@@ -76,7 +87,50 @@ beforeEach(() => {
   }
   jest.clearAllMocks();
   submitJobSpy.mockResolvedValue({ job_id: "wj-1" } as any);
+  mockCreateItem = jest.fn();
 });
+
+/**
+ * Minimal, fully-populated transcription_jobs row for markReviewed/finalize
+ * tests. _rowFromDb's parseJsonField passes non-string values through
+ * untouched, so feeding already-"parsed" values here (plain arrays/objects,
+ * not JSON strings) stands in for what db(JOBS).first() would hand back.
+ */
+const jobRow = (overrides: Record<string, unknown> = {}): any => ({
+  id: "job-1",
+  audio_s3key: "exulu/user_1/file.m4a",
+  title: "Standup",
+  status: "awaiting_review",
+  whisper_job_id: null,
+  raw_segments: [{ start: 0, end: 1, speaker: "SPEAKER_00", text: "Hello." }],
+  speakers: null,
+  language: null,
+  duration_seconds: null,
+  project_id: null,
+  target_rights_mode: "private",
+  target_rbac_users: null,
+  target_rbac_roles: null,
+  saved_item_id: null,
+  reviewed_at: null,
+  error: null,
+  rights_mode: "private",
+  created_by: 1,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  post_processing_prompts: null,
+  post_processing_outputs: null,
+  recall_recording_id: null,
+  source: "whisper",
+  chunk_count: null,
+  last_chunk_at: null,
+  corrected_segments: null,
+  ...overrides,
+});
+
+/** Points the `exuluApp.get().context(...)` mock's createItem at a given fn. */
+const mockContext = ({ createItem }: { createItem: (...args: any[]) => any }) => {
+  mockCreateItem = createItem;
+};
 
 describe("shouldRunUploadPostProcessing", () => {
   const prompts = [{ prompt_id: "p", agent_id: "a" }];
@@ -196,5 +250,86 @@ describe("_applyJobUpdate — upload post-processing hook", () => {
 
     const [values] = calls[`${JOBS}.update`][0];
     expect(values.status).toBe("awaiting_review");
+  });
+});
+
+describe("markReviewed", () => {
+  it("signs the job off without creating a knowledge-base item", async () => {
+    const row = jobRow({ status: "awaiting_review", reviewed_at: null });
+    firstResults[JOBS] = [row];
+    const createItem = jest.fn();
+    mockContext({ createItem });
+
+    const result = await transcriptionService.markReviewed(row.id, {
+      speakers: { SPEAKER_00: "Lena Brandt" },
+    });
+
+    expect(createItem).not.toHaveBeenCalled();
+    expect(result.status).toBe("reviewed");
+    expect(result.reviewed_at).toBeTruthy();
+    // The update values markReviewed writes never touch saved_item_id, so the
+    // fake's update().returning() (which merges only {id, ...values}) won't
+    // carry the column forward — falsy covers both that and a real DB's
+    // untouched-column null.
+    expect(result.saved_item_id).toBeFalsy();
+  });
+
+  it("persists the corrections, which is what an export will read", async () => {
+    // Nothing renders text here: the export builders work from
+    // raw_segments + corrected_segments + speakers, all of which the job
+    // already carries. Rendering a second copy onto the job would be a
+    // duplicate that can drift from the corrections.
+    const row = jobRow({ status: "awaiting_review" });
+    firstResults[JOBS] = [row];
+    const corrected = [{ start: 0, end: 2, speaker: "SPEAKER_00", text: "Also." }];
+
+    await transcriptionService.markReviewed(row.id, {
+      speakers: { SPEAKER_00: "Lena Brandt" },
+      corrected_segments: corrected,
+    });
+
+    const written = calls[`${JOBS}.update`].at(-1)?.[0];
+    expect(JSON.parse(written.corrected_segments)).toEqual(corrected);
+    expect(JSON.parse(written.speakers)).toEqual({ SPEAKER_00: "Lena Brandt" });
+  });
+
+  it("refuses a job that is already published", async () => {
+    firstResults[JOBS] = [jobRow({ status: "saved", saved_item_id: "item-1" })];
+
+    await expect(
+      transcriptionService.markReviewed("job-1", { speakers: {} }),
+    ).rejects.toThrow(/saved/);
+  });
+});
+
+describe("finalize from reviewed", () => {
+  it("publishes a reviewed job and keeps its original reviewed_at", async () => {
+    const reviewedAt = "2026-10-01T09:00:00.000Z";
+    firstResults[JOBS] = [jobRow({ status: "reviewed", reviewed_at: reviewedAt })];
+    const createItem = jest.fn().mockResolvedValue({ item: { id: "item-9" } });
+    mockContext({ createItem });
+
+    const { row } = await transcriptionService.finalize("job-1", { speakers: {} });
+
+    expect(createItem).toHaveBeenCalled();
+    expect(row.status).toBe("saved");
+    expect(row.reviewed_at).toBe(reviewedAt);
+  });
+
+  it("stamps reviewed_at when publishing straight from awaiting_review", async () => {
+    firstResults[JOBS] = [jobRow({ status: "awaiting_review", reviewed_at: null })];
+    mockContext({ createItem: jest.fn().mockResolvedValue({ item: { id: "item-9" } }) });
+
+    const { row } = await transcriptionService.finalize("job-1", { speakers: {} });
+
+    expect(row.reviewed_at).toBeTruthy();
+  });
+
+  it("can still be cancelled after review", async () => {
+    firstResults[JOBS] = [jobRow({ status: "reviewed" })];
+
+    const row = await transcriptionService.cancelJob("job-1");
+
+    expect(row.status).toBe("cancelled");
   });
 });
