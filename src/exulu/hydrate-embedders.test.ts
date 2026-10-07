@@ -4,6 +4,7 @@ import {
   __resetEmbedderRefreshClock,
   captureCodeEmbedder,
   codeEmbedderFor,
+  contextEmbedderInfoFor,
 } from "./hydrate-embedders";
 
 const context = (id: string, embedder?: any) => ({ id, embedder }) as any;
@@ -300,5 +301,29 @@ describe("refreshContextEmbeddersIfStale", () => {
     ctx.embedder = { model: "changed-by-hand" };
     await refreshContextEmbeddersIfStale([ctx], 1_031_000, deps());
     expect(ctx.embedder.model).not.toBe("changed-by-hand");
+  });
+});
+
+describe("contextEmbedderInfoFor", () => {
+  it("reports the captured code default, not the override hydration assigned", async () => {
+    // resolveContextEmbedder derives codeModel from whatever `embedder` the
+    // caller hands it. Passing the live context after hydration therefore
+    // reports the override as the code default, which is what the settings UI
+    // showed: the framework transcripts base declares no embedder in code, yet
+    // its EmbedderInfo claimed codeModel "gemini-embedding-001".
+    const ctx = context("transcriptions"); // no code-declared embedder
+    await hydrateContextEmbedders([ctx], deps());
+    expect(ctx.embedder.model).toBe("override-model"); // hydration ran
+
+    const info = await contextEmbedderInfoFor(ctx, { resolve: deps().resolve });
+    expect(info.codeModel).toBeNull();
+    expect(info.databaseModel).toBe("override-model");
+  });
+
+  it("still reports a genuine code default", async () => {
+    const ctx = context("docs", { model: "code-model" });
+    await hydrateContextEmbedders([ctx], deps());
+    const info = await contextEmbedderInfoFor(ctx, { resolve: deps().resolve });
+    expect(info.codeModel).toBe("code-model");
   });
 });

@@ -26,13 +26,13 @@ import { changeContextEmbedder } from "@SRC/exulu/embedder-change";
 import { dropProjection } from "@SRC/exulu/projection/store";
 import {
   clearEmbedderSetting,
-  resolveContextEmbedder,
   setEmbedderSetting,
 } from "@SRC/exulu/embedder-settings";
 import {
   captureCodeEmbedder,
   codeEmbedderFor,
   hydrateContextEmbedders,
+  contextEmbedderInfoFor,
   willEmbedOnQueue,
 } from "@SRC/exulu/hydrate-embedders";
 import { currentChunksDimensionality } from "@SRC/exulu/chunks-dimensionality";
@@ -1428,7 +1428,7 @@ export function createMutations(
           willEmbedOnQueue: (c) => willEmbedOnQueue(c, queue),
         });
         return {
-          info: await resolveContextEmbedder(ctx),
+          info: await contextEmbedderInfoFor(ctx),
           rebuild: result.case,
           itemsQueued: result.items,
         };
