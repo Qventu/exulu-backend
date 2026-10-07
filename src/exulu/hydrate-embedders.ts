@@ -93,6 +93,26 @@ export const codeEmbedderFor = (
   codeEmbedders.has(context) ? codeEmbedders.get(context) : context.embedder;
 
 /**
+ * The embedder info to REPORT for a context (EmbedderInfo query, SetEmbedder's
+ * returned `info`).
+ *
+ * resolveContextEmbedder derives `codeModel` from whatever `embedder` the
+ * caller hands it, so passing the live instance reports whatever hydration last
+ * assigned — i.e. the override, labelled as the code default. The framework
+ * transcripts base made that visible: it declares no embedder in code, yet its
+ * EmbedderInfo claimed codeModel "gemini-embedding-001". Hydration itself is
+ * unaffected because it already passes the captured value explicitly; only the
+ * reporting call sites were reading the live field.
+ */
+export const contextEmbedderInfoFor = async (
+  context: Pick<ExuluContext, "id" | "embedder">,
+  deps: Partial<Pick<HydrateDeps, "resolve">> = {},
+): Promise<ContextEmbedderInfo> => {
+  const resolve = deps.resolve ?? resolveContextEmbedder;
+  return resolve({ id: context.id, embedder: codeEmbedderFor(context) });
+};
+
+/**
  * Whether embedding for `context` will run on a background queue once
  * `overrideQueue` is in force, resolved exactly as hydration resolves it:
  * the override's queue when it names one and the registry knows it, the

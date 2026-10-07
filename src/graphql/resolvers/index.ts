@@ -18,7 +18,7 @@ import { exuluApp } from "@SRC/exulu/app/singleton";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import { checkRecordAccess } from "@SRC/utils/check-record-access";
 import { postgresClient } from "@SRC/postgres/client";
-import { resolveContextEmbedder } from "@SRC/exulu/embedder-settings";
+import { contextEmbedderInfoFor } from "@SRC/exulu/hydrate-embedders";
 import { getEmbeddingModelInfo } from "@SRC/exulu/litellm/parse-embedding-models";
 
 export const itemsPaginationRequest = async ({
@@ -392,7 +392,7 @@ export function createQueries(
       if (!exists) {
         throw new Error("Context " + table.id + " not found in registry.");
       }
-      const info = await resolveContextEmbedder(exists);
+      const info = await contextEmbedderInfoFor(exists);
 
       // A stale model must not break the very query whose job is to report
       // that it is stale — that would leave the admin unable to see, let
