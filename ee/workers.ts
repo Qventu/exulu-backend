@@ -10,6 +10,7 @@ import { ExuluStorage } from "@SRC/exulu/storage.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config.ts";
 import { getTableName, type ExuluContext } from "@SRC/exulu/context.ts";
+import { refreshContextEmbeddersIfStale } from "@SRC/exulu/hydrate-embedders";
 import type { ExuluEval } from "@SRC/exulu/evals.ts";
 import type { ExuluTool } from "@SRC/exulu/tool.ts";
 import { resolveModel } from "@SRC/exulu/resolve-model.ts";
@@ -309,6 +310,21 @@ export const createWorkers = async (
 
               if (!context) {
                 throw new Error(`Context ${data.context} not found in the registry.`);
+              }
+
+              // A context whose embedder is configured in the database rather than
+              // declared in code (the framework-provided transcripts base, for one)
+              // only gets `embedder` set by hydrateContextEmbedders. This process
+              // builds its registry from code and hands it to createWorkers without
+              // hydrating, and createAndUpsertEmbeddings' only other caller already
+              // refreshes before use — so the embedder job is the one entry point
+              // that would otherwise read a context the override never reached, and
+              // reject its own queued job with "No embedder configured".
+              try {
+                await refreshContextEmbeddersIfStale(contexts);
+              } catch {
+                // Singleton not initialised (e.g. tests, early boot) — the embedder
+                // set at construction/boot-hydration still stands.
               }
 
               if (!context.embedder) {
