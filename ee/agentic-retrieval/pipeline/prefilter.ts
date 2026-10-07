@@ -1,7 +1,7 @@
 import Fuse from "fuse.js";
 import { z } from "zod";
 import { microCall } from "./micro-call";
-import { normalizeFileName } from "./text-utils";
+import { normalizeFileName, stripSeparators } from "./text-utils";
 import { DEFAULT_PREFILTER_CUTOFF, type IdentifierSet, type KbKind } from "./config";
 import type { PhaseStep } from "./types";
 
@@ -17,10 +17,16 @@ export type PrefilteredResult = {
 
 type ItemsCache = {
   fuseIndex: any;
-  items: { name?: string; id?: string; external_id?: string; normalized?: string }[];
+  items: { name?: string; id?: string; external_id?: string; normalized?: string; stripped?: string }[];
   tsp: Date;
   cacheKey: string;
 };
+
+/** Shortest separator-free token eligible for the supplementary pass. Below
+ *  this, a token matches too much of the corpus to be a useful pin. */
+const SUPPLEMENT_MIN_TOKEN_LENGTH = 4;
+/** Most items the supplementary pass may add on top of the primary result. */
+const SUPPLEMENT_BUDGET = 15;
 
 // ---------------------------------------------------------------------------
 // Cache
@@ -50,12 +56,21 @@ const ensureItemsCache = async ({
   ) {
     const result = await context.getItems({ fields, filters: [] });
 
-    const normalizedItems = result.map((item: any) => ({
-      name: item.name,
-      id: item.id,
-      external_id: item.external_id,
-      normalized: normalize(item),
-    }));
+    const normalizedItems = result.map((item: any) => {
+      const normalized = normalize(item);
+      return {
+        name: item.name,
+        id: item.id,
+        external_id: item.external_id,
+        normalized,
+        // Separator-free form used only by the supplementary pass in
+        // fuzzyPrefilter. Deliberately NOT added to the Fuse index or keys:
+        // changing what Fuse scores reshuffles which items win the result cap,
+        // which cost 22 regressions against 6 improvements when measured over
+        // positively-rated production cases.
+        stripped: stripSeparators(normalized ?? item.name ?? ""),
+      };
+    });
 
     itemCaches[cacheKey] = {
       cacheKey,
@@ -137,6 +152,7 @@ export async function fuzzyPrefilter({
   normalize,
   cutoff = DEFAULT_PREFILTER_CUTOFF,
   limit,
+  supplementSeparatorVariants = false,
 }: {
   cacheKey: string;
   relevantKeywords: string[];
@@ -146,6 +162,15 @@ export async function fuzzyPrefilter({
   normalize: (item: any) => string | undefined;
   cutoff?: number;
   limit?: number;
+  /**
+   * Opt in to the separator-insensitive supplement below. Only meaningful when
+   * `normalize` yields FILENAME-ish text: it exists because a hyphenated
+   * identifier scores badly against an unhyphenated filename. Callers that
+   * normalize to prose — the conversations keyword prefilter joins a ticket's
+   * name and description — get nothing useful from it, so it stays off by
+   * default rather than silently widening every prefilter in the pipeline.
+   */
+  supplementSeparatorVariants?: boolean;
 }): Promise<PrefilteredResult[]> {
   const cache = await ensureItemsCache({ cacheKey, context, fields, normalize });
 
@@ -264,6 +289,82 @@ export async function fuzzyPrefilter({
     id: result.item.id,
   }));
 
+  // ---------------------------------------------------------------------
+  // Supplementary separator-insensitive pass
+  // ---------------------------------------------------------------------
+  // Fuse scores an identifier's punctuation, not just its letters: "FST-2XT"
+  // scores ~0.0001 against `br_FST-2XT_2019-10_de.pdf` but ~0.02 against
+  // `hb_FST2XT-XTs_2017-11_de.pdf`. NEWLIFT's brochures carry the hyphen and
+  // its handbooks do not, so the brochures filled the cap above and the
+  // handbooks — which hold the error-code tables — were dropped entirely.
+  // Because identifier pins are a hard id-whitelist rather than a boost, that
+  // made their content unreachable no matter how the model phrased the query.
+  //
+  // This pass is strictly ADDITIVE: it never reorders or displaces a primary
+  // hit, so no pin that resolved before can be lost. Only tokens that actually
+  // CONTAIN a separator can be mismatched this way, so only those are
+  // supplemented — a plain token like "FST" is already scored correctly and
+  // supplementing it would match most of the corpus.
+  const supplementTokens = !supplementSeparatorVariants
+    ? []
+    : [
+        ...new Set(
+          uniqueKeywords
+            .filter((k) => /[-_.]/.test(k))
+            .map((k) => stripSeparators(k))
+            .filter((t) => t.length >= SUPPLEMENT_MIN_TOKEN_LENGTH),
+        ),
+      ].sort((a, b) => b.length - a.length); // most specific first
+
+  if (supplementTokens.length > 0) {
+    const seen = new Set(prefiltered.map((p) => p.id));
+    // `normalized` is the full storage path, and NEWLIFT files a product's
+    // documents under a folder named after it (`/FST/FST-2XT/...`), so every
+    // incidental file in that folder matches the identifier as well as the
+    // handbook does. Rank a match in the FILENAME above a path-only match, then
+    // prefer the shorter name (the more specific document), before falling back
+    // to corpus order — otherwise the budget fills with whatever happens to be
+    // stored alongside.
+    const candidates = cache.items
+      .filter(
+        (item) =>
+          item.id &&
+          !seen.has(item.id) &&
+          supplementTokens.some((t) => (item.stripped ?? "").includes(t)),
+      )
+      .map((item, idx) => {
+        const nameStripped = stripSeparators(item.name ?? "");
+        return {
+          item,
+          idx,
+          nameMatch: supplementTokens.some((t) => nameStripped.includes(t)) ? 0 : 1,
+          nameLength: (item.name ?? "").length,
+        };
+      })
+      .sort(
+        (a, b) =>
+          a.nameMatch - b.nameMatch || a.nameLength - b.nameLength || a.idx - b.idx,
+      );
+
+    const supplement: PrefilteredResult[] = [];
+    for (const { item } of candidates) {
+      if (supplement.length >= SUPPLEMENT_BUDGET) break;
+      if (!item.id || seen.has(item.id)) continue;
+      seen.add(item.id);
+      supplement.push({
+        key: item.external_id ?? item.id,
+        name: item.name ?? item.external_id ?? item.id,
+        id: item.id,
+      });
+    }
+    if (supplement.length > 0) {
+      console.log(
+        `[EXULU pipeline] fuzzyPrefilter: +${supplement.length} separator-insensitive supplement(s) for [${supplementTokens.join(", ")}]`,
+      );
+      prefiltered.push(...supplement);
+    }
+  }
+
   console.log(
     `[EXULU pipeline] fuzzyPrefilter: ${prefiltered.length} result(s) for [${uniqueKeywords.join(", ")}]`,
   );
@@ -352,6 +453,9 @@ export async function resolveIdentifierPins({
                     ...common,
                     relevantKeywords: output.matches!,
                     cutoff: DEFAULT_PREFILTER_CUTOFF,
+                    // Identifier pins are a hard id-whitelist over filenames,
+                    // which is exactly the case the supplement exists for.
+                    supplementSeparatorVariants: true,
                   });
             if (!matched.length) return;
             const target = pinsByContext.get(ctxId) ?? new Set<string>();

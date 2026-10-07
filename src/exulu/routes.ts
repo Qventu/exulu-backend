@@ -64,6 +64,7 @@ import { compactSession, CompactionInsufficientError } from "./compact-session.t
 import { describeRequestError } from "./request-error.ts";
 import { finishTurnMetadata } from "./turn-metadata.ts";
 import { recalledMemoriesMetadata } from "./memory/recalled-metadata.ts";
+import { isPublicSurface, treatAsGuest } from "./public-surface.ts";
 import { recordMemoryUsage } from "./memory/usage.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { transcriptionClient } from "./transcription/client.ts";
@@ -861,7 +862,9 @@ export const createExpressRoutes = async (
             if (part.type === "finish") {
               return {
                 ...finishTurnMetadata({ totalUsage: part.totalUsage, startedAt: turnStartedAt }),
-                ...recalledMemoriesMetadata({ recall: result.recall, agent, isGuest: !user?.id }),
+                // The public surface is a guest surface even for a signed-in visitor:
+                // the page renders in guest mode, so the data has to follow.
+                ...recalledMemoriesMetadata({ recall: result.recall, agent, isGuest: treatAsGuest(req, user) }),
               };
             }
             return undefined;
