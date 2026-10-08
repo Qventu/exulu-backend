@@ -70,6 +70,7 @@ import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { transcriptionClient } from "./transcription/client.ts";
 import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts";
 import { registerTranscriptExportRoute } from "./transcription/export-route.ts";
+import { registerViewerIdentityRoutes } from "./viewer-identity-routes.ts";
 import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
 import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
 import { transcriptionService } from "./transcription/service.ts";
@@ -138,8 +139,6 @@ import {
   deriveFilename,
   contentHeadersFor,
   publicMetaFor,
-  authorizeIdentityGrant,
-  parseIdentityGrantBody,
 } from "./shared-artifacts.ts";
 import { publicAgentView, evaluateGuestChatAccess } from "./public-agents.ts";
 import {
@@ -5139,38 +5138,16 @@ export const createExpressRoutes = async (
     res.json(publicMetaFor(row));
   });
 
-  // Grant or revoke the viewer-identity capability. Super-admin only; the
-  // create route rejects the field outright. Authorization is checked before
-  // the row lookup so a non-admin cannot probe which share names exist.
-  app.patch(
-    "/shared-artifacts/:name/viewer-identity",
-    async (req: Request, res: Response) => {
-      const auth = await requestValidators.authenticate(req);
-      const authz = authorizeIdentityGrant(auth.user);
-      if (!authz.ok) {
-        res.status(authz.code).json({ detail: authz.message });
-        return;
-      }
-      const parsed = parseIdentityGrantBody(req.body);
-      if (!parsed.ok) {
-        res.status(400).json({ detail: parsed.message });
-        return;
-      }
-      const { db } = await postgresClient();
-      const row = await getSharedArtifactByName(db, req.params.name ?? "");
-      if (!row) {
-        res.status(404).json({ detail: "Not found." });
-        return;
-      }
-      await db("shared_artifacts")
-        .where({ id: row.id })
-        .update({ grant_viewer_identity: parsed.value });
-      res.status(200).json({
-        name: row.name,
-        grant_viewer_identity: parsed.value,
-      });
-    },
-  );
+  // PATCH /shared-artifacts/:name/viewer-identity and
+  // GET /shared-artifacts/:name/access live in viewer-identity-routes.ts so
+  // their HTTP contract is testable with supertest and no Postgres. See
+  // viewer-identity-routes.test.ts.
+  registerViewerIdentityRoutes(app, {
+    authenticate: (req) => requestValidators.authenticate(req),
+    getDb: async () => (await postgresClient()).db,
+    RBACResolver,
+    checkRecordAccess,
+  });
 
   // Serve bytes. Auth depends on the row's auth_mode.
   app.get("/shared-artifacts/:name/content", async (req: Request, res: Response) => {
@@ -5195,6 +5172,12 @@ export const createExpressRoutes = async (
       }
     } else if (row.auth_mode === "regular") {
       // regular: viewer's bearer token; backend enforces RBAC.
+      //
+      // This block is deliberately duplicated by the regular-mode RBAC check
+      // in viewer-identity-routes.ts's GET /shared-artifacts/:name/access
+      // (extracting a shared helper would mean touching this route, which
+      // was out of scope for that capability). If this block changes, check
+      // that one too — the two must change together.
       const viewer = await requestValidators.authenticate(req);
       if (!viewer.user?.id) {
         res.status(401).json({ detail: "Authentication required." });
@@ -5240,46 +5223,6 @@ export const createExpressRoutes = async (
     res.setHeader("Cache-Control", "private, no-store");
     if (headers.disposition) res.setHeader("Content-Disposition", headers.disposition);
     res.send(bytes);
-  });
-
-  // Same RBAC decision as /content, without reading the object from S3. Exists
-  // so the frontend's identity route can confirm access cheaply.
-  app.get("/shared-artifacts/:name/access", async (req: Request, res: Response) => {
-    const { db } = await postgresClient();
-    const row = await getSharedArtifactByName(db, req.params.name ?? "");
-    if (!row) {
-      res.status(404).json({ detail: "Not found." });
-      return;
-    }
-    if (isExpired(row.expires_at, new Date())) {
-      res.status(410).json({ detail: "This link has expired." });
-      return;
-    }
-    // public/password shares are gated upstream and never reach RBAC, so an
-    // access check on them is a caller error rather than a yes-or-no answer.
-    if (row.auth_mode !== "regular") {
-      res.status(400).json({
-        detail: "Access checks apply to regular-mode shares only.",
-      });
-      return;
-    }
-    const viewer = await requestValidators.authenticate(req);
-    if (!viewer.user?.id) {
-      res.status(401).json({ detail: "Authentication required." });
-      return;
-    }
-    const rbac = await RBACResolver(
-      db,
-      "shared_artifact",
-      row.id,
-      row.rights_mode || "private",
-    );
-    const ok = await checkRecordAccess({ ...row, RBAC: rbac }, "read", viewer.user);
-    if (!ok) {
-      res.status(403).json({ detail: "You don't have access to this artifact." });
-      return;
-    }
-    res.status(204).end();
   });
 
   // ---- Public agents (spec 2026-07-16-public-agents §3.3) ----------------
