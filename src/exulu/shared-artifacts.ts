@@ -139,12 +139,33 @@ export const publicMetaFor = (row: {
  * its viewers" — the credential is the viewer's session token and is not scope
  * reduced. So it is a super-admin act, not a creator act: the creator may be
  * acting on an agent's behalf.
+ *
+ * The API-user refusal MUST precede the super_admin check. `generateApiKey`
+ * (`src/auth/generate-key.ts`) defaults `superAdmin ?? true`, and
+ * `ExuluDatabase.api.key.generate(name, email)` forwards no options — so
+ * every platform API key is a super-admin, and `authentication()`'s API-key
+ * branch does `select("*")`, populating `user.super_admin`. A
+ * super_admin-only check would therefore pass for any agent, MCP server, or
+ * worker holding such a key (including the `internalkey` synthetic user,
+ * `type: "api"`), which falsifies this capability's central claim: that it
+ * cannot be acquired by publishing, sharing, or agent action. This follows
+ * the existing convention of treating API users specially in authorization
+ * decisions — see `src/utils/check-record-access.ts` and
+ * `src/utils/check-item-write-access.ts`.
  */
 export const authorizeIdentityGrant = (
-  user: { super_admin?: boolean } | undefined,
+  user: { super_admin?: boolean; type?: string } | undefined,
 ): { ok: true } | { ok: false; code: number; message: string } => {
   if (!user) {
     return { ok: false, code: 401, message: "Authentication required." };
+  }
+  if (user.type === "api") {
+    return {
+      ok: false,
+      code: 403,
+      message:
+        "Granting viewer identity requires an interactive administrator session.",
+    };
   }
   if (user.super_admin !== true) {
     return {

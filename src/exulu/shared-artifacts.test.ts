@@ -251,6 +251,31 @@ describe("authorizeIdentityGrant", () => {
   test("allows a super admin", () => {
     expect(authorizeIdentityGrant({ super_admin: true })).toEqual({ ok: true });
   });
+
+  // B1: generateApiKey defaults superAdmin to true, so an API user can carry
+  // super_admin: true. The type === "api" refusal must still win — this is
+  // the load-bearing half of the gate, not a formality.
+  test("403s an API user even when super_admin is true", () => {
+    const result = authorizeIdentityGrant({ super_admin: true, type: "api" });
+    expect(result).toEqual({
+      ok: false,
+      code: 403,
+      message:
+        "Granting viewer identity requires an interactive administrator session.",
+    });
+  });
+
+  test("403s an API user without super_admin", () => {
+    const result = authorizeIdentityGrant({ type: "api" });
+    expect(result.ok).toBe(false);
+    expect((result as { code: number }).code).toBe(403);
+  });
+
+  test("still allows a human super admin", () => {
+    expect(
+      authorizeIdentityGrant({ super_admin: true, type: "user" }),
+    ).toEqual({ ok: true });
+  });
 });
 
 describe("parseIdentityGrantBody", () => {
