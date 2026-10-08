@@ -134,6 +134,38 @@ describe("contentHeadersFor", () => {
   });
 });
 
+describe("validateCreateInput — grant_viewer_identity", () => {
+  const now = new Date("2026-10-08T00:00:00Z");
+  const valid = {
+    s3key: "artifacts/app.html",
+    name: "app.html",
+    auth_mode: "regular",
+  };
+
+  test("rejects a body that sets the flag true", () => {
+    const result = validateCreateInput(
+      { ...valid, grant_viewer_identity: true } as any,
+      now,
+    );
+    expect(result.ok).toBe(false);
+    expect((result as { message: string }).message).toMatch(
+      /grant_viewer_identity cannot be set/i,
+    );
+  });
+
+  test("rejects a body that sets the flag false — presence is the error", () => {
+    const result = validateCreateInput(
+      { ...valid, grant_viewer_identity: false } as any,
+      now,
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  test("accepts a body that omits the flag", () => {
+    expect(validateCreateInput({ ...valid } as any, now)).toEqual({ ok: true });
+  });
+});
+
 describe("getSharedArtifactByName", () => {
   test("queries shared_artifacts by name and returns the first row", async () => {
     const first = jest.fn().mockResolvedValue({ id: "x", name: "report" });

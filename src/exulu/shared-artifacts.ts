@@ -48,6 +48,18 @@ export const validateCreateInput = (
   input: CreateShareInput,
   now: Date,
 ): { ok: true } | { ok: false; message: string } => {
+  // The security boundary of the viewer-identity capability. An agent creating
+  // a share uses the caller's own token and is indistinguishable from the user
+  // here, so this route must never be a path to the capability. Reject rather
+  // than drop, so no caller believes it took effect.
+  if ("grant_viewer_identity" in (input as Record<string, unknown>)) {
+    return {
+      ok: false,
+      message:
+        "grant_viewer_identity cannot be set when creating a share. " +
+        "A platform administrator must grant it explicitly.",
+    };
+  }
   if (!input.s3key) return { ok: false, message: "s3key is required." };
   if (!input.name) return { ok: false, message: "name is required." };
   const mode = input.auth_mode;
