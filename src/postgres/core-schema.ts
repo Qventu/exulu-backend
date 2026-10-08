@@ -950,6 +950,10 @@ const sharedArtifactsSchema: ExuluTableDefinition = {
     { name: "password_hash", type: "text", required: false, hidden: true }, // bcrypt; password mode only
     { name: "expires_at", type: "date", required: false }, // null = no expiry
     { name: "content_type", type: "text", required: false },
+    // Viewer-identity capability. Default false: no artifact gains it by being
+    // deployed. Settable only via PATCH /shared-artifacts/:name/viewer-identity
+    // by a super-admin — the create route rejects it outright.
+    { name: "grant_viewer_identity", type: "boolean", default: false },
   ],
 };
 

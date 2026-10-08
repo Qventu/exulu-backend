@@ -137,6 +137,7 @@ import {
   isExpired,
   deriveFilename,
   contentHeadersFor,
+  publicMetaFor,
 } from "./shared-artifacts.ts";
 import { publicAgentView, evaluateGuestChatAccess } from "./public-agents.ts";
 import {
@@ -5133,13 +5134,7 @@ export const createExpressRoutes = async (
       res.status(410).json({ detail: "This link has expired." });
       return;
     }
-    res.json({
-      auth_mode: row.auth_mode,
-      expires_at: row.expires_at,
-      filename: deriveFilename(row.s3key),
-      content_type: row.content_type,
-      is_html: /\.html?$/i.test(row.s3key),
-    });
+    res.json(publicMetaFor(row));
   });
 
   // Serve bytes. Auth depends on the row's auth_mode.

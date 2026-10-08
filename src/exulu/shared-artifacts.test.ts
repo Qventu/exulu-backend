@@ -8,6 +8,7 @@ import {
   hashSharePassword,
   verifySharePassword,
   contentHeadersFor,
+  publicMetaFor,
   getSharedArtifactByName,
 } from "./shared-artifacts";
 
@@ -177,5 +178,46 @@ describe("getSharedArtifactByName", () => {
     expect(db).toHaveBeenCalledWith("shared_artifacts");
     expect(where).toHaveBeenCalledWith({ name: "report" });
     expect(row).toEqual({ id: "x", name: "report" });
+  });
+});
+
+describe("publicMetaFor", () => {
+  const row = {
+    auth_mode: "regular",
+    expires_at: null,
+    s3key: "artifacts/123_EXULU_app.html",
+    content_type: null,
+  };
+
+  test("reports the capability when the column is true", () => {
+    expect(publicMetaFor({ ...row, grant_viewer_identity: true })).toEqual({
+      auth_mode: "regular",
+      expires_at: null,
+      filename: "app.html",
+      content_type: null,
+      is_html: true,
+      grant_viewer_identity: true,
+    });
+  });
+
+  test("coerces a null column to false", () => {
+    expect(
+      publicMetaFor({ ...row, grant_viewer_identity: null }).grant_viewer_identity,
+    ).toBe(false);
+  });
+
+  test("coerces a missing column to false", () => {
+    expect(publicMetaFor(row).grant_viewer_identity).toBe(false);
+  });
+
+  test("does not treat a truthy non-boolean as granted", () => {
+    expect(
+      publicMetaFor({ ...row, grant_viewer_identity: "true" as any })
+        .grant_viewer_identity,
+    ).toBe(false);
+  });
+
+  test("marks a non-html key as not html", () => {
+    expect(publicMetaFor({ ...row, s3key: "a/b.pdf" }).is_html).toBe(false);
   });
 });

@@ -98,5 +98,41 @@ export const contentHeadersFor = (
   };
 };
 
+export type PublicMeta = {
+  auth_mode: string;
+  expires_at: string | Date | null;
+  filename: string;
+  content_type: string | null;
+  is_html: boolean;
+  grant_viewer_identity: boolean;
+};
+
+/**
+ * The unauthenticated `meta` payload. Only low-sensitivity fields: never the
+ * password hash, never bytes.
+ *
+ * `grant_viewer_identity` is deliberately public. It tells an anonymous caller
+ * which artifacts are identity-granting, which reveals no credential and does
+ * not help obtain one — a grant still requires a logged-in session with RBAC
+ * read access on the row.
+ *
+ * The `=== true` comparison is load-bearing: a null column, a missing column,
+ * and a truthy non-boolean must all read as not-granted.
+ */
+export const publicMetaFor = (row: {
+  auth_mode: string;
+  expires_at?: string | Date | null;
+  s3key: string;
+  content_type?: string | null;
+  grant_viewer_identity?: boolean | null;
+}): PublicMeta => ({
+  auth_mode: row.auth_mode,
+  expires_at: row.expires_at ?? null,
+  filename: deriveFilename(row.s3key),
+  content_type: row.content_type ?? null,
+  is_html: isHtmlKey(row.s3key),
+  grant_viewer_identity: row.grant_viewer_identity === true,
+});
+
 export const getSharedArtifactByName = (db: Knex, name: string) =>
   db("shared_artifacts").where({ name }).first();
