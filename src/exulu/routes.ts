@@ -138,6 +138,8 @@ import {
   deriveFilename,
   contentHeadersFor,
   publicMetaFor,
+  authorizeIdentityGrant,
+  parseIdentityGrantBody,
 } from "./shared-artifacts.ts";
 import { publicAgentView, evaluateGuestChatAccess } from "./public-agents.ts";
 import {
@@ -5136,6 +5138,39 @@ export const createExpressRoutes = async (
     }
     res.json(publicMetaFor(row));
   });
+
+  // Grant or revoke the viewer-identity capability. Super-admin only; the
+  // create route rejects the field outright. Authorization is checked before
+  // the row lookup so a non-admin cannot probe which share names exist.
+  app.patch(
+    "/shared-artifacts/:name/viewer-identity",
+    async (req: Request, res: Response) => {
+      const auth = await requestValidators.authenticate(req);
+      const authz = authorizeIdentityGrant(auth.user);
+      if (!authz.ok) {
+        res.status(authz.code).json({ detail: authz.message });
+        return;
+      }
+      const parsed = parseIdentityGrantBody(req.body);
+      if (!parsed.ok) {
+        res.status(400).json({ detail: parsed.message });
+        return;
+      }
+      const { db } = await postgresClient();
+      const row = await getSharedArtifactByName(db, req.params.name ?? "");
+      if (!row) {
+        res.status(404).json({ detail: "Not found." });
+        return;
+      }
+      await db("shared_artifacts")
+        .where({ id: row.id })
+        .update({ grant_viewer_identity: parsed.value });
+      res.status(200).json({
+        name: row.name,
+        grant_viewer_identity: parsed.value,
+      });
+    },
+  );
 
   // Serve bytes. Auth depends on the row's auth_mode.
   app.get("/shared-artifacts/:name/content", async (req: Request, res: Response) => {

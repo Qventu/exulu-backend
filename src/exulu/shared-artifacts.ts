@@ -134,5 +134,42 @@ export const publicMetaFor = (row: {
   grant_viewer_identity: row.grant_viewer_identity === true,
 });
 
+/**
+ * Granting viewer identity is equivalent to "this artifact may act as any of
+ * its viewers" — the credential is the viewer's session token and is not scope
+ * reduced. So it is a super-admin act, not a creator act: the creator may be
+ * acting on an agent's behalf.
+ */
+export const authorizeIdentityGrant = (
+  user: { super_admin?: boolean } | undefined,
+): { ok: true } | { ok: false; code: number; message: string } => {
+  if (!user) {
+    return { ok: false, code: 401, message: "Authentication required." };
+  }
+  if (user.super_admin !== true) {
+    return {
+      ok: false,
+      code: 403,
+      message: "Only platform administrators can grant viewer identity.",
+    };
+  }
+  return { ok: true };
+};
+
+/**
+ * Strict boolean parse. A coerced `"false"` would silently enable the
+ * capability, so anything that is not a real boolean is an error.
+ */
+export const parseIdentityGrantBody = (
+  body: unknown,
+): { ok: true; value: boolean } | { ok: false; message: string } => {
+  const raw = (body as Record<string, unknown> | null | undefined)
+    ?.grant_viewer_identity;
+  if (typeof raw !== "boolean") {
+    return { ok: false, message: "grant_viewer_identity must be a boolean." };
+  }
+  return { ok: true, value: raw };
+};
+
 export const getSharedArtifactByName = (db: Knex, name: string) =>
   db("shared_artifacts").where({ name }).first();

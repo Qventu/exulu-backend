@@ -10,6 +10,8 @@ import {
   contentHeadersFor,
   publicMetaFor,
   getSharedArtifactByName,
+  authorizeIdentityGrant,
+  parseIdentityGrantBody,
 } from "./shared-artifacts";
 
 describe("normalizeS3Key", () => {
@@ -219,5 +221,58 @@ describe("publicMetaFor", () => {
 
   test("marks a non-html key as not html", () => {
     expect(publicMetaFor({ ...row, s3key: "a/b.pdf" }).is_html).toBe(false);
+  });
+});
+
+describe("authorizeIdentityGrant", () => {
+  test("401s an anonymous caller", () => {
+    const result = authorizeIdentityGrant(undefined);
+    expect(result).toEqual({
+      ok: false,
+      code: 401,
+      message: "Authentication required.",
+    });
+  });
+
+  test("403s an authenticated non-admin", () => {
+    const result = authorizeIdentityGrant({ super_admin: false });
+    expect(result.ok).toBe(false);
+    expect((result as { code: number }).code).toBe(403);
+  });
+
+  test("403s a user whose super_admin field is absent", () => {
+    expect(authorizeIdentityGrant({}).ok).toBe(false);
+  });
+
+  test("403s a truthy non-boolean super_admin", () => {
+    expect(authorizeIdentityGrant({ super_admin: "yes" as any }).ok).toBe(false);
+  });
+
+  test("allows a super admin", () => {
+    expect(authorizeIdentityGrant({ super_admin: true })).toEqual({ ok: true });
+  });
+});
+
+describe("parseIdentityGrantBody", () => {
+  test.each([
+    [{ grant_viewer_identity: true }, true],
+    [{ grant_viewer_identity: false }, false],
+  ])("accepts a real boolean %j", (body, expected) => {
+    expect(parseIdentityGrantBody(body)).toEqual({ ok: true, value: expected });
+  });
+
+  // Review Focus 4: a coerced string would silently enable the capability.
+  test.each([
+    [{ grant_viewer_identity: "true" }],
+    [{ grant_viewer_identity: "false" }],
+    [{ grant_viewer_identity: 1 }],
+    [{ grant_viewer_identity: null }],
+    [{}],
+    [null],
+    [undefined],
+  ])("rejects %j", (body) => {
+    const result = parseIdentityGrantBody(body);
+    expect(result.ok).toBe(false);
+    expect((result as { message: string }).message).toMatch(/must be a boolean/i);
   });
 });
