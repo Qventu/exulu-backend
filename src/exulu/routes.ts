@@ -5242,6 +5242,46 @@ export const createExpressRoutes = async (
     res.send(bytes);
   });
 
+  // Same RBAC decision as /content, without reading the object from S3. Exists
+  // so the frontend's identity route can confirm access cheaply.
+  app.get("/shared-artifacts/:name/access", async (req: Request, res: Response) => {
+    const { db } = await postgresClient();
+    const row = await getSharedArtifactByName(db, req.params.name ?? "");
+    if (!row) {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    if (isExpired(row.expires_at, new Date())) {
+      res.status(410).json({ detail: "This link has expired." });
+      return;
+    }
+    // public/password shares are gated upstream and never reach RBAC, so an
+    // access check on them is a caller error rather than a yes-or-no answer.
+    if (row.auth_mode !== "regular") {
+      res.status(400).json({
+        detail: "Access checks apply to regular-mode shares only.",
+      });
+      return;
+    }
+    const viewer = await requestValidators.authenticate(req);
+    if (!viewer.user?.id) {
+      res.status(401).json({ detail: "Authentication required." });
+      return;
+    }
+    const rbac = await RBACResolver(
+      db,
+      "shared_artifact",
+      row.id,
+      row.rights_mode || "private",
+    );
+    const ok = await checkRecordAccess({ ...row, RBAC: rbac }, "read", viewer.user);
+    if (!ok) {
+      res.status(403).json({ detail: "You don't have access to this artifact." });
+      return;
+    }
+    res.status(204).end();
+  });
+
   // ---- Public agents (spec 2026-07-16-public-agents §3.3) ----------------
   // Unauthenticated by design: only whitelisted fields ever leave here, and
   // every handler re-checks guest_access so unpublishing is immediate.
