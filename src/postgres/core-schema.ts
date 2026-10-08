@@ -954,6 +954,14 @@ const sharedArtifactsSchema: ExuluTableDefinition = {
     // deployed. Settable only via PATCH /shared-artifacts/:name/viewer-identity
     // by a super-admin — the create route rejects it outright.
     { name: "grant_viewer_identity", type: "boolean", default: false },
+    // Who granted (or revoked) the capability, and when. users.id is numeric
+    // ("number" field type, see usersSchema above), so this is "number" too,
+    // not "text" like most other foreign-key-ish fields on this table. Set
+    // together with grant_viewer_identity in the PATCH handler; both null
+    // when the row has never had the flag set, and both cleared (null) on
+    // revoke — not left pointing at a grant that no longer holds.
+    { name: "identity_granted_by", type: "number", required: false },
+    { name: "identity_granted_at", type: "date", required: false },
   ],
 };
 
