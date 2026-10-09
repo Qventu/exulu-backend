@@ -135,7 +135,15 @@ describe("contentHeadersFor", () => {
   });
 });
 
-describe("validateCreateInput — grant_viewer_identity", () => {
+// A `validateCreateInput — grant_viewer_identity` block stood here, proving
+// the create route refused the flag. Gone with the flag: `auth_mode: "regular"`
+// is the capability now, and `auth_mode`'s own validation is covered by the
+// `validateCreateInput` block above.
+//
+// What replaced it as the thing worth asserting: a create body that carries the
+// retired field is now simply ignored rather than rejected, which is the
+// behaviour change a caller would notice.
+describe("validateCreateInput — the retired grant field", () => {
   const now = new Date("2026-10-08T00:00:00Z");
   const valid = {
     s3key: "artifacts/app.html",
@@ -143,26 +151,13 @@ describe("validateCreateInput — grant_viewer_identity", () => {
     auth_mode: "regular",
   };
 
-  test("rejects a body that sets the flag true", () => {
-    const result = validateCreateInput(
-      { ...valid, grant_viewer_identity: true } as any,
-      now,
-    );
-    expect(result.ok).toBe(false);
-    expect((result as { message: string }).message).toMatch(
-      /grant_viewer_identity cannot be set/i,
-    );
+  test("accepts a body that still carries grant_viewer_identity — the field is inert, not an error", () => {
+    expect(
+      validateCreateInput({ ...valid, grant_viewer_identity: true } as any, now),
+    ).toEqual({ ok: true });
   });
 
-  test("rejects a body that sets the flag false — presence is the error", () => {
-    const result = validateCreateInput(
-      { ...valid, grant_viewer_identity: false } as any,
-      now,
-    );
-    expect(result.ok).toBe(false);
-  });
-
-  test("accepts a body that omits the flag", () => {
+  test("accepts a body that omits it", () => {
     expect(validateCreateInput({ ...valid } as any, now)).toEqual({ ok: true });
   });
 });
@@ -189,32 +184,32 @@ describe("publicMetaFor", () => {
     content_type: null,
   };
 
-  test("reports the capability when the column is true", () => {
-    expect(publicMetaFor({ ...row, grant_viewer_identity: true })).toEqual({
+  test("reports exactly the low-sensitivity fields, and auth_mode among them", () => {
+    expect(publicMetaFor(row)).toEqual({
       auth_mode: "regular",
       expires_at: null,
       filename: "app.html",
       content_type: null,
       is_html: true,
-      grant_viewer_identity: true,
     });
   });
 
-  test("coerces a null column to false", () => {
-    expect(
-      publicMetaFor({ ...row, grant_viewer_identity: null }).grant_viewer_identity,
-    ).toBe(false);
+  // The payload is unauthenticated, so what it does NOT carry is as much the
+  // contract as what it does. The retired grant field must not reappear, and
+  // the password hash must never be reachable through it.
+  test("does not report a retired or sensitive field even when the row carries one", () => {
+    const meta = publicMetaFor({
+      ...row,
+      grant_viewer_identity: true,
+      password_hash: "$2b$12$notasecretreally",
+    } as any);
+    expect(meta).not.toHaveProperty("grant_viewer_identity");
+    expect(meta).not.toHaveProperty("password_hash");
   });
 
-  test("coerces a missing column to false", () => {
-    expect(publicMetaFor(row).grant_viewer_identity).toBe(false);
-  });
-
-  test("does not treat a truthy non-boolean as granted", () => {
-    expect(
-      publicMetaFor({ ...row, grant_viewer_identity: "true" as any })
-        .grant_viewer_identity,
-    ).toBe(false);
+  test("passes auth_mode through verbatim — it is the capability", () => {
+    expect(publicMetaFor({ ...row, auth_mode: "password" }).auth_mode).toBe("password");
+    expect(publicMetaFor({ ...row, auth_mode: "public" }).auth_mode).toBe("public");
   });
 
   test("marks a non-html key as not html", () => {

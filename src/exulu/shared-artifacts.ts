@@ -48,18 +48,9 @@ export const validateCreateInput = (
   input: CreateShareInput,
   now: Date,
 ): { ok: true } | { ok: false; message: string } => {
-  // The security boundary of the viewer-identity capability. An agent creating
-  // a share uses the caller's own token and is indistinguishable from the user
-  // here, so this route must never be a path to the capability. Reject rather
-  // than drop, so no caller believes it took effect.
-  if ("grant_viewer_identity" in (input as Record<string, unknown>)) {
-    return {
-      ok: false,
-      message:
-        "grant_viewer_identity cannot be set when creating a share. " +
-        "A platform administrator must grant it explicitly.",
-    };
-  }
+  // A `grant_viewer_identity` rejection stood here, guarding a per-row grant
+  // that no longer exists: `auth_mode: "regular"` is the viewer-identity
+  // capability now, and `auth_mode` is validated below like any other field.
   if (!input.s3key) return { ok: false, message: "s3key is required." };
   if (!input.name) return { ok: false, message: "name is required." };
   const mode = input.auth_mode;
@@ -104,46 +95,35 @@ export type PublicMeta = {
   filename: string;
   content_type: string | null;
   is_html: boolean;
-  grant_viewer_identity: boolean;
 };
 
 /**
  * The unauthenticated `meta` payload. Only low-sensitivity fields: never the
  * password hash, never bytes.
  *
- * `grant_viewer_identity` is deliberately public. It tells an anonymous caller
- * which artifacts are identity-granting, which reveals no credential and does
- * not help obtain one — a grant still requires a logged-in session with RBAC
- * read access on the row.
- *
- * The `=== true` comparison is load-bearing: a null column, a missing column,
- * and a truthy non-boolean must all read as not-granted.
+ * `auth_mode` is what a caller needs in order to know whether an artifact can
+ * receive its viewer's identity — it is the capability. A `grant_viewer_identity`
+ * field used to be reported here alongside it; it is gone with the per-row grant.
  */
 export const publicMetaFor = (row: {
   auth_mode: string;
   expires_at?: string | Date | null;
   s3key: string;
   content_type?: string | null;
-  grant_viewer_identity?: boolean | null;
 }): PublicMeta => ({
   auth_mode: row.auth_mode,
   expires_at: row.expires_at ?? null,
   filename: deriveFilename(row.s3key),
   content_type: row.content_type ?? null,
   is_html: isHtmlKey(row.s3key),
-  grant_viewer_identity: row.grant_viewer_identity === true,
 });
 
 // `authorizeIdentityGrant` and `parseIdentityGrantBody` lived here, serving the
 // PATCH /shared-artifacts/:name/viewer-identity route. Both are gone with it:
 // `auth_mode: "regular"` is now the capability on its own, so there is no grant
-// to authorize or parse.
-//
-// `grant_viewer_identity` is still reported by `publicMetaFor` above and still
-// rejected by `validateCreateInput` below, and its three columns remain in
-// core-schema.ts — rows that carry the flag stay readable and nothing breaks on
-// an instance where an administrator had set it. The column is simply no longer
-// consulted when deciding whether to hand an artifact its viewer's identity.
+// to authorize, parse, store or report. The three columns are gone from
+// core-schema.ts too — see the note there about dropping them from databases
+// that already ran init-db.
 
 export const getSharedArtifactByName = (db: Knex, name: string) =>
   db("shared_artifacts").where({ name }).first();

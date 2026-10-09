@@ -950,18 +950,19 @@ const sharedArtifactsSchema: ExuluTableDefinition = {
     { name: "password_hash", type: "text", required: false, hidden: true }, // bcrypt; password mode only
     { name: "expires_at", type: "date", required: false }, // null = no expiry
     { name: "content_type", type: "text", required: false },
-    // Viewer-identity capability. Default false: no artifact gains it by being
-    // deployed. Settable only via PATCH /shared-artifacts/:name/viewer-identity
-    // by a super-admin — the create route rejects it outright.
-    { name: "grant_viewer_identity", type: "boolean", default: false },
-    // Who granted (or revoked) the capability, and when. users.id is numeric
-    // ("number" field type, see usersSchema above), so this is "number" too,
-    // not "text" like most other foreign-key-ish fields on this table. Set
-    // together with grant_viewer_identity in the PATCH handler; both null
-    // when the row has never had the flag set, and both cleared (null) on
-    // revoke — not left pointing at a grant that no longer holds.
-    { name: "identity_granted_by", type: "number", required: false },
-    { name: "identity_granted_at", type: "date", required: false },
+    // `grant_viewer_identity`, `identity_granted_by` and `identity_granted_at`
+    // were here. The viewer-identity capability is no longer a per-row grant:
+    // `auth_mode: "regular"` carries it, because such an artifact only renders
+    // for a logged-in user who passes RBAC on this row, so handing that user
+    // their own identity grants nothing they did not already have.
+    //
+    // addMissingFields only ever adds columns, so removing these three leaves
+    // them orphaned on databases that already ran init-db. Dropping them is a
+    // manual, per-environment step:
+    //   alter table shared_artifacts
+    //     drop column if exists grant_viewer_identity,
+    //     drop column if exists identity_granted_by,
+    //     drop column if exists identity_granted_at;
   ],
 };
 
