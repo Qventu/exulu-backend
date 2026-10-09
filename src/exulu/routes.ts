@@ -261,7 +261,7 @@ export const createExpressRoutes = async (
     █████╗   ╚███╔╝ ██║   ██║██║      ██║   ██║
     ██╔══╝   ██╔██╗ ██║   ██║██║      ██║   ██║
     ███████╗██╔╝ ██╗╚██████╔╝███████╗╚██████╔╝
-    ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ╚═════╝ 
+    ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ╚═════╝
     Intelligence Management Platform - Server
 
     `);
@@ -2174,7 +2174,7 @@ export const createExpressRoutes = async (
   //
   // Registered BEFORE /litellm/:project so the mount path can collide with
   // a project-shaped URL without being swallowed by the API handler.
-  
+
   if (isLiteLLMEnabled() && LITELLM_UI_PATH) {
     console.log("[EXULU] Registering LiteLLM UI at", LITELLM_UI_PATH);
     app.use(LITELLM_UI_PATH, async (req: Request, res: Response) => {
@@ -5138,7 +5138,6 @@ export const createExpressRoutes = async (
     res.json(publicMetaFor(row));
   });
 
-  // PATCH /shared-artifacts/:name/viewer-identity and
   // GET /shared-artifacts/:name/access live in viewer-identity-routes.ts so
   // their HTTP contract is testable with supertest and no Postgres. See
   // viewer-identity-routes.test.ts.
@@ -5424,4 +5423,3 @@ function buildUnifiedDiff(
 
   return lines.join("\n");
 }
-

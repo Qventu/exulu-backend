@@ -134,63 +134,16 @@ export const publicMetaFor = (row: {
   grant_viewer_identity: row.grant_viewer_identity === true,
 });
 
-/**
- * Granting viewer identity is equivalent to "this artifact may act as any of
- * its viewers" — the credential is the viewer's session token and is not scope
- * reduced. So it is a super-admin act, not a creator act: the creator may be
- * acting on an agent's behalf.
- *
- * The API-user refusal MUST precede the super_admin check. `generateApiKey`
- * (`src/auth/generate-key.ts`) defaults `superAdmin ?? true`, and
- * `ExuluDatabase.api.key.generate(name, email)` forwards no options — so
- * every platform API key is a super-admin, and `authentication()`'s API-key
- * branch does `select("*")`, populating `user.super_admin`. A
- * super_admin-only check would therefore pass for any agent, MCP server, or
- * worker holding such a key (including the `internalkey` synthetic user,
- * `type: "api"`), which falsifies this capability's central claim: that it
- * cannot be acquired by publishing, sharing, or agent action. This follows
- * the existing convention of treating API users specially in authorization
- * decisions — see `src/utils/check-record-access.ts` and
- * `src/utils/check-item-write-access.ts`.
- */
-export const authorizeIdentityGrant = (
-  user: { super_admin?: boolean; type?: string } | undefined,
-): { ok: true } | { ok: false; code: number; message: string } => {
-  if (!user) {
-    return { ok: false, code: 401, message: "Authentication required." };
-  }
-  if (user.type === "api") {
-    return {
-      ok: false,
-      code: 403,
-      message:
-        "Granting viewer identity requires an interactive administrator session.",
-    };
-  }
-  if (user.super_admin !== true) {
-    return {
-      ok: false,
-      code: 403,
-      message: "Only platform administrators can grant viewer identity.",
-    };
-  }
-  return { ok: true };
-};
-
-/**
- * Strict boolean parse. A coerced `"false"` would silently enable the
- * capability, so anything that is not a real boolean is an error.
- */
-export const parseIdentityGrantBody = (
-  body: unknown,
-): { ok: true; value: boolean } | { ok: false; message: string } => {
-  const raw = (body as Record<string, unknown> | null | undefined)
-    ?.grant_viewer_identity;
-  if (typeof raw !== "boolean") {
-    return { ok: false, message: "grant_viewer_identity must be a boolean." };
-  }
-  return { ok: true, value: raw };
-};
+// `authorizeIdentityGrant` and `parseIdentityGrantBody` lived here, serving the
+// PATCH /shared-artifacts/:name/viewer-identity route. Both are gone with it:
+// `auth_mode: "regular"` is now the capability on its own, so there is no grant
+// to authorize or parse.
+//
+// `grant_viewer_identity` is still reported by `publicMetaFor` above and still
+// rejected by `validateCreateInput` below, and its three columns remain in
+// core-schema.ts — rows that carry the flag stay readable and nothing breaks on
+// an instance where an administrator had set it. The column is simply no longer
+// consulted when deciding whether to hand an artifact its viewer's identity.
 
 export const getSharedArtifactByName = (db: Knex, name: string) =>
   db("shared_artifacts").where({ name }).first();

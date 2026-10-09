@@ -10,8 +10,6 @@ import {
   contentHeadersFor,
   publicMetaFor,
   getSharedArtifactByName,
-  authorizeIdentityGrant,
-  parseIdentityGrantBody,
 } from "./shared-artifacts";
 
 describe("normalizeS3Key", () => {
@@ -224,80 +222,9 @@ describe("publicMetaFor", () => {
   });
 });
 
-describe("authorizeIdentityGrant", () => {
-  test("401s an anonymous caller", () => {
-    const result = authorizeIdentityGrant(undefined);
-    expect(result).toEqual({
-      ok: false,
-      code: 401,
-      message: "Authentication required.",
-    });
-  });
-
-  test("403s an authenticated non-admin", () => {
-    const result = authorizeIdentityGrant({ super_admin: false });
-    expect(result.ok).toBe(false);
-    expect((result as { code: number }).code).toBe(403);
-  });
-
-  test("403s a user whose super_admin field is absent", () => {
-    expect(authorizeIdentityGrant({}).ok).toBe(false);
-  });
-
-  test("403s a truthy non-boolean super_admin", () => {
-    expect(authorizeIdentityGrant({ super_admin: "yes" as any }).ok).toBe(false);
-  });
-
-  test("allows a super admin", () => {
-    expect(authorizeIdentityGrant({ super_admin: true })).toEqual({ ok: true });
-  });
-
-  // B1: generateApiKey defaults superAdmin to true, so an API user can carry
-  // super_admin: true. The type === "api" refusal must still win — this is
-  // the load-bearing half of the gate, not a formality.
-  test("403s an API user even when super_admin is true", () => {
-    const result = authorizeIdentityGrant({ super_admin: true, type: "api" });
-    expect(result).toEqual({
-      ok: false,
-      code: 403,
-      message:
-        "Granting viewer identity requires an interactive administrator session.",
-    });
-  });
-
-  test("403s an API user without super_admin", () => {
-    const result = authorizeIdentityGrant({ type: "api" });
-    expect(result.ok).toBe(false);
-    expect((result as { code: number }).code).toBe(403);
-  });
-
-  test("still allows a human super admin", () => {
-    expect(
-      authorizeIdentityGrant({ super_admin: true, type: "user" }),
-    ).toEqual({ ok: true });
-  });
-});
-
-describe("parseIdentityGrantBody", () => {
-  test.each([
-    [{ grant_viewer_identity: true }, true],
-    [{ grant_viewer_identity: false }, false],
-  ])("accepts a real boolean %j", (body, expected) => {
-    expect(parseIdentityGrantBody(body)).toEqual({ ok: true, value: expected });
-  });
-
-  // Review Focus 4: a coerced string would silently enable the capability.
-  test.each([
-    [{ grant_viewer_identity: "true" }],
-    [{ grant_viewer_identity: "false" }],
-    [{ grant_viewer_identity: 1 }],
-    [{ grant_viewer_identity: null }],
-    [{}],
-    [null],
-    [undefined],
-  ])("rejects %j", (body) => {
-    const result = parseIdentityGrantBody(body);
-    expect(result.ok).toBe(false);
-    expect((result as { message: string }).message).toMatch(/must be a boolean/i);
-  });
-});
+// describe("authorizeIdentityGrant") and describe("parseIdentityGrantBody")
+// stood here. Both helpers were removed along with the PATCH route they
+// served — `auth_mode: "regular"` is now the capability on its own, so there
+// is no grant to authorize or parse. The retained rejection of the field at
+// create time is still covered by the
+// `validateCreateInput — grant_viewer_identity` block above.
