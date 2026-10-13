@@ -27,6 +27,8 @@ type ItemsCache = {
 const SUPPLEMENT_MIN_TOKEN_LENGTH = 4;
 /** Most items the supplementary pass may add on top of the primary result. */
 const SUPPLEMENT_BUDGET = 15;
+/** Budget used when suppress_duplicate_passages is on; safe only with suppression active. */
+export const SUPPLEMENT_BUDGET_WIDE = 50;
 
 // ---------------------------------------------------------------------------
 // Cache
@@ -153,6 +155,7 @@ export async function fuzzyPrefilter({
   cutoff = DEFAULT_PREFILTER_CUTOFF,
   limit,
   supplementSeparatorVariants = false,
+  supplementBudget = SUPPLEMENT_BUDGET,
 }: {
   cacheKey: string;
   relevantKeywords: string[];
@@ -171,6 +174,8 @@ export async function fuzzyPrefilter({
    * default rather than silently widening every prefilter in the pipeline.
    */
   supplementSeparatorVariants?: boolean;
+  /** Max items the separator supplement may add. Defaults to the narrow budget. */
+  supplementBudget?: number;
 }): Promise<PrefilteredResult[]> {
   const cache = await ensureItemsCache({ cacheKey, context, fields, normalize });
 
@@ -348,7 +353,7 @@ export async function fuzzyPrefilter({
 
     const supplement: PrefilteredResult[] = [];
     for (const { item } of candidates) {
-      if (supplement.length >= SUPPLEMENT_BUDGET) break;
+      if (supplement.length >= supplementBudget) break;
       if (!item.id || seen.has(item.id)) continue;
       seen.add(item.id);
       supplement.push({
@@ -403,12 +408,15 @@ export async function resolveIdentifierPins({
   contextsById,
   kbKindById,
   model,
+  suppressDuplicatePassages = false,
 }: {
   question: string;
   identifierSets: IdentifierSet[];
   contextsById: Map<string, any>;
   kbKindById: Map<string, KbKind>;
   model: any;
+  /** Widens the separator-insensitive supplement budget (see SUPPLEMENT_BUDGET_WIDE). */
+  suppressDuplicatePassages?: boolean;
 }): Promise<{
   pinsByContext: Map<string, Set<string>>;
   exactPinsByContext: Map<string, Set<string>>;
@@ -456,6 +464,9 @@ export async function resolveIdentifierPins({
                     // Identifier pins are a hard id-whitelist over filenames,
                     // which is exactly the case the supplement exists for.
                     supplementSeparatorVariants: true,
+                    supplementBudget: suppressDuplicatePassages
+                      ? SUPPLEMENT_BUDGET_WIDE
+                      : undefined,
                   });
             if (!matched.length) return;
             const target = pinsByContext.get(ctxId) ?? new Set<string>();

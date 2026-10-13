@@ -409,6 +409,7 @@ export function createAgenticRetrievalTool(opts: {
           contextsById,
           kbKindById,
           model: utilityModel,
+          suppressDuplicatePassages: cfg.suppressDuplicatePassages,
         });
 
       const [memResult, routResult, parallelPins] = await Promise.all([
