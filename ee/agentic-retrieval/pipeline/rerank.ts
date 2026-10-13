@@ -63,8 +63,14 @@ export async function rerankResults(opts: {
   state: RerankState;
   reranker?: ResolvedReranker;
   tuning: { topK: number; pinBoost: number; identifierBoost: number; pageWindow: number };
+  /**
+   * Optional near-duplicate lookup. Receives the sorted candidate slice and returns unordered
+   * id pairs whose content is near-identical. Suppression happens DURING top-K selection so a
+   * dropped candidate's slot is backfilled. Absent or failing = no suppression.
+   */
+  findNearDuplicates?: (candidates: ChunkWithScore[]) => Promise<Array<[string, string]>>;
 }): Promise<RerankResult> {
-  const { chunks, query, state, reranker, tuning } = opts;
+  const { chunks, query, state, reranker, tuning, findNearDuplicates } = opts;
 
   // Empty input fast path
   if (chunks.length === 0) {
@@ -151,16 +157,59 @@ export async function rerankResults(opts: {
 
   // Top-K selection with pinned-item force-inclusion
   const { topK } = tuning;
+
+  // Ask only about the window selection can reach: topK plus the backfill reserve.
+  const candidateWindow = sorted.slice(0, Math.max(topK * 3, topK + 20));
+  let duplicateOf = new Map<string, string[]>();
+  if (findNearDuplicates && candidateWindow.length > 1) {
+    try {
+      const pairs = await findNearDuplicates(candidateWindow);
+      for (const [a, b] of pairs) {
+        if (!a || !b) continue;
+        duplicateOf.set(a, [...(duplicateOf.get(a) ?? []), b]);
+        duplicateOf.set(b, [...(duplicateOf.get(b) ?? []), a]);
+      }
+    } catch (err) {
+      console.warn("[EXULU pipeline] near-duplicate lookup failed — selecting without suppression:", err);
+      duplicateOf = new Map();
+    }
+  }
+
+  const selectDistinct = (pool: ChunkWithScore[], n: number): ChunkWithScore[] => {
+    if (duplicateOf.size === 0) return pool.slice(0, n);
+    const picked: ChunkWithScore[] = [];
+    const pickedIds = new Set<string>();
+    const deferred: ChunkWithScore[] = [];
+    for (const c of pool) {
+      if (picked.length >= n) break;
+      const id = c.chunk_id;
+      // A chunk without an id can never be matched by a pair; always keep it.
+      if (id && (duplicateOf.get(id) ?? []).some((other) => pickedIds.has(other))) {
+        deferred.push(c);
+        continue;
+      }
+      picked.push(c);
+      if (id) pickedIds.add(id);
+    }
+    // Never return fewer than asked: refill from what was deferred, best score first.
+    for (const c of deferred) {
+      if (picked.length >= n) break;
+      picked.push(c);
+    }
+    return picked;
+  };
+
   let limited_results: ChunkWithScore[] = (() => {
-    const top = sorted.slice(0, topK);
+    const top = selectDistinct(sorted, topK);
     if (pinnedGroups.length === 0) return top;
     const byId = new Map<string, ChunkWithScore>();
     for (const r of [...pinnedGroups, ...top]) {
       if (r.chunk_id && !byId.has(r.chunk_id)) byId.set(r.chunk_id, r);
     }
-    return Array.from(byId.values())
-      .sort((a, b) => (b.rerank_score || 0) - (a.rerank_score || 0))
-      .slice(0, Math.max(topK, pinnedGroups.length + topK));
+    return selectDistinct(
+      Array.from(byId.values()).sort((a, b) => (b.rerank_score || 0) - (a.rerank_score || 0)),
+      Math.max(topK, pinnedGroups.length + topK),
+    );
   })();
 
   // Page filter — applies to all paths; scoped to userPinnedItemIds when non-empty
