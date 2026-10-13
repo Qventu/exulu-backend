@@ -179,6 +179,17 @@ export function createAgenticRetrievalTool(opts: {
         default: true,
       },
       {
+        name: "suppress_duplicate_passages",
+        description:
+          "Keep only the best-scoring copy when several retrieved passages carry near-identical content " +
+          "(the same page re-uploaded under different filenames, a document filed in two folders). " +
+          "Nothing is merged or rewritten — redundant copies are dropped from the result so the places " +
+          "freed up can carry different information. Also widens the identifier-pin budget, which is " +
+          "only safe together with this. Leave empty to keep it on; set to false to restore the previous behaviour.",
+        type: "boolean",
+        default: true,
+      },
+      {
         name: "knowledge_bases",
         description: "Per-knowledge-base profiles: enabled, kind (documents | conversations | records), instructions, and per-KB overrides (limit, expand, multiQuery, hyde). JSON object keyed by context id.",
         type: "json",

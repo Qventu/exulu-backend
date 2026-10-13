@@ -111,6 +111,16 @@ describe("show_sources_to_external_users option", () => {
   });
 });
 
+describe("suppress_duplicate_passages", () => {
+  it("defaults to true when absent or empty, false only when explicitly false", () => {
+    expect(parsePipelineConfig({}).suppressDuplicatePassages).toBe(true);
+    expect(parsePipelineConfig({ suppress_duplicate_passages: "" }).suppressDuplicatePassages).toBe(true);
+    expect(parsePipelineConfig({ suppress_duplicate_passages: "false" }).suppressDuplicatePassages).toBe(false);
+    expect(parsePipelineConfig({ suppress_duplicate_passages: false }).suppressDuplicatePassages).toBe(false);
+    expect(parsePipelineConfig({ suppress_duplicate_passages: "true" }).suppressDuplicatePassages).toBe(true);
+  });
+});
+
 describe("tuning.engine — the per-agent switch between the v1 flow and the parallel v2 flow", () => {
   it("defaults to v1 so existing agents keep today's behaviour", () => {
     expect(parsePipelineConfig({ tuning: '{"topK": 8}' }).tuning.engine).toBe("v1");

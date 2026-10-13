@@ -38,7 +38,7 @@ describe("createAgenticRetrievalTool", () => {
     expect(names).toEqual([
       "instructions", "knowledge_bases", "logging", "managed_context", "memory",
       "max_steps", "project_search", "require_preselected_contexts", "reranker",
-      "routing", "show_sources_to_external_users", "tuning", "utility_model", "vocabulary",
+      "routing", "show_sources_to_external_users", "suppress_duplicate_passages", "tuning", "utility_model", "vocabulary",
     ].sort());
     expect(tool.config.filter((c) => c.type === "json").map((c) => c.name).sort())
       .toEqual(["knowledge_bases", "memory", "routing", "tuning", "vocabulary"].sort());

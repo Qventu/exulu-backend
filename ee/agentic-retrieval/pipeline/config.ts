@@ -88,6 +88,8 @@ export type PipelineConfig = {
   projectSearch: boolean;
   /** Show source references (item names, IDs, chunk info) to external users and guests. When false, sources are hidden. Default true. */
   showSourcesToExternalUsers: boolean;
+  /** Widen the identifier-pin budget and drop near-identical passages during top-K selection. Default true. */
+  suppressDuplicatePassages: boolean;
   utilityModel: string;
   knowledgeBases: Record<string, KbProfile>;
   routing: z.infer<typeof routingSchema>;
@@ -159,6 +161,10 @@ export function parsePipelineConfig(raw?: Record<string, unknown>): PipelineConf
       r["show_sources_to_external_users"] === undefined || r["show_sources_to_external_users"] === ""
         ? true
         : boolVal(r["show_sources_to_external_users"]),
+    suppressDuplicatePassages:
+      r["suppress_duplicate_passages"] === undefined || r["suppress_duplicate_passages"] === ""
+        ? true
+        : boolVal(r["suppress_duplicate_passages"]),
     utilityModel: strVal(r["utility_model"], ""),
     knowledgeBases: jsonVal("knowledge_bases", knowledgeBasesSchema, r["knowledge_bases"]),
     routing: jsonVal("routing", routingSchema, r["routing"]),
