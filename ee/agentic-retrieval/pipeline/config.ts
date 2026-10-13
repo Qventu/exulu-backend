@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ClaimCheckOptions } from "@EE/claim-check/types";
+import { CLAIM_CHECK_DEFAULTS } from "@EE/claim-check/types";
 
 export const KB_KINDS = ["documents", "conversations", "records"] as const;
 export type KbKind = (typeof KB_KINDS)[number];
@@ -79,21 +79,24 @@ const claimCheckSchema = z.object({
   enabled: z.boolean().default(false),
   /** Empty = fall back to the agent's utility model, then the agent's model. */
   model: z.string().default(""),
-  fidelity: z.enum(["fast", "paper"]).default("fast"),
-  completions: z.number().int().min(1).max(3).default(1),
-  reRetrieve: z.boolean().default(true),
+  fidelity: z.enum(["fast", "paper"]).default(CLAIM_CHECK_DEFAULTS.fidelity),
+  completions: z.number().int().min(1).max(3).default(CLAIM_CHECK_DEFAULTS.completions),
+  reRetrieve: z.boolean().default(CLAIM_CHECK_DEFAULTS.reRetrieve),
   thresholds: z
-    .object({ warn: z.number().min(0).max(1).default(0.1), alert: z.number().min(0).max(1).default(0.3) })
+    .object({
+      warn: z.number().min(0).max(1).default(CLAIM_CHECK_DEFAULTS.thresholds.warn),
+      alert: z.number().min(0).max(1).default(CLAIM_CHECK_DEFAULTS.thresholds.alert),
+    })
     // zod's .default() returns the value as-is (inner defaults are not applied), so spell it out.
-    .default({ warn: 0.1, alert: 0.3 }),
+    .default(CLAIM_CHECK_DEFAULTS.thresholds),
   showToExternalUsers: z.boolean().default(false),
   caps: z
     .object({
-      maxSentences: z.number().int().positive().default(120),
-      maxClaims: z.number().int().positive().default(200),
-      maxReRetrievals: z.number().int().min(0).default(10),
+      maxSentences: z.number().int().positive().default(CLAIM_CHECK_DEFAULTS.caps.maxSentences),
+      maxClaims: z.number().int().positive().default(CLAIM_CHECK_DEFAULTS.caps.maxClaims),
+      maxReRetrievals: z.number().int().min(0).default(CLAIM_CHECK_DEFAULTS.caps.maxReRetrievals),
     })
-    .default({ maxSentences: 120, maxClaims: 200, maxReRetrievals: 10 }),
+    .default(CLAIM_CHECK_DEFAULTS.caps),
 });
 
 export type KbProfile = z.infer<typeof kbProfileSchema>;
