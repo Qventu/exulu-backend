@@ -22,12 +22,31 @@ const LOCALE_BY_LANGUAGE: Record<string, string> = {
  * between the two abbreviated words ("Die Ursache ist z. " | "B. ein ...")
  * rather than after the pair, so the two-word forms "z. b." / "z.b." never
  * match as a suffix and the bare form is what actually needs gluing here.
+ * A bare single-letter entry is only safe because the match below requires a
+ * word boundary before it — otherwise "z." also matches ordinary nouns like
+ * "Platz." (and "no." would match "Casino.", "Domino.", "Piano."), gluing
+ * unrelated sentences together while leaving offsets looking exact.
  */
 const ABBREVIATIONS = [
   "z. b.", "z.b.", "z.", "u. a.", "u.a.", "d. h.", "d.h.", "bzw.", "ggf.", "ca.",
   "nr.", "abs.", "art.", "abb.", "tab.", "evtl.", "inkl.", "exkl.", "max.",
   "min.", "vgl.", "sog.", "bspw.", "etc.", "e.g.", "i.e.", "fig.", "no.",
 ];
+
+/**
+ * One boundary-guarded regex per abbreviation, built once at module load:
+ * matches only when the abbreviation is preceded by start-of-text or
+ * whitespace, so "z." glues "… ist z." but not "… am Platz.", and "no."
+ * glues "… ist no." but not "… im Casino.".
+ */
+const ABBREVIATION_PATTERNS = ABBREVIATIONS.map(
+  (a) => new RegExp(`(?:^|\\s)${a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i"),
+);
+
+function endsWithAbbreviation(text: string): boolean {
+  const trimmed = text.trimEnd();
+  return ABBREVIATION_PATTERNS.some((re) => re.test(trimmed));
+}
 
 type Block = { start: number; end: number; headingPath: string[] };
 
@@ -120,10 +139,7 @@ export function splitIntoSentences(answer: string, locale?: string): Sentence[] 
 
     for (const seg of segmenter.segment(raw)) {
       const previous = pieces[pieces.length - 1];
-      const previousEndsWithAbbreviation =
-        previous !== undefined &&
-        ABBREVIATIONS.some((a) => previous.text.trimEnd().toLowerCase().endsWith(a));
-      if (previous && previousEndsWithAbbreviation) {
+      if (previous !== undefined && endsWithAbbreviation(previous.text)) {
         previous.text += seg.segment;
       } else {
         pieces.push({ text: seg.segment, start: block.start + seg.index });

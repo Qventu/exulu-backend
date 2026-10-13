@@ -25,6 +25,17 @@ describe("splitIntoSentences", () => {
     ]);
   });
 
+  // Regression: a bare single-letter abbreviation entry ("z.") must not glue
+  // on ordinary nouns ending in the same letter plus a period (Platz, Satz,
+  // Netz, ...) while still gluing real abbreviations.
+  it("does not over-glue ordinary sentences ending in a noun that shares an abbreviation's last letter", () => {
+    const answer = "Der Aufzug steht am Platz. Er wird repariert.";
+    expect(splitIntoSentences(answer, "de").map((s) => s.text)).toEqual([
+      "Der Aufzug steht am Platz.",
+      "Er wird repariert.",
+    ]);
+  });
+
   // Review Focus 1
   it("skips heading lines and fenced code blocks, recording the heading path", () => {
     const answer = [
