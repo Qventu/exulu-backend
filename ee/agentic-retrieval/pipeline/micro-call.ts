@@ -50,7 +50,7 @@ export type MicroCallArgs<OUTPUT> = {
 
 export async function microCall<OUTPUT = undefined>(
   args: MicroCallArgs<OUTPUT>,
-): Promise<{ output: OUTPUT; text: string }> {
+): Promise<{ output: OUTPUT; text: string; usage: { inputTokens: number; outputTokens: number } }> {
   const {
     model,
     system,
@@ -82,9 +82,16 @@ export async function microCall<OUTPUT = undefined>(
       // Read .output inside the retried closure — the SDK throws
       // NoOutputGeneratedError from this getter, so reading it later would
       // escape both the retry classification and the caller's per-call catch.
+      // Token usage rides along so callers that fan out many micro-calls
+      // (claim check) can report what a check cost without re-deriving it.
+      const usage = (result as { usage?: { inputTokens?: number; outputTokens?: number } }).usage;
       return {
         output: (schema ? (result as { output: OUTPUT }).output : undefined) as OUTPUT,
         text: result.text,
+        usage: {
+          inputTokens: usage?.inputTokens ?? 0,
+          outputTokens: usage?.outputTokens ?? 0,
+        },
       };
     },
     maxAttempts,

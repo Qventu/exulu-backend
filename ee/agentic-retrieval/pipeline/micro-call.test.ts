@@ -109,4 +109,34 @@ describe("microCall", () => {
     expect(output).toEqual({ ok: true });
     expect(generateText).toHaveBeenCalledTimes(2);
   });
+
+  it("returns provider token usage, defaulting to zeros when absent", async () => {
+    (generateText as jest.Mock).mockResolvedValue({
+      output: { ok: true },
+      text: "{}",
+      usage: { inputTokens: 1234, outputTokens: 56 },
+    });
+    const withUsage = await microCall({ model: {} as any, prompt: "p", schema });
+    expect(withUsage.usage).toEqual({ inputTokens: 1234, outputTokens: 56 });
+
+    (generateText as jest.Mock).mockResolvedValue({ output: { ok: true }, text: "{}" });
+    const withoutUsage = await microCall({ model: {} as any, prompt: "p", schema });
+    expect(withoutUsage.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+  });
+
+  it("retries a LiteLLM tag-configuration error, which is a 429 aftershock and not a config fault", async () => {
+    (generateText as jest.Mock)
+      .mockRejectedValueOnce(new Error("Not allowed to access model due to tags configuration"))
+      .mockResolvedValueOnce({ output: { ok: true }, text: "{}", usage: { inputTokens: 5, outputTokens: 1 } });
+
+    const { output } = await microCall({
+      model: {} as any,
+      prompt: "p",
+      schema,
+      retryBaseDelayMs: 1,
+    });
+
+    expect(output).toEqual({ ok: true });
+    expect((generateText as jest.Mock).mock.calls.length).toBe(2);
+  });
 });
