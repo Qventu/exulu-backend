@@ -36,12 +36,12 @@ describe("createAgenticRetrievalTool", () => {
     const tool = createAgenticRetrievalTool({ contexts: [ctx("docs")], model: {} as any })!;
     const names = tool.config.map((c) => c.name).sort();
     expect(names).toEqual([
-      "instructions", "knowledge_bases", "logging", "managed_context", "memory",
+      "claim_check", "instructions", "knowledge_bases", "logging", "managed_context", "memory",
       "max_steps", "project_search", "require_preselected_contexts", "reranker",
       "routing", "show_sources_to_external_users", "suppress_duplicate_passages", "tuning", "utility_model", "vocabulary",
     ].sort());
     expect(tool.config.filter((c) => c.type === "json").map((c) => c.name).sort())
-      .toEqual(["knowledge_bases", "memory", "routing", "tuning", "vocabulary"].sort());
+      .toEqual(["claim_check", "knowledge_bases", "memory", "routing", "tuning", "vocabulary"].sort());
     expect(tool.id).toBe("agentic_context_search");
   });
 

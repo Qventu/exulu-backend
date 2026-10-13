@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ClaimCheckOptions } from "@EE/claim-check/types";
 
 export const KB_KINDS = ["documents", "conversations", "records"] as const;
 export type KbKind = (typeof KB_KINDS)[number];
@@ -74,7 +75,29 @@ const tuningSchema = z.object({
     .default({ mergedMemoryCall: true, mergedRoutingCall: true, parallelPins: true }),
 });
 
+const claimCheckSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** Empty = fall back to the agent's utility model, then the agent's model. */
+  model: z.string().default(""),
+  fidelity: z.enum(["fast", "paper"]).default("fast"),
+  completions: z.number().int().min(1).max(3).default(1),
+  reRetrieve: z.boolean().default(true),
+  thresholds: z
+    .object({ warn: z.number().min(0).max(1).default(0.1), alert: z.number().min(0).max(1).default(0.3) })
+    // zod's .default() returns the value as-is (inner defaults are not applied), so spell it out.
+    .default({ warn: 0.1, alert: 0.3 }),
+  showToExternalUsers: z.boolean().default(false),
+  caps: z
+    .object({
+      maxSentences: z.number().int().positive().default(120),
+      maxClaims: z.number().int().positive().default(200),
+      maxReRetrievals: z.number().int().min(0).default(10),
+    })
+    .default({ maxSentences: 120, maxClaims: 200, maxReRetrievals: 10 }),
+});
+
 export type KbProfile = z.infer<typeof kbProfileSchema>;
+export type ClaimCheckConfig = z.infer<typeof claimCheckSchema>;
 export type RoutingRule = z.infer<typeof routingRuleSchema>;
 export type IdentifierSet = z.infer<typeof identifierSetSchema>;
 
@@ -96,6 +119,8 @@ export type PipelineConfig = {
   vocabulary: z.infer<typeof vocabularySchema>;
   memory: z.infer<typeof memorySchema>;
   tuning: z.infer<typeof tuningSchema>;
+  /** Post-answer claim verification (spec 2026-10-13). Off unless an admin enables it. */
+  claimCheck: ClaimCheckConfig;
 };
 
 const boolVal = (v: unknown): boolean => v === true || v === "true" || v === 1;
@@ -141,6 +166,7 @@ function defaultFor(name: string): unknown {
     case "vocabulary": return { glossary: [], identifiers: [], rewrites: [], styleHint: "" };
     case "memory": return {};
     case "tuning": return {};
+    case "claim_check": return {};
     default: return {};
   }
 }
@@ -171,6 +197,7 @@ export function parsePipelineConfig(raw?: Record<string, unknown>): PipelineConf
     vocabulary: jsonVal("vocabulary", vocabularySchema, r["vocabulary"]),
     memory: jsonVal("memory", memorySchema, r["memory"]),
     tuning: jsonVal("tuning", tuningSchema, r["tuning"]),
+    claimCheck: jsonVal("claim_check", claimCheckSchema, r["claim_check"]),
   };
 }
 
