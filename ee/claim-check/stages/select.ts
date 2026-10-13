@@ -16,11 +16,14 @@ const schema = z.object({
   ),
 });
 
-/** The excerpt shown to the model: the batch's sentences plus their windows, in answer order. */
-export function excerptFor(windows: SentenceWindow[]): string {
+/** The excerpt shown to the model: the batch's sentences plus their windows, in answer order.
+ *  When sentenceTexts is provided, uses those rewrites instead of original text. */
+export function excerptFor(windows: SentenceWindow[], sentenceTexts?: Map<number, string>): string {
   const byIndex = new Map<number, string>();
   for (const w of windows) {
-    for (const s of [...w.preceding, w.sentence, ...w.following]) byIndex.set(s.index, s.text);
+    for (const s of [...w.preceding, w.sentence, ...w.following]) {
+      byIndex.set(s.index, sentenceTexts?.get(s.index) ?? s.text);
+    }
   }
   return [...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, text]) => text).join(" ");
 }
