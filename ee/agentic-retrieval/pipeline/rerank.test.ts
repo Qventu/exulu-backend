@@ -183,4 +183,25 @@ describe("duplicate suppression", () => {
     const without = await rerankResults(base);
     expect(without.limited_results.map((c: any) => c.chunk_id)).toEqual(["f0", "f1", "f2"]);
   });
+
+  it("suppresses duplicates on the page-filter path too (three copies of page 127)", async () => {
+    // The motivating case from the design spec: an explicit page lookup where the page
+    // exists three times under different filenames. The page filter used to overwrite
+    // limited_results with a plain slice, which bypassed suppression entirely.
+    const chunks = Array.from({ length: 5 }, (_, i) =>
+      chunk("p" + i, "I" + i, 1, { chunk_metadata: { page: 127 } }),
+    );
+    const r = await rerankResults({
+      chunks, query: "q", state: state({ userRequestedPage: 127 }), reranker,
+      tuning: { ...tuning, topK: 3 },
+      findNearDuplicates: async () => [["p0", "p1"], ["p0", "p2"], ["p1", "p2"]],
+    });
+    const ids = r.limited_results.map((c: any) => c.chunk_id);
+    expect(ids).toHaveLength(3);
+    expect(ids).toContain("p0");      // best-scoring copy survives
+    expect(ids).not.toContain("p1");  // its near-duplicates lose their slots
+    expect(ids).not.toContain("p2");
+    expect(ids).toContain("p3");      // freed slots carry different content
+    expect(ids).toContain("p4");
+  });
 });

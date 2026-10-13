@@ -220,7 +220,13 @@ export async function rerankResults(opts: {
       const p = (r.chunk_metadata as { page?: unknown } | undefined)?.page;
       return typeof p === 'number' && Math.abs(p - state.userRequestedPage!) <= tuning.pageWindow;
     });
-    if (pageMatched.length > 0) limited_results = pageMatched.slice(0, topK);
+    // Suppression applies on this path too — an explicit page lookup is the motivating case
+    // for it (several copies of the same page under different filenames). Pair coverage here
+    // is partial by design: the pair window was computed over the head of `sorted`, so a page
+    // match below it contributes no pairs. Partial suppression beats none, and `selectDistinct`
+    // refills from what it deferred, so this can never return fewer results than the plain
+    // slice did. With no pairs found it IS the plain slice.
+    if (pageMatched.length > 0) limited_results = selectDistinct(pageMatched, topK);
   }
 
   return { limited_results, sorted_reranked_results: sorted, rerank_score_max_genuine };

@@ -392,3 +392,45 @@ describe("engine v2 — identifier pins run alongside memory and routing", () =>
     expect(runMemoryPhase.mock.calls[0][0].mergedCall).toBeFalsy();
   });
 });
+
+describe("EXULU_DISABLE_DUPLICATE_SUPPRESSION (benchmark escape hatch)", () => {
+  const orig = process.env.EXULU_DISABLE_DUPLICATE_SUPPRESSION;
+  afterEach(() => {
+    if (orig === undefined) delete process.env.EXULU_DISABLE_DUPLICATE_SUPPRESSION;
+    else process.env.EXULU_DISABLE_DUPLICATE_SUPPRESSION = orig;
+  });
+
+  const runOnce = async () => {
+    const { rerankResults } = jest.requireMock("./rerank");
+    const { resolveIdentifierPins } = jest.requireMock("./prefilter");
+    rerankResults.mockClear();
+    resolveIdentifierPins.mockClear();
+    await drain(makeTool({})(inputs));
+    return { rerankResults, resolveIdentifierPins };
+  };
+
+  it("is absent from the tool's config surface (env-only, not a product field)", () => {
+    const tool = createAgenticRetrievalTool({ contexts: [ctx("docs")], model: {} as any })!;
+    const names = tool.config.map((c) => c.name);
+    expect(names).not.toContain("EXULU_DISABLE_DUPLICATE_SUPPRESSION");
+    expect(names.filter((n) => /duplicate/i.test(n))).toEqual(["suppress_duplicate_passages"]);
+  });
+
+  it("passes a near-duplicate finder when unset or empty", async () => {
+    delete process.env.EXULU_DISABLE_DUPLICATE_SUPPRESSION;
+    expect(typeof (await runOnce()).rerankResults.mock.calls[0][0].findNearDuplicates).toBe("function");
+    process.env.EXULU_DISABLE_DUPLICATE_SUPPRESSION = "";
+    expect(typeof (await runOnce()).rerankResults.mock.calls[0][0].findNearDuplicates).toBe("function");
+  });
+
+  it("drops suppression but keeps the widened pin budget, and says so loudly", async () => {
+    process.env.EXULU_DISABLE_DUPLICATE_SUPPRESSION = "1";
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const { rerankResults, resolveIdentifierPins } = await runOnce();
+    expect(rerankResults.mock.calls[0][0].findNearDuplicates).toBeUndefined();
+    // This is the 'pins-only' state: the widened identifier-pin budget is still requested.
+    expect(resolveIdentifierPins.mock.calls[0][0].suppressDuplicatePassages).toBe(true);
+    expect(warn.mock.calls.flat().join(" ")).toContain("EXULU_DISABLE_DUPLICATE_SUPPRESSION");
+    warn.mockRestore();
+  });
+});
