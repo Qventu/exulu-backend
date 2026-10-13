@@ -1,3 +1,4 @@
+import { preprocessQuery } from "@SRC/utils/query-preprocessing";
 import { indexSources, selectEvidence } from "./evidence";
 
 const SOURCES = [
@@ -68,17 +69,29 @@ describe("selectEvidence", () => {
     expect(picked.every((p) => p.score === 0)).toBe(true);
   });
 
-  it("pools the terms of several claims when they share a sentence neighbourhood", () => {
+  it("pools the terms of several claims, surfacing a passage one claim alone would not rank", () => {
     const sources = [
-      { id: "s1", name: "a.txt", content: "Die Tür wurde getauscht." },
-      { id: "s2", name: "b.txt", content: "Die Spannung beträgt 230 Volt." },
-      { id: "s3", name: "c.txt", content: "Unverwandte Inhalte über Wetter und Jahreszeiten." },
+      { id: "p1", content: "Steuerung meldet Fernabschaltung im Schaltschrank." },
+      { id: "p2", content: "Kabinentuer wurde getauscht und Dienstag geprueft." },
+      { id: "p3", content: "Steuerung ist montiert." },
     ];
     const passages = indexSources(sources);
-    // With 3 passages and topK=2, only the two matching sources should be returned
-    const picked = selectEvidence(["Die Tür wurde getauscht", "Die Spannung beträgt 230 Volt"], passages, 2);
-    expect(picked).toHaveLength(2);
-    expect(new Set(picked.map((p) => p.sourceId))).toEqual(new Set(["s1", "s2"]));
+    const claimA = "Steuerung meldet Fernabschaltung";
+    const claimB = "Kabinentuer wurde getauscht Dienstag";
+
+    // Claim A alone: p3 shares "Steuerung" and so outranks p2, which shares nothing.
+    const aOnly = selectEvidence([claimA], passages, 2).map((p) => p.sourceId);
+    expect(aOnly).toContain("p1");
+    expect(aOnly).toContain("p3");
+    expect(aOnly).not.toContain("p2");
+
+    // Both claims pooled: p2 now carries three of claim B's rare terms and must
+    // displace p3, which carries only one of claim A's. This assertion is the
+    // discriminator — it fails if the second claim's tokens are not pooled in.
+    const pooled = selectEvidence([claimA, claimB], passages, 2).map((p) => p.sourceId);
+    expect(pooled).toContain("p1");
+    expect(pooled).toContain("p2");
+    expect(pooled).not.toContain("p3");
   });
 
   it("zeroes ubiquitous terms and avoids their ranking inversion", () => {
@@ -108,6 +121,16 @@ describe("selectEvidence", () => {
       expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining("[EXULU] Query preprocessing"));
     } finally {
       logSpy.mockRestore();
+    }
+  });
+
+  it("still logs when silent is not requested", () => {
+    const spy = jest.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      preprocessQuery("Die Steuerung meldet eine Fernabschaltung.", { enableStemming: false });
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
     }
   });
 });
