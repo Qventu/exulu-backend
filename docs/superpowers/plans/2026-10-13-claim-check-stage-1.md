@@ -23,7 +23,7 @@
 - The request's `model` resolves **without** `rbacBypass`. Unlicensed deployments get **404**.
 - Config parse failures never throw into retrieval: reuse `jsonVal` in `pipeline/config.ts`, which warns and falls back to defaults.
 - Prompts are written in English; content may be any language. Language detection comes from `preprocessQuery(text).language` (ISO 639-3, e.g. `deu`).
-- `npm run type-check` must report the **same** error count and the same error identities as the pre-task baseline. Capture the baseline in Task 1 and compare after every task; a drop is as suspicious as a rise.
+- `npm run type-check` must report the **same** error count and the same error identities as the pre-task baseline (8 errors across `auth/flow.ts`, `auth/validate.ts`, `openai-transformer.ts` and `convert-exulu-tools-to-ai-sdk-tools.ts` as of 2026-10-13). Capture and compare the FULL error list — never `tail`, which silently shrinks the baseline and would hide a regression. A drop is as suspicious as a rise.
 
 ## Review Focus
 
@@ -53,7 +53,8 @@ Five input classes the spec implies but whose tests are easy to omit. Each line'
 ```bash
 cd /Users/daniel.claessen/Desktop/Projects/exulu/backend
 git branch --show-current   # must print feature/claim-check
-npm run type-check 2>&1 | tail -5 > /tmp/typecheck-baseline.txt
+npm run type-check 2>&1 | grep -E "error TS" | sort > /tmp/typecheck-baseline.txt
+wc -l < /tmp/typecheck-baseline.txt   # 8 on this branch as of 2026-10-13
 cat /tmp/typecheck-baseline.txt
 ```
 
@@ -409,7 +410,8 @@ In `ee/agentic-retrieval/pipeline/index.ts`, append to the `config` array after 
 
 Run: `npm test -- ee/agentic-retrieval/pipeline/config.test.ts`
 Expected: PASS.
-Run: `npm run type-check 2>&1 | tail -5` and compare with `/tmp/typecheck-baseline.txt` — identical.
+Run: `npm run type-check 2>&1 | grep -E "error TS" | sort | diff - /tmp/typecheck-baseline.txt`
+Expected: no output — the pre-existing error set is unchanged in both count and identity.
 
 - [ ] **Step 6: Commit**
 

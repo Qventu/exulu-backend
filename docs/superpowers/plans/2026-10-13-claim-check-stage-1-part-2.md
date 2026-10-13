@@ -2049,7 +2049,8 @@ Expected: PASS, all ten tests. Then run the whole module: `npm test -- ee/claim-
 
 - [ ] **Step 9: Compare the typecheck against the baseline**
 
-Run: `npm run type-check 2>&1 | tail -5` and diff against `/tmp/typecheck-baseline.txt` — identical count and identities.
+Run: `npm run type-check 2>&1 | grep -E "error TS" | sort | diff - /tmp/typecheck-baseline.txt`
+Expected: no output — the pre-existing error set is unchanged in both count and identity.
 
 - [ ] **Step 10: Commit**
 
@@ -2914,7 +2915,8 @@ import { makeSecondChance } from "@EE/claim-check/second-chance";
 
 Run: `npm test -- ee/claim-check`
 Expected: PASS, every test in the module.
-Run: `npm run type-check 2>&1 | tail -5` and diff against `/tmp/typecheck-baseline.txt` — identical.
+Run: `npm run type-check 2>&1 | grep -E "error TS" | sort | diff - /tmp/typecheck-baseline.txt`
+Expected: no output — the pre-existing error set is unchanged in both count and identity.
 
 - [ ] **Step 7: Commit**
 
