@@ -5,6 +5,7 @@ jest.mock("@EE/agentic-retrieval/pipeline/micro-call", () => ({
 import { microCall } from "@EE/agentic-retrieval/pipeline/micro-call";
 import { splitIntoSentences, buildWindows } from "../split";
 import { runSelectAndDisambiguate } from "./select-disambiguate";
+import { CLAIM_CHECK_MAX_OUTPUT_TOKENS } from "../types";
 
 const ANSWER =
   "Die FST-2XT ist eine Steuerung. Das zeigt, wie wichtig gute Technik ist. Sie wurde dort getauscht.";
@@ -61,5 +62,37 @@ describe("runSelectAndDisambiguate", () => {
     const { selection, disambiguation } = await runSelectAndDisambiguate({ windows: windows(), question: "q", model: {} as any });
     expect(selection.every((s) => s.verifiable === false)).toBe(true);
     expect(disambiguation.every((d) => d.resolvable === false)).toBe(true);
+  });
+
+  it("passes the raised output cap and the requested temperature", async () => {
+    (microCall as jest.Mock).mockResolvedValue({
+      output: { sentences: [] },
+      text: "",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    await runSelectAndDisambiguate({
+      windows: windows(),
+      question: "q",
+      model: {} as any,
+      temperature: 0.2,
+    });
+    const args = (microCall as jest.Mock).mock.calls[0][0];
+    expect(args.maxOutputTokens).toBe(CLAIM_CHECK_MAX_OUTPUT_TOKENS);
+    expect(args.temperature).toBe(0.2);
+  });
+
+  it("uses temperature 0 by default", async () => {
+    (microCall as jest.Mock).mockResolvedValue({
+      output: { sentences: [] },
+      text: "",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    await runSelectAndDisambiguate({
+      windows: windows(),
+      question: "q",
+      model: {} as any,
+    });
+    const args = (microCall as jest.Mock).mock.calls[0][0];
+    expect(args.temperature).toBe(0);
   });
 });
