@@ -14,6 +14,7 @@ import { runMemoryPhase } from "./memory";
 import { resolveIdentifierPins } from "./prefilter";
 import { searchContexts } from "./search";
 import { rerankResults } from "./rerank";
+import { makeNearDuplicateFinder } from "./near-duplicates";
 import type { AgenticRetrievalOutput, RerankState, ChunkWithScore } from "./types";
 import { withTiming } from "./timing";
 import { needsPinRerun } from "./pin-rerun";
@@ -609,6 +610,13 @@ export function createAgenticRetrievalTool(opts: {
       };
 
       // ── Phase 3: rerank main results ──────────────────────────────────────
+      // Built once per run and shared by both rerank call sites below: each knowledge
+      // base stores its chunks in its own table, so the lookup is scoped to the known
+      // context ids (excludes the synthetic "memory" tag, which has no own table).
+      const findNearDuplicates = cfg.suppressDuplicatePassages
+        ? makeNearDuplicateFinder({ contextIds: Array.from(contextsById.keys()) })
+        : undefined;
+
       result.steps.push({
         stepNumber: 1,
         text: `Reranking ${mainSearch.chunks.length} chunks`,
@@ -630,6 +638,7 @@ export function createAgenticRetrievalTool(opts: {
           identifierBoost: cfg.tuning.identifierBoost,
           pageWindow: cfg.tuning.pageWindow,
         },
+        findNearDuplicates,
       });
 
       result.steps.push({
@@ -707,6 +716,7 @@ export function createAgenticRetrievalTool(opts: {
             identifierBoost: cfg.tuning.identifierBoost,
             pageWindow: cfg.tuning.pageWindow,
           },
+          findNearDuplicates,
         });
 
         result.steps.push({
