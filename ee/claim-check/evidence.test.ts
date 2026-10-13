@@ -69,8 +69,45 @@ describe("selectEvidence", () => {
   });
 
   it("pools the terms of several claims when they share a sentence neighbourhood", () => {
-    const passages = indexSources(SOURCES);
+    const sources = [
+      { id: "s1", name: "a.txt", content: "Die Tür wurde getauscht." },
+      { id: "s2", name: "b.txt", content: "Die Spannung beträgt 230 Volt." },
+      { id: "s3", name: "c.txt", content: "Unverwandte Inhalte über Wetter und Jahreszeiten." },
+    ];
+    const passages = indexSources(sources);
+    // With 3 passages and topK=2, only the two matching sources should be returned
     const picked = selectEvidence(["Die Tür wurde getauscht", "Die Spannung beträgt 230 Volt"], passages, 2);
+    expect(picked).toHaveLength(2);
     expect(new Set(picked.map((p) => p.sourceId))).toEqual(new Set(["s1", "s2"]));
+  });
+
+  it("zeroes ubiquitous terms and avoids their ranking inversion", () => {
+    const sources = [
+      { id: "s1", name: "a.txt", content: "Die Anlage wurde installiert und getestet." },
+      { id: "s2", name: "b.txt", content: "Die Prüfung wurde durchgeführt und bestanden." },
+      { id: "s3", name: "c.txt", content: "Die Wartung wurde geplant und dokumentiert." },
+      { id: "s4", name: "d.txt", content: "Die Spule wurde ersetzt und kalibriert." },
+    ];
+    const passages = indexSources(sources);
+    // "Die" and "wurde" appear in all four passages (filler); "Spule" only in s4
+    const claimMixed = ["Die Spule wurde ersetzt"];
+    const picked = selectEvidence(claimMixed, passages, 4);
+    // The passage with "Spule" must rank first despite "Die" and "wurde" being ubiquitous
+    expect(picked[0]!.sourceId).toBe("s4");
+    // A claim built only from ubiquitous terms scores every passage 0
+    const claimFiller = ["Die wurde"];
+    const fillerPicked = selectEvidence(claimFiller, passages, 4);
+    expect(fillerPicked.every((p) => p.score === 0)).toBe(true);
+  });
+
+  it("silences preprocessing logs when requested", () => {
+    const logSpy = jest.spyOn(console, "log").mockImplementation();
+    try {
+      // Calling indexSources should not emit preprocessing logs
+      indexSources([{ id: "s1", content: "Test content für eine Überprüfung." }]);
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining("[EXULU] Query preprocessing"));
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });

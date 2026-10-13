@@ -20,7 +20,7 @@ const DEFAULTS = { passageChars: 1200, overlapChars: 200, maxCharsPerSource: 600
 /** Stemmed, deduplicated content tokens. Language is detected per text. */
 function tokenize(text: string): string[] {
   if (!text.trim()) return [];
-  const { processed } = preprocessQuery(text, { enableStemming: true, detectLanguage: true });
+  const { processed } = preprocessQuery(text, { enableStemming: true, detectLanguage: true, silent: true });
   return processed
     .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
@@ -79,7 +79,7 @@ export function selectEvidence(
     for (const token of queryTokens) {
       if (!present.has(token)) continue;
       const df = documentFrequency.get(token) ?? passages.length;
-      score += Math.log(1 + passages.length / df);
+      score += Math.max(0, Math.log(passages.length / df));
     }
     return { passage, score, position };
   });

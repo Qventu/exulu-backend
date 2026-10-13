@@ -52,7 +52,7 @@ type Block = { start: number; end: number; headingPath: string[] };
 
 export function localeFromText(text: string): string {
   if (!text.trim()) return "en";
-  const { language } = preprocessQuery(text, { enableStemming: false, detectLanguage: true });
+  const { language } = preprocessQuery(text, { enableStemming: false, detectLanguage: true, silent: true });
   return LOCALE_BY_LANGUAGE[language] ?? "en";
 }
 
