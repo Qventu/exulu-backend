@@ -5,7 +5,8 @@ const chunk = (id: string, ctx: string) => ({ chunk_id: id, context: { id: ctx }
 describe("makeNearDuplicateFinder", () => {
   it("queries one table per context and returns the union of pairs", async () => {
     const seen: string[] = [];
-    const db = { raw: jest.fn(async (sql: string) => { seen.push(sql);
+    const bindingsSeen: unknown[] = [];
+    const db = { raw: jest.fn(async (sql: string, bindings: unknown) => { seen.push(sql); bindingsSeen.push(bindings);
       return { rows: sql.includes("tech_doc") ? [{ a: "c1", b: "c2" }] : [{ a: "z1", b: "z2" }] }; }) } as any;
     const find = makeNearDuplicateFinder({ contextIds: ["tech_doc_context", "zendesk_context"], db });
     const pairs = await find([chunk("c1", "tech_doc_context"), chunk("c2", "tech_doc_context"),
@@ -13,6 +14,9 @@ describe("makeNearDuplicateFinder", () => {
     expect(pairs).toEqual(expect.arrayContaining([["c1", "c2"], ["z1", "z2"]]));
     expect(seen).toHaveLength(2);
     expect(seen[0]).toContain("tech_doc_context_chunks");
+    // Both id arrays and the threshold must actually be bound — not just present in the SQL text.
+    expect(bindingsSeen[0]).toEqual([["c1", "c2"], ["c1", "c2"], DUPLICATE_SIMILARITY_THRESHOLD]);
+    expect(bindingsSeen[1]).toEqual([["z1", "z2"], ["z1", "z2"], DUPLICATE_SIMILARITY_THRESHOLD]);
   });
 
   it("skips contexts that are not known knowledge bases, e.g. memory", async () => {
