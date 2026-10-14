@@ -264,7 +264,7 @@ const message = {
         }),
       },
     },
-    { type: "text", text: "Die FST-2XT arbeitet mit 230 Volt. " },
+    { type: "text", text: "Die FST-2XT arbeitet mit 230 Volt." },
     { type: "text", text: "Die Tür wurde getauscht." },
   ],
 } as unknown as UIMessage;
@@ -327,7 +327,21 @@ describe("collectSources", () => {
 
 describe("answerTextOf", () => {
   it("joins the text parts in order, which is the string the offsets index into", () => {
-    expect(answerTextOf(message)).toBe("Die FST-2XT arbeitet mit 230 Volt. Die Tür wurde getauscht.");
+    expect(answerTextOf(message)).toBe("Die FST-2XT arbeitet mit 230 Volt.\n\nDie Tür wurde getauscht.");
+  });
+
+  // The separator is the renderer's, not a convenience: a raw join would fuse
+  // "Volt." to "Sie", and ICU segmentation needs whitespace after the period,
+  // so the two sentences would become one claim.
+  it("separates parts the way messageMarkdown does, so sentence boundaries survive", () => {
+    const split = {
+      parts: [
+        { type: "text", text: "Die Anlage läuft mit 230 Volt." },
+        { type: "tool-Context_Search", toolCallId: "call_9", output: { result: "{}" } },
+        { type: "text", text: "Sie braucht einen Trenntransformator." },
+      ],
+    } as unknown as UIMessage;
+    expect(answerTextOf(split)).toBe("Die Anlage läuft mit 230 Volt.\n\nSie braucht einen Trenntransformator.");
   });
 
   it("is empty for a message with no text parts", () => {
@@ -442,15 +456,23 @@ export function collectSources(message: UIMessage, sourceIds: string[]): ClaimCh
 }
 
 /**
- * The answer exactly as the check must see it: the text parts joined in order.
- * `sentences[].start/end` index into THIS string, so any transformation here
- * would silently move every highlight.
+ * The answer exactly as the check must see it: the text parts joined in order,
+ * with a blank line between them. `sentences[].start/end` index into THIS
+ * string, so any transformation here would silently move every highlight.
+ *
+ * The separator is `"\n\n"`, matching `messageMarkdown` in
+ * `components/message-renderer.tsx` — the same string the user read and the
+ * same one copy-to-clipboard produces. It must stay in sync with it. Joining
+ * raw instead would fuse the end of one part to the start of the next
+ * ("230 Volt." + "Sie braucht..." -> "230 Volt.Sie braucht..."), and ICU
+ * sentence segmentation needs whitespace after the period, so two sentences
+ * would silently become one claim-bearing blob.
  */
 export function answerTextOf(message: UIMessage): string {
   return ((message.parts ?? []) as unknown[])
     .filter((p): p is { type: "text"; text: string } => isRecord(p) && p.type === "text" && typeof p.text === "string")
     .map((p) => p.text)
-    .join("");
+    .join("\n\n");
 }
 
 export function summarise(result: ClaimCheckResult): {
