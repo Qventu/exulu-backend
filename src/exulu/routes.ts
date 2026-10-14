@@ -5169,6 +5169,8 @@ export const createExpressRoutes = async (
     runCheck: runClaimCheck,
     isLicensed: () => Boolean(checkLicense()["claim-check"]),
     limiter: claimCheckLimiter,
+    isExternalUser,
+    externalRateLimitExceeded,
     // Platform default model for callers with no agent; empty until an
     // operator sets it.
     platformDefaultModel: async () => process.env.CLAIM_CHECK_DEFAULT_MODEL ?? "",

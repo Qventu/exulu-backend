@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { LanguageModel } from "ai";
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ScopeCheckResult } from "@SRC/utils/check-api-key-scope";
+import { isExternalOrAnonymousUser } from "@SRC/exulu/resolve-max-steps";
 import { type ClaimCheckOptions, type ClaimCheckResult } from "./types";
 import type { ClaimCheckRateLimiter } from "./rate-limit";
 import { pipelineConfigFor } from "./agent-config";
@@ -96,6 +97,9 @@ export type ClaimCheckRouteDeps = {
   }) => Promise<ClaimCheckResult>;
   isLicensed: () => boolean;
   limiter: ClaimCheckRateLimiter;
+  /** src/exulu/external-rate-limit.ts — the same pair every sibling handler uses. */
+  isExternalUser: (user: User | undefined) => boolean;
+  externalRateLimitExceeded: (userId: string) => boolean;
   platformDefaultModel: () => Promise<string>;
   /** Supplied by Task 13; absent means no second-chance retrieval. */
   secondChanceFor?: (args: { agent: any; user?: User; model: LanguageModel; cap: number }) =>
@@ -138,6 +142,15 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
       return;
     }
     const user = auth.user;
+
+    // Spec §4: the external/guest budget applies here as everywhere else, so
+    // an external identity does not get a fresh 30/min on the most expensive
+    // endpoint in the product. This is on TOP of the claim-check limiter
+    // below, which applies to every role.
+    if (deps.isExternalUser(user) && deps.externalRateLimitExceeded(String(user.id))) {
+      res.status(429).json({ detail: "Too many requests. Try again later." });
+      return;
+    }
 
     // R22: `resolveModel`'s `rbacBypass`/`rbacRequest` are declared but read
     // nowhere, and `MODEL_FORBIDDEN` is never thrown (src/exulu/resolve-model.ts)
@@ -189,6 +202,31 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
     // R1: task 2's zod parser, not a hand-rolled one — one parser for the
     // claim_check blob, never two that can drift apart.
     const cfg = pipelineConfigFor(agent);
+
+    // Spec §3/§5: claim_check is opt-in per agent because the feature costs
+    // money, and no check ever runs for an agent whose admin left it off —
+    // otherwise naming that agent here would spend its model's tokens and run
+    // second-chance retrieval against its knowledge bases anyway.
+    if (agent && !cfg.claimCheck.enabled) {
+      res.status(403).json({
+        detail: "Claim check is not enabled for this agent; set claim_check.enabled on its knowledge-search tool.",
+      });
+      return;
+    }
+
+    // Spec §5: a guest or external viewer sees no claim check unless the agent
+    // says they may. isExternalOrAnonymousUser is the helper the sibling
+    // show_sources_to_external_users flag uses, and this is the same
+    // visibility question about the same kind of viewer.
+    if (agent && isExternalOrAnonymousUser(user) && !cfg.claimCheck.showToExternalUsers) {
+      res.status(403).json({
+        detail:
+          "Claim check is not available to external users for this agent; " +
+          "set claim_check.showToExternalUsers to allow it.",
+      });
+      return;
+    }
+
     const candidates = [
       body.model,
       cfg.claimCheck.model,

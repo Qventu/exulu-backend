@@ -37,6 +37,8 @@ function buildApp(overrides: Partial<ClaimCheckRouteDeps> = {}) {
     runCheck,
     isLicensed: () => true,
     limiter: claimCheckRateLimiter({ perMinute: 100, perHour: 1000, maxInFlight: 10 }),
+    isExternalUser: () => false,
+    externalRateLimitExceeded: () => false,
     platformDefaultModel: async () => "platform-model",
     ...overrides,
   };
@@ -279,7 +281,12 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
     expect(resolveModel.mock.calls[0][0].modelId).toBe("utility-model");
 
     resolveModel.mockClear();
-    const withAgentModel = buildApp({ resolveModel, getAgent: async () => agentWith({}) as any });
+    const withAgentModel = buildApp({
+      resolveModel,
+      // claim_check must be enabled for the agent to be usable at all, but it
+      // names no model, so resolution falls through to the agent's own model.
+      getAgent: async () => agentWith({ claim_check: '{"enabled":true}' }) as any,
+    });
     await request(withAgentModel.app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
     expect(resolveModel.mock.calls[0][0].modelId).toBe("agent-model");
   });
@@ -308,6 +315,78 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
     const { app } = buildApp({ checkRecordAccess: async () => false });
     const res = await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
     expect(res.status).toBe(403);
+  });
+
+  // Finding 8: cfg.claimCheck.enabled and showToExternalUsers were parsed and
+  // read nowhere, and the external limiter was missing entirely.
+  it("403s when the named agent has claim check disabled, without running anything", async () => {
+    const { app, runCheck } = buildApp({
+      getAgent: async () =>
+        ({
+          id: "agent-1",
+          model: "agent-model",
+          tools: [
+            {
+              id: "agentic_context_search",
+              config: [{ name: "claim_check", type: "json", variable: '{"enabled":false}' }],
+            },
+          ],
+        }) as any,
+    });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
+    expect(res.status).toBe(403);
+    expect(String(res.body.detail)).toContain("claim_check.enabled");
+    expect(runCheck).not.toHaveBeenCalled();
+  });
+
+  it("403s an external caller when the agent does not show claim check to external users", async () => {
+    const agentWithClaimCheck = (variable: string) =>
+      ({
+        id: "agent-1",
+        model: "agent-model",
+        tools: [{ id: "agentic_context_search", config: [{ name: "claim_check", type: "json", variable }] }],
+      }) as any;
+    const external = {
+      authenticate: async () => ({ user: { id: 9, type: "user", role: { name: "external" } } as any }),
+    };
+
+    const hidden = buildApp({ ...external, getAgent: async () => agentWithClaimCheck('{"enabled":true}') });
+    const res = await request(hidden.app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
+    expect(res.status).toBe(403);
+    expect(String(res.body.detail)).toContain("showToExternalUsers");
+    expect(hidden.runCheck).not.toHaveBeenCalled();
+
+    // With the flag on, the same external caller is served.
+    const shown = buildApp({
+      ...external,
+      getAgent: async () => agentWithClaimCheck('{"enabled":true,"showToExternalUsers":true}'),
+    });
+    const allowed = await request(shown.app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
+    expect(allowed.status).toBe(200);
+    expect(shown.runCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("429s an external caller over the external rate-limit budget, before any model work", async () => {
+    const resolveModel = jest.fn(async ({ modelId }: any) => ({ languageModel: { modelId } }) as any);
+    const externalRateLimitExceeded = jest.fn(() => true);
+    const { app, runCheck } = buildApp({
+      resolveModel,
+      isExternalUser: () => true,
+      externalRateLimitExceeded,
+    });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
+    expect(res.status).toBe(429);
+    expect(externalRateLimitExceeded).toHaveBeenCalledWith("7");
+    expect(resolveModel).not.toHaveBeenCalled();
+    expect(runCheck).not.toHaveBeenCalled();
+  });
+
+  it("does not consult the external budget for an internal caller", async () => {
+    const externalRateLimitExceeded = jest.fn(() => true);
+    const { app } = buildApp({ isExternalUser: () => false, externalRateLimitExceeded });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
+    expect(res.status).toBe(200);
+    expect(externalRateLimitExceeded).not.toHaveBeenCalled();
   });
 
   it("passes a partial engine result through with 200", async () => {
