@@ -10,6 +10,7 @@ import type { LanguageModel } from "ai";
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ScopeCheckResult } from "@SRC/utils/check-api-key-scope";
 import { isExternalOrAnonymousUser } from "@SRC/exulu/resolve-max-steps";
+import { treatAsGuest } from "@SRC/exulu/public-surface";
 import { type ClaimCheckOptions, type ClaimCheckResult } from "./types";
 import type { ClaimCheckRateLimiter } from "./rate-limit";
 import { pipelineConfigFor } from "./agent-config";
@@ -267,8 +268,11 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
     // Spec §5: a guest or external viewer sees no claim check unless the agent
     // says they may. isExternalOrAnonymousUser is the helper the sibling
     // show_sources_to_external_users flag uses, and this is the same
-    // visibility question about the same kind of viewer.
-    if (agent && isExternalOrAnonymousUser(user) && !cfg.claimCheck.showToExternalUsers) {
+    // visibility question about the same kind of viewer. treatAsGuest adds
+    // the public surface: a signed-in internal user viewing a public agent
+    // link renders in guest mode, so the endpoint must refuse them the same
+    // way the chat's finish-part fragment does (src/exulu/claim-check/finish-metadata.ts).
+    if (agent && (treatAsGuest(req, user) || isExternalOrAnonymousUser(user)) && !cfg.claimCheck.showToExternalUsers) {
       res.status(403).json({
         detail:
           "Claim check is not available to external users for this agent; " +

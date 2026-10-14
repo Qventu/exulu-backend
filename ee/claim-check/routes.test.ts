@@ -9,6 +9,7 @@ import {
   type ClaimCheckRouteDeps,
 } from "./routes";
 import { claimCheckRateLimiter } from "./rate-limit";
+import { PUBLIC_SURFACE_HEADER } from "@SRC/exulu/public-surface";
 
 const RESULT = {
   status: "ok" as const,
@@ -400,6 +401,50 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
     const allowed = await request(shown.app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
     expect(allowed.status).toBe(200);
     expect(shown.runCheck).toHaveBeenCalledTimes(1);
+  });
+
+  // Fix round 1, Important 1: a signed-in INTERNAL user (no external role) on
+  // the public surface renders in guest mode, so must be refused the same way
+  // an external role is — the chat's finish-part fragment applies the same rule.
+  it("403s a signed-in internal user on the public surface when the agent does not show claim check to external users", async () => {
+    const agentWithClaimCheck = (variable: string) =>
+      ({
+        id: "agent-1",
+        model: "agent-model",
+        tools: [{ id: "agentic_context_search", config: [{ name: "claim_check", type: "json", variable }] }],
+      }) as any;
+    // Internal: id set, no external role — would pass isExternalOrAnonymousUser.
+    const internalOnPublicSurface = {
+      authenticate: async () => ({ user: { id: 9, type: "user" } as any }),
+    };
+
+    const hidden = buildApp({ ...internalOnPublicSurface, getAgent: async () => agentWithClaimCheck('{"enabled":true}') });
+    const res = await request(hidden.app)
+      .post(CLAIM_CHECK_PATH)
+      .set(PUBLIC_SURFACE_HEADER, "1")
+      .send({ ...BODY, agent: "agent-1" });
+    expect(res.status).toBe(403);
+    expect(String(res.body.detail)).toContain("showToExternalUsers");
+    expect(hidden.runCheck).not.toHaveBeenCalled();
+
+    // With the flag on, the same signed-in internal user on the public
+    // surface is served.
+    const shown = buildApp({
+      ...internalOnPublicSurface,
+      getAgent: async () => agentWithClaimCheck('{"enabled":true,"showToExternalUsers":true}'),
+    });
+    const allowed = await request(shown.app)
+      .post(CLAIM_CHECK_PATH)
+      .set(PUBLIC_SURFACE_HEADER, "1")
+      .send({ ...BODY, agent: "agent-1" });
+    expect(allowed.status).toBe(200);
+    expect(shown.runCheck).toHaveBeenCalledTimes(1);
+
+    // And off the public surface, the same user is unaffected.
+    const normal = buildApp({ ...internalOnPublicSurface, getAgent: async () => agentWithClaimCheck('{"enabled":true}') });
+    const notPublic = await request(normal.app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
+    expect(notPublic.status).toBe(200);
+    expect(normal.runCheck).toHaveBeenCalledTimes(1);
   });
 
   it("429s an external caller over the external rate-limit budget, before any model work", async () => {

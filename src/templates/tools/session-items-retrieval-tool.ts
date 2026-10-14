@@ -4,6 +4,14 @@ import { ExuluTool } from "@SRC/exulu/tool";
 import { isEmbedderNotConfigured } from "@SRC/exulu/embedder-not-configured";
 import { z } from "zod";
 
+/**
+ * This tool's display name — exported so the sanitized key it maps to (used
+ * by claim-check's finish-metadata to detect when session-attached-item
+ * search, not agentic retrieval, grounded an answer) breaks loudly on a
+ * rename instead of silently losing that detection.
+ */
+export const SESSION_ITEMS_RETRIEVAL_TOOL_NAME = "context_search in knowledge items added to session.";
+
 export const createSessionItemsRetrievalTool = async ({
   user,
   role,
@@ -19,7 +27,7 @@ export const createSessionItemsRetrievalTool = async ({
 
   const sessionItemsRetrievalTool = ExuluTool.internal({
     id: "session_items_information_context_search",
-    name: "context_search in knowledge items added to session.",
+    name: SESSION_ITEMS_RETRIEVAL_TOOL_NAME,
     description: "Context search in knowledge items added to session.",
     inputSchema: z.object({
       query: z

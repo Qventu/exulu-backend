@@ -64,7 +64,7 @@ import { compactSession, CompactionInsufficientError } from "./compact-session.t
 import { describeRequestError } from "./request-error.ts";
 import { finishTurnMetadata } from "./turn-metadata.ts";
 import { recalledMemoriesMetadata } from "./memory/recalled-metadata.ts";
-import { claimCheckMetadata } from "./claim-check/finish-metadata.ts";
+import { claimCheckMetadata, recordToolResult } from "./claim-check/finish-metadata.ts";
 import { isPublicSurface, treatAsGuest } from "./public-surface.ts";
 import { recordMemoryUsage } from "./memory/usage.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
@@ -76,6 +76,7 @@ import { registerClaimCheckRoutes } from "@EE/claim-check/routes";
 import { claimCheckRateLimiter } from "@EE/claim-check/rate-limit";
 import { runClaimCheck } from "@EE/claim-check/run";
 import { makeSecondChance } from "@EE/claim-check/second-chance";
+import { pipelineConfigFor } from "@EE/claim-check/agent-config";
 import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
 import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
 import { transcriptionService } from "./transcription/service.ts";
@@ -831,6 +832,9 @@ export const createExpressRoutes = async (
         // streams past messageMetadata, below, and read it back once `finish`
         // arrives.
         const turnToolResults: { type: string; toolCallId: string; output: unknown }[] = [];
+        // Don't bother accumulating for the vast majority of turns where the
+        // check is off — read the flag once rather than on every stream part.
+        const claimCheckEnabled = pipelineConfigFor(agent).claimCheck.enabled;
         let result: Awaited<ReturnType<typeof generateStream>>;
         try {
           result = await generateStream({
@@ -872,13 +876,9 @@ export const createExpressRoutes = async (
         result.stream.pipeUIMessageStreamToResponse(res, {
           messageMetadata: ({ part }) => {
             // Record each retrieval tool call's final result (see
-            // turnToolResults above) — generator-tool yields are marked
-            // `preliminary: true` until the last one, so this keeps exactly
-            // one entry per call. Pure bookkeeping: returns nothing, so it
+            // turnToolResults above). Pure bookkeeping: returns nothing, so it
             // never becomes a message-metadata chunk of its own.
-            if (part.type === "tool-result" && !part.preliminary) {
-              turnToolResults.push({ type: `tool-${part.toolName}`, toolCallId: part.toolCallId, output: part.output });
-            }
+            if (claimCheckEnabled) recordToolResult(turnToolResults, part);
             // Per-step usage: the LAST step's inputTokens reflects the actual
             // prompt size of this turn (totalUsage sums every step's full
             // prompt, inflating multi-step turns ~stepCount×). Last write wins
@@ -896,8 +896,10 @@ export const createExpressRoutes = async (
                 // the page renders in guest mode, so the data has to follow.
                 ...recalledMemoriesMetadata({ recall: result.recall, agent, isGuest: treatAsGuest(req, user) }),
                 // The chat posts the check itself once the stream ends; this
-                // only tells it that it may, and which sources to send.
-                ...claimCheckMetadata({ agent, user, toolResults: turnToolResults }),
+                // only tells it that it may, and which sources to send. Same
+                // isGuest expression as recalledMemoriesMetadata above: a
+                // signed-in visitor on the public surface is external too.
+                ...claimCheckMetadata({ agent, user, isGuest: treatAsGuest(req, user), toolResults: turnToolResults }),
               };
             }
             return undefined;
