@@ -135,15 +135,18 @@ Each of these withholds the fragment exactly as Stage 3 does, and each is Stage 
   sources the client cannot produce and the §4 guard will refuse every check.
 - **A truncated source** — see §6.
 
-## 6. Truncation stops being silent
+## 6. Truncation is already reported — it only lacks names
 
-`MAX_CHARS_PER_SOURCE` caps a source at 60,000 characters and nothing currently tells the
-reader. A parsed PDF routinely exceeds it, so this stage would otherwise replace honest silence
-with a quiet claim of completeness, which is worse.
+I wrote this section claiming truncation was silent. It is not: Stage 1 already sets
+`status: "partial"`, pushes a note saying how many sources were cut and how many characters of
+evidence went unsearched, and explains in that note that *a claim supported only there reads as
+unsupported*. A Stage 1 review (R35) caught precisely this and made a partly-read check refuse
+to report `ok`. The parent spec's §2.4 is intact here and this stage does not need to defend it.
 
-When any source is truncated the result adds a `notes` entry naming it and sets
-`limits.truncated`. The panel already renders `notes`. Stage 5 turns this into a labelled
-coverage gap; until then it is a visible note.
+What the note lacks is **which** document was cut. "2 source(s) were truncated" does not let a
+reader act; "handbuch.pdf was truncated" does. So Stage 4's only truncation work is adding the
+source names to the existing note. The `partial` status, the character count and the warning
+sentence stay exactly as they are.
 
 ## 7. Cost and privacy
 
