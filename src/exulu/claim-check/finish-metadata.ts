@@ -239,10 +239,10 @@ export type ClaimCheckTurnContext = {
   user?: User;
   /**
    * Whether this request gets guest treatment — pass `treatAsGuest(req, user)`,
-   * the same expression `recalledMemoriesMetadata` uses one line above this
-   * call. A signed-in user on the public surface renders in guest mode, so
-   * the external-visibility gate below must see them as external too, not
-   * just an anonymous caller.
+   * the same expression `recalledMemoriesMetadata` gets in the chat route. A
+   * signed-in user on the public surface renders in guest mode, so the
+   * external-visibility gate below must see them as external too, not just an
+   * anonymous caller.
    */
   isGuest: boolean;
   /**
