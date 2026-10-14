@@ -164,7 +164,8 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
       .send({ ...BODY, options: { caps: { maxSentences: 5000, maxClaims: 5000, maxReRetrievals: 5000 } } });
 
     expect(res.status).toBe(200);
-    // The engine-default configuration (no agent) is also the module ceiling.
+    // With no agent named, `configured` is the engine default
+    // (CLAIM_CHECK_DEFAULTS.caps, via the claim_check config schema).
     expect(runCheck.mock.calls[0][0].options.caps).toEqual({
       maxSentences: 120,
       maxClaims: 200,
@@ -186,8 +187,14 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
     });
   });
 
-  it("never lets a configured cap exceed the module ceiling", async () => {
-    const agentWithHugeCaps = {
+  // R33: the module ceilings are gone. They were meant to stop a REQUEST
+  // demanding more work, but they also clamped the operator's own configured
+  // value — which is why a 44,000-character NEWLIFT answer (568 sentences
+  // after list segmentation) was 21% checked with no configuration path to
+  // raise it. An operator configuring their own agent is trusted; they pay
+  // for it.
+  it("honours a configured cap above the engine default for an agent-scoped call", async () => {
+    const agentWithRaisedCaps = {
       id: "agent-1",
       model: "agent-model",
       tools: [
@@ -197,18 +204,44 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
             {
               name: "claim_check",
               type: "json",
-              variable: '{"enabled":true,"caps":{"maxSentences":9000,"maxClaims":9000,"maxReRetrievals":9000}}',
+              variable: '{"enabled":true,"caps":{"maxSentences":600,"maxClaims":900,"maxReRetrievals":40}}',
             },
           ],
         },
       ],
     };
-    const { app, runCheck } = buildApp({ getAgent: async () => agentWithHugeCaps as any });
+    const { app, runCheck } = buildApp({ getAgent: async () => agentWithRaisedCaps as any });
     const res = await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
 
     expect(res.status).toBe(200);
     expect(runCheck.mock.calls[0][0].options.caps).toEqual({
-      maxSentences: 120,
+      maxSentences: 600,
+      maxClaims: 900,
+      maxReRetrievals: 40,
+    });
+  });
+
+  it("still refuses to let a request loosen a cap the operator configured above the default", async () => {
+    const agentWithRaisedCaps = {
+      id: "agent-1",
+      model: "agent-model",
+      tools: [
+        {
+          id: "agentic_context_search",
+          config: [
+            { name: "claim_check", type: "json", variable: '{"enabled":true,"caps":{"maxSentences":600}}' },
+          ],
+        },
+      ],
+    };
+    const { app, runCheck } = buildApp({ getAgent: async () => agentWithRaisedCaps as any });
+    const res = await request(app)
+      .post(CLAIM_CHECK_PATH)
+      .send({ ...BODY, agent: "agent-1", options: { caps: { maxSentences: 5000, maxClaims: 5000 } } });
+
+    expect(res.status).toBe(200);
+    expect(runCheck.mock.calls[0][0].options.caps).toEqual({
+      maxSentences: 600,
       maxClaims: 200,
       maxReRetrievals: 10,
     });

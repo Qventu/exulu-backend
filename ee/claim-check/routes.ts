@@ -22,18 +22,6 @@ const MAX_EVIDENCE_CHARS = 2_000_000;
 const MAX_SOURCES = 200;
 
 /**
- * Absolute ceilings for the work one request may order, on top of the agent's
- * configured caps. A request can only ever TIGHTEN a cap (Math.min), so an
- * authenticated non-admin cannot buy itself thousands of provider calls and
- * thousands of full retrievals by posting a bigger number; an operator can
- * configure lower than these, nobody can configure higher through the body.
- * The values are the engine defaults (CLAIM_CHECK_DEFAULTS.caps).
- */
-export const MAX_SENTENCES_CEILING = 120;
-export const MAX_CLAIMS_CEILING = 200;
-export const MAX_RERETRIEVALS_CEILING = 10;
-
-/**
  * Request deadline (spec §4). Without it, a hung provider holds one of the 20
  * global in-flight slots until the transport gives up, and twenty such
  * requests 429 the endpoint deployment-wide. The engine races a timer: the
@@ -59,9 +47,22 @@ function localeIsUsable(locale: string): boolean {
   }
 }
 
-/** requested ?? configured, then floored by both the configured value and the module ceiling. */
-function clampCap(requested: number | undefined, configured: number, ceiling: number): number {
-  return Math.min(requested ?? configured, configured, ceiling);
+/**
+ * requested ?? configured, floored by the configured value.
+ *
+ * A request can only ever TIGHTEN a cap, so an authenticated non-admin cannot
+ * buy itself thousands of provider calls and thousands of full retrievals by
+ * posting a bigger number. There is deliberately no absolute module ceiling on
+ * top (ruling R33): a ceiling clamps the OPERATOR's own configured value too,
+ * which is how a 44,000-character NEWLIFT answer (568 sentences after list
+ * segmentation) ended up 21% checked with no configuration path to raise it.
+ * An operator configuring their own agent is trusted, because they pay for it,
+ * as with every other retrieval knob. `configured` comes from the agent's
+ * `claim_check.caps`, whose schema defaults are CLAIM_CHECK_DEFAULTS.caps — so
+ * the agent-less caller still gets the engine defaults, from one definition.
+ */
+function clampCap(requested: number | undefined, configured: number): number {
+  return Math.min(requested ?? configured, configured);
 }
 
 const requestSchema = z.object({
@@ -313,13 +314,9 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
       // Caps CLAMP, they do not override: a caller may tighten a check (cheaper,
       // narrower) but never loosen one.
       caps: {
-        maxSentences: clampCap(body.options?.caps?.maxSentences, cfg.claimCheck.caps.maxSentences, MAX_SENTENCES_CEILING),
-        maxClaims: clampCap(body.options?.caps?.maxClaims, cfg.claimCheck.caps.maxClaims, MAX_CLAIMS_CEILING),
-        maxReRetrievals: clampCap(
-          body.options?.caps?.maxReRetrievals,
-          cfg.claimCheck.caps.maxReRetrievals,
-          MAX_RERETRIEVALS_CEILING,
-        ),
+        maxSentences: clampCap(body.options?.caps?.maxSentences, cfg.claimCheck.caps.maxSentences),
+        maxClaims: clampCap(body.options?.caps?.maxClaims, cfg.claimCheck.caps.maxClaims),
+        maxReRetrievals: clampCap(body.options?.caps?.maxReRetrievals, cfg.claimCheck.caps.maxReRetrievals),
       },
     };
 

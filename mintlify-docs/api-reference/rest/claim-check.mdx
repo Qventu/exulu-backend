@@ -47,23 +47,19 @@ Sentences that carry nothing to verify — introductions, conclusions, opinions,
 | `session`, `messageId` | `string` | Optional provenance fields; not used for access control. |
 | `model` | `string` | Optional model override. **Accepted only from a super-admin caller** — see Model resolution below. A non-admin caller who sets this field gets `403`, not a silently-ignored parameter. |
 | `locale` | `string` | Optional. Defaults to a locale detected from the answer text. Must be a language tag the runtime can segment with (`de`, `en`, `fr`, …); anything else is a `400`, not a silently degraded check. |
-| `options` | object | Optional per-call overrides. Omitted keys fall back to the agent's `claim_check` configuration, then to the engine defaults (`fidelity: "fast"`, `completions: 1`, `reRetrieve: true`, `thresholds: { warn: 0.1, alert: 0.3 }`, `caps: { maxSentences: 120, maxClaims: 200, maxReRetrievals: 10 }`). `options.caps` **clamp, they do not override** — see Option limits below. `options.fidelity: "paper"` and `options.completions` above 1 are **super-admin only** (`403` otherwise). |
+| `options` | object | Optional per-call overrides. Omitted keys fall back to the agent's `claim_check` configuration, then to the engine defaults (`fidelity: "fast"`, `completions: 1`, `reRetrieve: true`, `thresholds: { warn: 0.1, alert: 0.3 }`, `caps: { maxSentences: 120, maxClaims: 200, maxReRetrievals: 10 }`). `options.caps` **clamp the configured value, they never raise it** — see Option limits below. `options.fidelity: "paper"` and `options.completions` above 1 are **super-admin only** (`403` otherwise). |
 
 ### Option limits
 
 `options.thresholds` are honoured as given, with one rule: the **resolved** `warn` must not exceed the resolved `alert` (a request's `warn` is checked against the agent's `alert` too), otherwise the request is `400` — a `warn` above `alert` would label every answer `alert`, which reads as a hallucination finding. The three `options.caps` values are **clamped, never honoured upwards**:
 
 ```
-effective cap = min(requested, configured on the agent, module ceiling)
+effective cap = min(requested, configured on the agent)
 ```
 
-| Cap | Module ceiling |
-|---|---|
-| `caps.maxSentences` | 120 |
-| `caps.maxClaims` | 200 |
-| `caps.maxReRetrievals` | 10 |
+So a request can make a check cheaper and narrower, never more expensive: asking for `maxSentences: 5000` on an agent configured at 120 runs 120. There is **no absolute ceiling above the configured value**: an operator who configures `claim_check.caps.maxSentences: 600` on their own agent gets 600, because they are the one paying for the calls — the same trust every other retrieval knob gets. A caller with no `agent` runs at the engine defaults, which are also the configuration defaults (`maxSentences: 120`, `maxClaims: 200`, `maxReRetrievals: 10`) and cannot be raised from the request body.
 
-So a request can make a check cheaper and narrower, never more expensive: asking for `maxSentences: 5000` on an agent configured at 120 runs 120. An operator may configure a cap *below* the ceiling; nobody can configure one above it through the request body. The same reasoning gates the two options that multiply the number of provider calls rather than their price — `fidelity: "paper"` (which unmerges every stage and batches one sentence per call) and `completions` above 1 (which votes each of those stages N times). Both are benchmark instruments and both require a super-admin caller; everyone else configures `claim_check.fidelity` and `claim_check.completions` on the agent. `completions` is ignored outside `paper` fidelity, because only `paper` votes. `paper` is the paper's own fidelity: the merged selection+disambiguation call is split back into two stages, each stage runs one sentence per call, and each is repeated `completions` times with majority voting. It costs roughly an order of magnitude more calls than `fast` and exists for benchmarking and for callers who want maximum precision.
+A long answer is checked **up to the cap and reports the remainder as skipped** rather than silently costing more: the sentences past `caps.maxSentences` come back `not_checked` with `reason: "cap_exceeded"`, counted in `limits.sentencesSkipped`, with `status: "partial"` and a note. The defaults are deliberately not sized for the longest answers — a 44,000-character answer segments into roughly 570 sentences, around five times the default cap's calls and spend — so a tenant who wants full coverage of answers that long raises `claim_check.caps.maxSentences` on the agent and accepts the cost. The same reasoning gates the two options that multiply the number of provider calls rather than their price — `fidelity: "paper"` (which unmerges every stage and batches one sentence per call) and `completions` above 1 (which votes each of those stages N times). Both are benchmark instruments and both require a super-admin caller; everyone else configures `claim_check.fidelity` and `claim_check.completions` on the agent. `completions` is ignored outside `paper` fidelity, because only `paper` votes. `paper` is the paper's own fidelity: the merged selection+disambiguation call is split back into two stages, each stage runs one sentence per call, and each is repeated `completions` times with majority voting. It costs roughly an order of magnitude more calls than `fast` and exists for benchmarking and for callers who want maximum precision.
 
 ### Model resolution
 
