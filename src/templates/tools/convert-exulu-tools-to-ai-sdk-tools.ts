@@ -46,7 +46,18 @@ import { extractClientInfo } from "@SRC/exulu/audit/client-info";
  * round-trips (2026-07-08 decision, amends context-window spec §2's
  * "every tool" rule).
  */
-const OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS = new Set(["agentic_context_search"]);
+/**
+ * Tool ids whose output never goes through `guardToolOutput`.
+ *
+ * Exported for its test: claim-check depends on this set. `guardToolOutput`
+ * replaces an over-cap output with `{ truncated, notice, preview }` — no
+ * `result` key — which claim-check's `retrievedIdsOf` skips, so dropping
+ * `agentic_context_search` from here (a plausible future cost decision) would
+ * silently stop claim checks on exactly the large turns the feature was built
+ * for: every gate green, no log line. The coupling is asserted in
+ * convert-exulu-tools-to-ai-sdk-tools.test.ts so it fails loudly instead.
+ */
+export const OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS = new Set(["agentic_context_search"]);
 const generateS3Key = (filename) => `${randomUUID()}-${filename}`;
 
 

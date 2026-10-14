@@ -13,10 +13,9 @@
 //    fragment is missing entirely. The frontend's rule is "no fragment, no check
 //    ever runs", so a present-but-false fragment would be a second state nobody
 //    needs.
-import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import type { User } from "@EXULU_TYPES/models/user";
 import type { RecallCollector } from "@SRC/exulu/memory/recall-collector";
-import { pipelineConfigFor } from "@EE/claim-check/agent-config";
+import type { ClaimCheckConfig } from "@EE/agentic-retrieval/pipeline/config";
 import { isExternalOrAnonymousUser } from "@SRC/exulu/resolve-max-steps";
 import { AGENTIC_RETRIEVAL_TOOL_NAME } from "@EE/agentic-retrieval/pipeline/index";
 import { SESSION_ITEMS_RETRIEVAL_TOOL_NAME } from "@SRC/templates/tools/session-items-retrieval-tool";
@@ -214,9 +213,19 @@ export function turnCarriedFileAttachment(messages: unknown): boolean {
   return false;
 }
 
-/** Message metadata fragment merged on the SDK `finish` part (spec §5). */
-export function claimCheckMetadata({ agent, user, isGuest, isLicensed, toolResults, messages, recall }: {
-  agent: ExuluAgent;
+/**
+ * Everything the fragment needs about a turn except its tool results, which
+ * only exist once the stream has run. `claimCheckStreamMetadata` below holds
+ * one of these for the length of a turn.
+ */
+export type ClaimCheckTurnContext = {
+  /**
+   * The agent's parsed `claim_check` block. Parsed by the caller and handed
+   * in, not re-parsed here: it used to be read once in routes.ts for the
+   * accumulation flag and again in this function for the gates, two reads of
+   * the same blob that could disagree.
+   */
+  config: ClaimCheckConfig;
   user?: User;
   /**
    * Whether this request gets guest treatment — pass `treatAsGuest(req, user)`,
@@ -234,7 +243,6 @@ export function claimCheckMetadata({ agent, user, isGuest, isLicensed, toolResul
    * surfaces disagreeing is precisely what produced this finding.
    */
   isLicensed: boolean;
-  toolResults: unknown;
   /**
    * This turn's prompt messages **before** file-part inlining — pass
    * `[...result.previousMessages, message]` from the chat route.
@@ -249,9 +257,13 @@ export function claimCheckMetadata({ agent, user, isGuest, isLicensed, toolResul
    * Undefined when the agent has no memory base.
    */
   recall: Pick<RecallCollector, "list"> | undefined;
-}): { claimCheck: ClaimCheckTrigger } | Record<string, never> {
-  const cfg = pipelineConfigFor(agent).claimCheck;
-  if (!cfg.enabled) return {};
+};
+
+/** Message metadata fragment merged on the SDK `finish` part (spec §5). */
+export function claimCheckMetadata({ config, user, isGuest, isLicensed, toolResults, messages, recall }:
+  ClaimCheckTurnContext & { toolResults: unknown }
+): { claimCheck: ClaimCheckTrigger } | Record<string, never> {
+  if (!config.enabled) return {};
   if (!isLicensed) return {};
   // An anonymous viewer can never complete a check: POST /claims/check needs
   // a user id that coerces to a finite number (hasNumericUserId in
@@ -262,7 +274,7 @@ export function claimCheckMetadata({ agent, user, isGuest, isLicensed, toolResul
   // ever fail. (`hasNumericUserId` is the strict superset of this test; no
   // auth branch yields a truthy non-numeric id today.)
   if (!user?.id) return {};
-  if ((isGuest || isExternalOrAnonymousUser(user)) && !cfg.showToExternalUsers) return {};
+  if ((isGuest || isExternalOrAnonymousUser(user)) && !config.showToExternalUsers) return {};
   if (invisibleEvidenceToolRan(toolResults)) return {};
   if (sessionItemsContributed(toolResults)) return {};
   if (turnCarriedFileAttachment(messages)) return {};
@@ -280,6 +292,7 @@ export function claimCheckMetadata({ agent, user, isGuest, isLicensed, toolResul
 
   return { claimCheck: { enabled: true, sourceIds, toolCallIds } };
 }
+
 
 /**
  * Append one turn's retrieval tool-result stream part onto the accumulator
@@ -301,4 +314,48 @@ export function recordToolResult(
   if (part.type !== "tool-result" || part.preliminary) return;
   if (typeof part.toolName !== "string" || typeof part.toolCallId !== "string") return;
   acc.push({ type: `tool-${part.toolName}`, toolCallId: part.toolCallId, output: part.output });
+}
+
+/** The subset of a raw stream part this module reads. */
+type ClaimCheckStreamPart = {
+  type: string;
+  toolName?: unknown;
+  toolCallId?: unknown;
+  output?: unknown;
+  preliminary?: unknown;
+};
+
+/**
+ * The whole feature's switch, as one function: feed it every raw stream part
+ * of a turn and it returns the `finish` part's claim-check metadata fragment
+ * (and `{}` for every other part).
+ *
+ * It exists because this was two statements sitting 20 lines apart inside a
+ * 5,000-line route factory — an accumulator push in `messageMetadata` and a
+ * spread in its `finish` branch — so nothing failed if the fragment never
+ * reached the client. There is a realistic way for that to happen:
+ * `guardToolOutput` (src/exulu/tool-output-offload.ts) replaces an over-cap
+ * tool output with `{ truncated, notice, preview }`, which has no `result`
+ * key, so `retrievedIdsOf` skips it and the fragment goes missing. Agentic
+ * retrieval is exempt from that offload today only because of a `Set` literal
+ * in an unrelated file (`OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS` in
+ * convert-exulu-tools-to-ai-sdk-tools.ts, which has its own test asserting
+ * agentic_context_search is still in it).
+ *
+ * The config is read ONCE here, at the start of the turn, and handed to
+ * `claimCheckMetadata` — never parsed twice per turn by two callers who could
+ * disagree. A disabled check returns a no-op handler, so the turns that do
+ * not use this feature (the vast majority) pay nothing per stream part.
+ */
+export function claimCheckStreamMetadata(
+  ctx: ClaimCheckTurnContext,
+): (part: ClaimCheckStreamPart) => { claimCheck: ClaimCheckTrigger } | Record<string, never> {
+  if (!ctx.config.enabled) return () => ({});
+
+  const toolResults: { type: string; toolCallId: string; output: unknown }[] = [];
+  return (part) => {
+    recordToolResult(toolResults, part);
+    if (part.type !== "finish") return {};
+    return claimCheckMetadata({ ...ctx, toolResults });
+  };
 }

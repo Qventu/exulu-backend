@@ -62,9 +62,9 @@ import { markStreamActive, clearStreamActive, isStreamActive } from "./active-st
 import { resumeRoutineRunIfWaiting } from "@SRC/exulu/routines/run-state";
 import { compactSession, CompactionInsufficientError } from "./compact-session.ts";
 import { describeRequestError } from "./request-error.ts";
-import { finishTurnMetadata } from "./turn-metadata.ts";
+import { finishTurnMetadata, type ChatUIMessage } from "./turn-metadata.ts";
 import { recalledMemoriesMetadata } from "./memory/recalled-metadata.ts";
-import { claimCheckMetadata, recordToolResult } from "./claim-check/finish-metadata.ts";
+import { claimCheckStreamMetadata } from "./claim-check/finish-metadata.ts";
 import { isPublicSurface, treatAsGuest } from "./public-surface.ts";
 import { recordMemoryUsage } from "./memory/usage.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
@@ -828,19 +828,6 @@ export const createExpressRoutes = async (
 
         if (headers.session) markStreamActive(headers.session as string);
         const turnStartedAt = Date.now();
-        // claimCheckMetadata needs the turn's retrieval tool results, shaped
-        // like the assistant message's parts — but `messageMetadata`'s `finish`
-        // branch only ever receives the `finish` stream part itself (no
-        // message/parts access), and onFinish (which does get the assembled
-        // responseMessage) only fires AFTER that `finish` part — and its
-        // metadata — has already been sent to the client. So we collect each
-        // retrieval tool call's FINAL (non-preliminary) result ourselves as it
-        // streams past messageMetadata, below, and read it back once `finish`
-        // arrives.
-        const turnToolResults: { type: string; toolCallId: string; output: unknown }[] = [];
-        // Don't bother accumulating for the vast majority of turns where the
-        // check is off — read the flag once rather than on every stream part.
-        const claimCheckEnabled = pipelineConfigFor(agent).claimCheck.enabled;
         let result: Awaited<ReturnType<typeof generateStream>>;
         try {
           result = await generateStream({
@@ -879,12 +866,37 @@ export const createExpressRoutes = async (
         // even when the client response is aborted:
         result.stream.consumeStream(); // no await
 
-        result.stream.pipeUIMessageStreamToResponse(res, {
+        // The claim-check fragment needs the turn's retrieval tool results,
+        // but `messageMetadata`'s `finish` branch only ever receives the
+        // `finish` stream part itself (no message/parts access), and onFinish
+        // (which does get the assembled responseMessage) only fires AFTER
+        // that `finish` part — and its metadata — has already been sent to
+        // the client. So the handler below accumulates each retrieval call's
+        // FINAL (non-preliminary) result as it streams past, and emits the
+        // fragment when `finish` arrives. One function, with its own tests:
+        // see claimCheckStreamMetadata.
+        const claimCheckOnPart = claimCheckStreamMetadata({
+          config: pipelineConfigFor(agent).claimCheck,
+          user,
+          // The public surface is a guest surface even for a signed-in
+          // visitor, same expression recalledMemoriesMetadata uses below.
+          isGuest: treatAsGuest(req, user),
+          isLicensed: Boolean(checkLicense()["claim-check"]),
+          // The PRE-inlining view of this turn's prompt (history + the new
+          // message): result.originalMessages has already had every attached
+          // document turned into a text part, which is the one thing the
+          // fragment must suppress on.
+          messages: [...result.previousMessages, ...(message ? [message] : [])],
+          // Same collector recalledMemoriesMetadata reads below.
+          recall: result.recall,
+        });
+
+        result.stream.pipeUIMessageStreamToResponse<ChatUIMessage>(res, {
           messageMetadata: ({ part }) => {
-            // Record each retrieval tool call's final result (see
-            // turnToolResults above). Pure bookkeeping: returns nothing, so it
-            // never becomes a message-metadata chunk of its own.
-            if (claimCheckEnabled) recordToolResult(turnToolResults, part);
+            // Accumulates on every part; returns the fragment only on
+            // `finish`, and `{}` on everything else (including every part of
+            // a turn whose agent has the check off).
+            const claimCheck = claimCheckOnPart(part);
             // Per-step usage: the LAST step's inputTokens reflects the actual
             // prompt size of this turn (totalUsage sums every step's full
             // prompt, inflating multi-step turns ~stepCount×). Last write wins
@@ -902,28 +914,20 @@ export const createExpressRoutes = async (
                 // the page renders in guest mode, so the data has to follow.
                 ...recalledMemoriesMetadata({ recall: result.recall, agent, isGuest: treatAsGuest(req, user) }),
                 // The chat posts the check itself once the stream ends; this
-                // only tells it that it may, and which sources to send. Same
-                // isGuest expression as recalledMemoriesMetadata above: a
-                // signed-in visitor on the public surface is external too.
-                // `messages` is the PRE-inlining view of this turn's prompt
-                // (history + the new message): result.originalMessages has
-                // already had every attached document turned into a text
-                // part, which is the one thing the fragment must suppress on.
-                // `recall` is the same collector the line above reads.
-                ...claimCheckMetadata({
-                  agent,
-                  user,
-                  isGuest: treatAsGuest(req, user),
-                  isLicensed: Boolean(checkLicense()["claim-check"]),
-                  toolResults: turnToolResults,
-                  messages: [...result.previousMessages, ...(message ? [message] : [])],
-                  recall: result.recall,
-                }),
+                // only tells it that it may, and which sources to send.
+                ...claimCheck,
               };
             }
             return undefined;
           },
-          originalMessages: result.originalMessages,
+          // The ChatUIMessage generic above is there to type-check the
+          // messageMetadata return; the SDK reads only ids and roles off
+          // originalMessages (to id the response message for persistence).
+          // generate-stream hands back plain UIMessages, whose `metadata` is
+          // `unknown` — wider than ChatMessageMetadata, not narrower — so
+          // this assertion cannot hide a mistake in the metadata the callback
+          // builds, which is the thing the generic is here to catch.
+          originalMessages: result.originalMessages as ChatUIMessage[],
           sendReasoning: true,
           sendSources: true,
           onError: (error) => {

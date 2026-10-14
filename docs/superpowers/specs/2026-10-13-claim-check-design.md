@@ -239,8 +239,8 @@ documented in `mintlify-docs`.
 
 ## 5. Chat integration
 
-At `finish`, next to `recalledMemoriesMetadata`, a `claimCheckMetadata({ cfg, toolResults,
-isGuest })` fragment carrying **ids only**:
+At `finish`, next to `recalledMemoriesMetadata`, a `claimCheckMetadata({ config, toolResults,
+isGuest, … })` fragment carrying **ids only**:
 
 ```jsonc
 { "claimCheck": { "enabled": true, "sourceIds": ["…"], "toolCallIds": ["…"] } }
@@ -250,6 +250,16 @@ The client already holds the full tool output — it renders source cards from i
 ~22k tokens of evidence through metadata would be pure waste. The frontend assembles `sources[]`
 from what it has. When the agent has the feature off, or the viewer is a guest/external user and
 `showToExternalUsers` is false, the fragment is absent and no check ever runs.
+
+The accumulate-then-emit pair is **one function**, `claimCheckStreamMetadata`: the chat route hands
+it the turn's context once (the parsed `claim_check` config, the viewer, the pre-inlining messages,
+the recall collector) and then feeds it every raw stream part. It collects each retrieval call's
+final tool result — `messageMetadata` is the only hook with access to tool outputs before the
+`finish` part needs them — and returns the fragment on `finish`. One function rather than two
+statements 20 lines apart in a 5,000-line route factory, because this is the feature's switch and
+nothing failed when it was silently broken. `pipeUIMessageStreamToResponse<ChatUIMessage>` carries
+the metadata type, so the fragment's shape is checked against `ClaimCheckTrigger` rather than
+against nothing.
 
 `isGuest` is `treatAsGuest(req, user)`, not a role test: the public surface renders in guest mode
 even for a signed-in internal visitor, so the surface and the role are ORed. The endpoint's own
