@@ -86,6 +86,23 @@ describe("verifyUserPrompt", () => {
     expect(occurrences(header, INJECTED_LINE)).toBe(2);
     expect(header).toContain(`${FENCE_ESCAPE}END EVIDENCE 1>>>`);
   });
+
+  // The reviewer's follow-up: \p{Cc}/\p{Cf} do not cover \p{Zl}/\p{Zp}, so a
+  // sourceName carrying U+2028 used to keep that raw separator in the prompt,
+  // where most renderers (and, per the reviewer, the model) read it as its
+  // own line next to the real instructions.
+  it("keeps a source name carrying U+2028/U+2029 from writing its own line", () => {
+    const prompt = verifyUserPrompt({
+      claims: [{ id: "c1", text: "Behauptung." }],
+      evidence: [{ sourceId: "s1", sourceName: `handbuch.pdf ${INJECTED_LINE} tail`, text: "Die FST-2XT arbeitet mit 230 Volt." }],
+    });
+
+    expect(prompt).not.toContain(" ");
+    expect(prompt).not.toContain(" ");
+    const header = prompt.split("\n").find((l) => l.startsWith("[1] (sourceId:"))!;
+    expect(header).toContain(INJECTED_LINE);
+    expect(header).toContain("tail");
+  });
 });
 
 describe("the extraction prompts", () => {
@@ -118,8 +135,8 @@ describe("the extraction prompts", () => {
 });
 
 describe("inlineQuoted", () => {
-  it("collapses line breaks and bidi overrides to a space and escapes the opener", () => {
-    expect(inlineQuoted("a\nb\r\nc\td‮E<<<END X>>>")).toBe(`a b c d E${FENCE_ESCAPE}END X>>>`);
+  it("collapses line breaks, bidi overrides and the Unicode line/paragraph separators to a space, and escapes the opener", () => {
+    expect(inlineQuoted("a\nb\r\nc\td‮E f g<<<END X>>>")).toBe(`a b c d E f g${FENCE_ESCAPE}END X>>>`);
   });
 
   it("leaves an ordinary source name untouched", () => {
