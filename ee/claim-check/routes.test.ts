@@ -146,6 +146,104 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
     expect(runCheck).not.toHaveBeenCalled();
   });
 
+  // Finding 1: a request may TIGHTEN a cap, never loosen one. Without the
+  // clamp, these three numbers would reach the engine verbatim and buy an
+  // authenticated non-admin thousands of provider calls and up to 5,000 full
+  // retrievals per request, repeatable at the limiter's 30/min.
+  it("clamps request-supplied caps down to the configured values instead of honouring them", async () => {
+    const { app, runCheck } = buildApp();
+    const res = await request(app)
+      .post(CLAIM_CHECK_PATH)
+      .send({ ...BODY, options: { caps: { maxSentences: 5000, maxClaims: 5000, maxReRetrievals: 5000 } } });
+
+    expect(res.status).toBe(200);
+    // The engine-default configuration (no agent) is also the module ceiling.
+    expect(runCheck.mock.calls[0][0].options.caps).toEqual({
+      maxSentences: 120,
+      maxClaims: 200,
+      maxReRetrievals: 10,
+    });
+  });
+
+  it("honours a request cap that is lower than the configured one", async () => {
+    const { app, runCheck } = buildApp();
+    const res = await request(app)
+      .post(CLAIM_CHECK_PATH)
+      .send({ ...BODY, options: { caps: { maxSentences: 5, maxClaims: 7, maxReRetrievals: 0 } } });
+
+    expect(res.status).toBe(200);
+    expect(runCheck.mock.calls[0][0].options.caps).toEqual({
+      maxSentences: 5,
+      maxClaims: 7,
+      maxReRetrievals: 0,
+    });
+  });
+
+  it("never lets a configured cap exceed the module ceiling", async () => {
+    const agentWithHugeCaps = {
+      id: "agent-1",
+      model: "agent-model",
+      tools: [
+        {
+          id: "agentic_context_search",
+          config: [
+            {
+              name: "claim_check",
+              type: "json",
+              variable: '{"enabled":true,"caps":{"maxSentences":9000,"maxClaims":9000,"maxReRetrievals":9000}}',
+            },
+          ],
+        },
+      ],
+    };
+    const { app, runCheck } = buildApp({ getAgent: async () => agentWithHugeCaps as any });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
+
+    expect(res.status).toBe(200);
+    expect(runCheck.mock.calls[0][0].options.caps).toEqual({
+      maxSentences: 120,
+      maxClaims: 200,
+      maxReRetrievals: 10,
+    });
+  });
+
+  // Finding 1: paper fidelity and voting multiply the call count, so they are
+  // gated like `model` is — our own benchmark runs with an admin key.
+  it("403s a non-admin caller asking for paper fidelity, without running anything", async () => {
+    const { app, runCheck } = buildApp();
+    const res = await request(app)
+      .post(CLAIM_CHECK_PATH)
+      .send({ ...BODY, options: { fidelity: "paper" } });
+
+    expect(res.status).toBe(403);
+    expect(String(res.body.detail)).toContain("super-admin");
+    expect(String(res.body.detail)).toContain("claim_check.fidelity");
+    expect(runCheck).not.toHaveBeenCalled();
+  });
+
+  it("403s a non-admin caller asking for more than one completion, without running anything", async () => {
+    const { app, runCheck } = buildApp();
+    const res = await request(app)
+      .post(CLAIM_CHECK_PATH)
+      .send({ ...BODY, options: { completions: 3 } });
+
+    expect(res.status).toBe(403);
+    expect(runCheck).not.toHaveBeenCalled();
+  });
+
+  it("lets a super admin ask for paper fidelity with voting", async () => {
+    const { app, runCheck } = buildApp({
+      authenticate: async () => ({ user: { id: 7, type: "user", super_admin: true } as any }),
+    });
+    const res = await request(app)
+      .post(CLAIM_CHECK_PATH)
+      .send({ ...BODY, options: { fidelity: "paper", completions: 3 } });
+
+    expect(res.status).toBe(200);
+    expect(runCheck.mock.calls[0][0].options.fidelity).toBe("paper");
+    expect(runCheck.mock.calls[0][0].options.completions).toBe(3);
+  });
+
   it("falls back through claim_check.model, utility_model and the agent model", async () => {
     const resolveModel = jest.fn(async ({ modelId }: any) => ({ languageModel: { modelId } }) as any);
     const agentWith = (config: Record<string, string>) => ({

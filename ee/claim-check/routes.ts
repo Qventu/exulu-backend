@@ -20,6 +20,23 @@ const MAX_ANSWER_CHARS = 200_000;
 const MAX_EVIDENCE_CHARS = 2_000_000;
 const MAX_SOURCES = 200;
 
+/**
+ * Absolute ceilings for the work one request may order, on top of the agent's
+ * configured caps. A request can only ever TIGHTEN a cap (Math.min), so an
+ * authenticated non-admin cannot buy itself thousands of provider calls and
+ * thousands of full retrievals by posting a bigger number; an operator can
+ * configure lower than these, nobody can configure higher through the body.
+ * The values are the engine defaults (CLAIM_CHECK_DEFAULTS.caps).
+ */
+export const MAX_SENTENCES_CEILING = 120;
+export const MAX_CLAIMS_CEILING = 200;
+export const MAX_RERETRIEVALS_CEILING = 10;
+
+/** requested ?? configured, then floored by both the configured value and the module ceiling. */
+function clampCap(requested: number | undefined, configured: number, ceiling: number): number {
+  return Math.min(requested ?? configured, configured, ceiling);
+}
+
 const requestSchema = z.object({
   question: z.string().min(1),
   answer: z.string().min(1),
@@ -124,6 +141,20 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
       return;
     }
 
+    // Same reasoning as the model gate, for the two knobs that multiply the
+    // call count rather than the price per call: `paper` unmerges every stage
+    // and batches one sentence per call, and `completions` votes each of those
+    // stages N times. Both are benchmark instruments (spec §8), and our own
+    // benchmark runs with an admin key.
+    if ((body.options?.fidelity === "paper" || (body.options?.completions ?? 1) > 1) && !user.super_admin) {
+      res.status(403).json({
+        detail:
+          "`options.fidelity: \"paper\"` and `options.completions` above 1 require a super-admin key; " +
+          "configure claim_check.fidelity and claim_check.completions on the agent instead.",
+      });
+      return;
+    }
+
     let agent: any | undefined;
     if (body.agent) {
       const scope = deps.checkApiKeyScope(user, body.agent);
@@ -198,10 +229,16 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
         warn: body.options?.thresholds?.warn ?? cfg.claimCheck.thresholds.warn,
         alert: body.options?.thresholds?.alert ?? cfg.claimCheck.thresholds.alert,
       },
+      // Caps CLAMP, they do not override: a caller may tighten a check (cheaper,
+      // narrower) but never loosen one.
       caps: {
-        maxSentences: body.options?.caps?.maxSentences ?? cfg.claimCheck.caps.maxSentences,
-        maxClaims: body.options?.caps?.maxClaims ?? cfg.claimCheck.caps.maxClaims,
-        maxReRetrievals: body.options?.caps?.maxReRetrievals ?? cfg.claimCheck.caps.maxReRetrievals,
+        maxSentences: clampCap(body.options?.caps?.maxSentences, cfg.claimCheck.caps.maxSentences, MAX_SENTENCES_CEILING),
+        maxClaims: clampCap(body.options?.caps?.maxClaims, cfg.claimCheck.caps.maxClaims, MAX_CLAIMS_CEILING),
+        maxReRetrievals: clampCap(
+          body.options?.caps?.maxReRetrievals,
+          cfg.claimCheck.caps.maxReRetrievals,
+          MAX_RERETRIEVALS_CEILING,
+        ),
       },
     };
 

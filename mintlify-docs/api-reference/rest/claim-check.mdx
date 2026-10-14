@@ -43,7 +43,23 @@ Sentences that carry nothing to verify — introductions, conclusions, opinions,
 | `session`, `messageId` | `string` | Optional provenance fields; not used for access control. |
 | `model` | `string` | Optional model override. **Accepted only from a super-admin caller** — see Model resolution below. A non-admin caller who sets this field gets `403`, not a silently-ignored parameter. |
 | `locale` | `string` | Optional. Defaults to a locale detected from the answer text. |
-| `options` | object | Optional per-call overrides. Omitted keys fall back to the agent's `claim_check` configuration, then to the engine defaults (`fidelity: "fast"`, `completions: 1`, `reRetrieve: true`, `thresholds: { warn: 0.1, alert: 0.3 }`, `caps: { maxSentences: 120, maxClaims: 200, maxReRetrievals: 10 }`). |
+| `options` | object | Optional per-call overrides. Omitted keys fall back to the agent's `claim_check` configuration, then to the engine defaults (`fidelity: "fast"`, `completions: 1`, `reRetrieve: true`, `thresholds: { warn: 0.1, alert: 0.3 }`, `caps: { maxSentences: 120, maxClaims: 200, maxReRetrievals: 10 }`). `options.caps` **clamp, they do not override** — see Option limits below. `options.fidelity: "paper"` and `options.completions` above 1 are **super-admin only** (`403` otherwise). |
+
+### Option limits
+
+`options.thresholds` are honoured as given (`warn` must not exceed `alert`, otherwise `400`), but the three `options.caps` values are **clamped, never honoured upwards**:
+
+```
+effective cap = min(requested, configured on the agent, module ceiling)
+```
+
+| Cap | Module ceiling |
+|---|---|
+| `caps.maxSentences` | 120 |
+| `caps.maxClaims` | 200 |
+| `caps.maxReRetrievals` | 10 |
+
+So a request can make a check cheaper and narrower, never more expensive: asking for `maxSentences: 5000` on an agent configured at 120 runs 120. An operator may configure a cap *below* the ceiling; nobody can configure one above it through the request body. The same reasoning gates the two options that multiply the number of provider calls rather than their price — `fidelity: "paper"` (which unmerges every stage and batches one sentence per call) and `completions` above 1 (which votes each of those stages N times). Both are benchmark instruments and both require a super-admin caller; everyone else configures `claim_check.fidelity` and `claim_check.completions` on the agent. `completions` is ignored outside `paper` fidelity, because only `paper` votes.
 
 ### Model resolution
 
@@ -124,7 +140,7 @@ When `agent` is set and `options.reRetrieve` is on, `unsupported` claims get one
 | `200` | The check ran, `status` is `"ok"` or `"partial"`. |
 | `400` | The request body failed validation, or no model could be resolved (`detail` names `claim_check.default_model`). |
 | `401` | Authentication failed. |
-| `403` | The API key is not scoped to the named `agent`, or the caller cannot read it. Also returned when a non-super-admin caller sets `model` in the request body. |
+| `403` | The API key is not scoped to the named `agent`, or the caller cannot read it. Also returned when a non-super-admin caller sets `model`, `options.fidelity: "paper"`, or `options.completions` above 1 in the request body. |
 | `404` | The deployment is not licensed for claim check. The endpoint does not advertise a feature the deployment has not bought, so this looks identical to a route that does not exist. Also returned, with `{ "detail": "Agent {id} not found." }`, when an `agent` is named that does not exist. |
 | `413` | A payload cap was exceeded (see below). The engine is never invoked. |
 | `429` | The caller's rate-limit budget, or the server's global in-flight budget, is exhausted. |
