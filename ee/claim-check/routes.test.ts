@@ -56,6 +56,10 @@ function buildApp(overrides: Partial<ClaimCheckRouteDeps> = {}) {
   return { app, deps, runCheck: deps.runCheck as jest.Mock };
 }
 
+function post(app: ReturnType<typeof express>, body: unknown) {
+  return request(app).post(CLAIM_CHECK_PATH).send(body);
+}
+
 describe(`POST ${CLAIM_CHECK_PATH}`, () => {
   it("returns the engine's result for a valid request", async () => {
     const { app, runCheck } = buildApp();
@@ -747,6 +751,59 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
     const second = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
     expect(second.status).toBe(500);
     errorSpy.mockRestore();
+  });
+});
+
+// Stage 4, Task B2: `content` is the only required field on a source. `id`
+// becomes optional and positional, `type` is accepted but dropped before the
+// engine sees it, and two sources naming the same id are a 400, not a merge.
+describe("source normalisation", () => {
+  it("accepts a source with only content, and assigns it a positional id", async () => {
+    const runCheck = jest.fn().mockResolvedValue(RESULT);
+    const { app } = buildApp({ runCheck });
+    await post(app, { question: "q", answer: "a", sources: [{ content: "230 Volt." }] }).expect(200);
+    expect(runCheck.mock.calls[0][0].sources).toEqual([{ id: "s1", content: "230 Volt." }]);
+  });
+
+  it("keeps a caller's own id and name, and carries type through without acting on it", async () => {
+    const runCheck = jest.fn().mockResolvedValue(RESULT);
+    const { app } = buildApp({ runCheck });
+    await post(app, {
+      question: "q", answer: "a",
+      sources: [{ id: "memory:m_7", name: "Sprache", type: "memory", content: "Deutsch." }],
+    }).expect(200);
+    expect(runCheck.mock.calls[0][0].sources).toEqual([{ id: "memory:m_7", name: "Sprache", content: "Deutsch." }]);
+  });
+
+  it("does not let a generated id collide with one the caller supplied", async () => {
+    const runCheck = jest.fn().mockResolvedValue(RESULT);
+    const { app } = buildApp({ runCheck });
+    await post(app, { question: "q", answer: "a", sources: [{ content: "first" }, { id: "s1", content: "second" }] }).expect(200);
+    const ids = runCheck.mock.calls[0][0].sources.map((s: { id: string }) => s.id);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids).toContain("s1");
+  });
+
+  // Review Focus 5
+  it("rejects two sources that supply the same id rather than merging them", async () => {
+    const { app } = buildApp({});
+    const res = await post(app, {
+      question: "q", answer: "a",
+      sources: [{ id: "doc", content: "one" }, { id: "doc", content: "two" }],
+    }).expect(400);
+    expect(res.body.detail).toMatch(/duplicate source id/i);
+  });
+
+  it("rejects an unknown source type", async () => {
+    const { app } = buildApp({});
+    await post(app, { question: "q", answer: "a", sources: [{ content: "x", type: "guesswork" }] }).expect(400);
+  });
+
+  it("still accepts the Stage 1 shape, id and all", async () => {
+    const runCheck = jest.fn().mockResolvedValue(RESULT);
+    const { app } = buildApp({ runCheck });
+    await post(app, { question: "q", answer: "a", sources: [{ id: "i1", name: "h.pdf", content: "x" }] }).expect(200);
+    expect(runCheck.mock.calls[0][0].sources[0].id).toBe("i1");
   });
 });
 

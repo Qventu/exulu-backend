@@ -11,7 +11,7 @@ import type { User } from "@EXULU_TYPES/models/user";
 import type { ScopeCheckResult } from "@SRC/utils/check-api-key-scope";
 import { isExternalOrAnonymousUser } from "@SRC/exulu/resolve-max-steps";
 import { treatAsGuest } from "@SRC/exulu/public-surface";
-import { type ClaimCheckOptions, type ClaimCheckResult } from "./types";
+import { type ClaimCheckOptions, type ClaimCheckResult, type ClaimCheckSource, type ClaimCheckSourceType } from "./types";
 import type { ClaimCheckRateLimiter } from "./rate-limit";
 import { pipelineConfigFor } from "./agent-config";
 
@@ -123,11 +123,41 @@ function clampCap(requested: number | undefined, configured: number): number {
   return Math.min(requested ?? configured, configured);
 }
 
+/**
+ * Spelled once, derived from the one declaration of `ClaimCheckSourceType`
+ * (./types) rather than re-spelled here: `satisfies` below catches an entry
+ * that is not a member of that union, and the type-level check right after
+ * catches the opposite drift — a union member missing from this array. Two
+ * independently hand-spelled lists would drift silently the day a seventh
+ * type is added there: the enum would just reject a type the rest of the
+ * system emits, with no compile error pointing at why.
+ */
+const SOURCE_TYPES = [
+  "knowledge_base",
+  "document",
+  "memory",
+  "web",
+  "session_item",
+  "other",
+] as const satisfies readonly ClaimCheckSourceType[];
+type _SourceTypesCoverTheWholeUnion = ClaimCheckSourceType extends (typeof SOURCE_TYPES)[number] ? true : never;
+const _sourceTypesCoverTheWholeUnion: _SourceTypesCoverTheWholeUnion = true;
+
 const requestSchema = z.object({
   question: z.string().min(1),
   answer: z.string().min(1),
   sources: z
-    .array(z.object({ id: z.string().min(1), name: z.string().optional(), content: z.string() }))
+    .array(
+      z.object({
+        content: z.string(),
+        name: z.string().optional(),
+        // Accepted, and deliberately dropped before the engine sees it — see
+        // assignSourceIds below. Validated here anyway so a caller gets a 400
+        // naming the bad value instead of the field being silently ignored.
+        type: z.enum(SOURCE_TYPES).optional(),
+        id: z.string().min(1).optional(),
+      }),
+    )
     .default([]),
   agent: z.string().optional(),
   session: z.string().optional(),
@@ -154,6 +184,50 @@ const requestSchema = z.object({
     })
     .optional(),
 });
+
+type RequestSource = { content: string; name?: string; type?: ClaimCheckSourceType; id?: string };
+
+/**
+ * One id per source, because `evidence[].sourceId` has to resolve to exactly
+ * one document. A caller may supply ids for some sources, none, or all — so a
+ * generated id gets `_` suffixes until it stops colliding with a supplied
+ * one, and two sources supplying the SAME id are refused outright: an
+ * evidence quote that cannot be traced to exactly one document is worse than
+ * a rejected request, since the panel shows a quote to a reader as the
+ * justification for a verdict.
+ *
+ * `type` is accepted on the request (spec §3-4: it lets a UI label and group
+ * sources, and makes a request self-describing in a log) and deliberately
+ * dropped right here, before the engine ever sees a source. The engine
+ * (run.ts, evidence.ts) treats every source identically regardless of where
+ * it came from — spec §2 rejects trust tiers, so a web page and a
+ * knowledge-base document carry the same evidentiary weight. Do not thread
+ * this field through to the engine "to not lose it": the engine's source
+ * type is `{ id, name?, content }` on purpose, and stays that way.
+ */
+function assignSourceIds(
+  sources: RequestSource[],
+): { ok: true; sources: ClaimCheckSource[] } | { ok: false; detail: string } {
+  const supplied = new Set<string>();
+  for (const s of sources) {
+    if (!s.id) continue;
+    if (supplied.has(s.id)) return { ok: false, detail: `duplicate source id "${s.id}"` };
+    supplied.add(s.id);
+  }
+  const used = new Set(supplied);
+  return {
+    ok: true,
+    sources: sources.map((s, i) => {
+      let id = s.id;
+      if (!id) {
+        id = `s${i + 1}`;
+        while (used.has(id)) id = `${id}_`;
+      }
+      used.add(id);
+      return s.name ? { id, name: s.name, content: s.content } : { id, content: s.content };
+    }),
+  };
+}
 
 export type ClaimCheckRouteDeps = {
   authenticate: (req: Request) => Promise<{ user?: User; error?: boolean; code?: number; message?: string }>;
@@ -217,15 +291,24 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
     }
     const body = parsed.data;
 
+    // `type` is validated above and discarded here, before anything else
+    // touches `sources` — see assignSourceIds's own doc comment.
+    const assigned = assignSourceIds(body.sources);
+    if (!assigned.ok) {
+      res.status(400).json({ detail: assigned.detail });
+      return;
+    }
+    const sources = assigned.sources;
+
     if (body.answer.length > MAX_ANSWER_CHARS) {
       res.status(413).json({ detail: `answer exceeds ${MAX_ANSWER_CHARS} characters.` });
       return;
     }
-    if (body.sources.length > MAX_SOURCES) {
+    if (sources.length > MAX_SOURCES) {
       res.status(413).json({ detail: `more than ${MAX_SOURCES} sources.` });
       return;
     }
-    const evidenceChars = body.sources.reduce((n, s) => n + s.content.length, 0);
+    const evidenceChars = sources.reduce((n, s) => n + s.content.length, 0);
     if (evidenceChars > MAX_EVIDENCE_CHARS) {
       res.status(413).json({ detail: `source content exceeds ${MAX_EVIDENCE_CHARS} characters in total.` });
       return;
@@ -478,7 +561,7 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
         deps.runCheck({
           question: body.question,
           answer: body.answer,
-          sources: body.sources,
+          sources,
           model,
           options,
           signal: controller.signal,
