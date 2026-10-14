@@ -624,33 +624,9 @@ export function createAgenticRetrievalTool(opts: {
       // Built once per run and shared by both rerank call sites below: each knowledge
       // base stores its chunks in its own table, so the lookup is scoped to the known
       // context ids (excludes the synthetic "memory" tag, which has no own table).
-      //
-      // EXULU_DISABLE_DUPLICATE_SUPPRESSION is a benchmark-only escape hatch, deliberately
-      // an environment variable and NOT a product config field or a second agent flag:
-      // `suppress_duplicate_passages` stays one flag with exactly two product states, so
-      // flag-off still reproduces the pre-flag behaviour exactly. The hatch disables only
-      // the suppression half and leaves the widened identifier-pin supplement budget
-      // active (passed to the prefilter above, untouched here) — the `pins-only` run of
-      // scripts/memory-eval, which is the only measurement of what a knowledge base with
-      // no duplicates actually receives from the flag: up to 35 extra marginal pin
-      // candidates, each carrying pinBoost, with suppression a no-op.
-      // Explicit on-list only (case-insensitive, trimmed): "1"/"true"/"yes"/"on" activate it.
-      // Everything else — absent, empty/whitespace, "0"/"false"/"no"/"off", or unrecognised — is normal behaviour.
-      const suppressionHatch = process.env.EXULU_DISABLE_DUPLICATE_SUPPRESSION ?? "";
-      const suppressionDisabledByEnv = ["1", "true", "yes", "on"].includes(suppressionHatch.trim().toLowerCase());
-      if (suppressionDisabledByEnv && cfg.suppressDuplicatePassages) {
-        // Logged on every run it affects, not once at boot: a developer who sets it and
-        // forgets would otherwise read a silently different benchmark as a real result.
-        console.warn(
-          `[EXULU pipeline] EXULU_DISABLE_DUPLICATE_SUPPRESSION=${suppressionHatch} — near-duplicate ` +
-            "suppression is OFF while the widened identifier-pin budget stays ON (benchmark 'pins-only' " +
-            "mode). This is NOT production behaviour; unset the variable to restore suppression.",
-        );
-      }
-      const findNearDuplicates =
-        cfg.suppressDuplicatePassages && !suppressionDisabledByEnv
-          ? makeNearDuplicateFinder({ contextIds: Array.from(contextsById.keys()) })
-          : undefined;
+      const findNearDuplicates = cfg.suppressDuplicatePassages
+        ? makeNearDuplicateFinder({ contextIds: Array.from(contextsById.keys()) })
+        : undefined;
 
       result.steps.push({
         stepNumber: 1,
