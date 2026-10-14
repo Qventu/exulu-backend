@@ -27,8 +27,31 @@ const MAX_SOURCES = 200;
  * requests 429 the endpoint deployment-wide. The engine races a timer: the
  * signal cancels the provider calls, the slot is released either way, and the
  * caller gets a 504 rather than an open socket.
+ *
+ * This is the fallback default, and stays the module's own ceiling when
+ * `CLAIM_CHECK_TIMEOUT_MS` is unset or unusable — see
+ * `resolveClaimCheckTimeoutMs` below, which is what the handler actually
+ * races against.
  */
 export const CLAIM_CHECK_TIMEOUT_MS = 60_000;
+
+/**
+ * `CLAIM_CHECK_TIMEOUT_MS` the env var, read fresh per request (not cached at
+ * module load) so a deployment can raise it without a restart of this
+ * module's test doubles, and so the garbage-value fallback below is testable
+ * without re-importing the module. Parsed defensively: an operator raising
+ * `claim_check.caps.maxSentences` without raising this would otherwise spend
+ * hundreds of provider calls and still get a 504, which is strictly worse
+ * than the cap's own "partial" degradation — so a non-numeric or
+ * non-positive value falls back to the default rather than disabling the
+ * deadline (e.g. turning it into `NaN`, which never fires).
+ */
+export function resolveClaimCheckTimeoutMs(): number {
+  const raw = process.env.CLAIM_CHECK_TIMEOUT_MS;
+  if (raw === undefined) return CLAIM_CHECK_TIMEOUT_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : CLAIM_CHECK_TIMEOUT_MS;
+}
 
 /** Thrown by the deadline race only, so the catch can tell 504 from 500. */
 class ClaimCheckTimeoutError extends Error {}
@@ -338,6 +361,7 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
     }
 
     const controller = new AbortController();
+    const timeoutMs = resolveClaimCheckTimeoutMs();
     let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
       const secondChance =
@@ -349,7 +373,7 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
         deadline = setTimeout(() => {
           controller.abort();
           reject(new ClaimCheckTimeoutError());
-        }, CLAIM_CHECK_TIMEOUT_MS);
+        }, timeoutMs);
       });
 
       const result = await Promise.race([
@@ -368,9 +392,9 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
       res.status(200).json(result);
     } catch (err) {
       if (err instanceof ClaimCheckTimeoutError) {
-        console.warn(`[EXULU] claim check exceeded the ${CLAIM_CHECK_TIMEOUT_MS} ms deadline.`);
+        console.warn(`[EXULU] claim check exceeded the ${timeoutMs} ms deadline.`);
         res.status(504).json({
-          detail: `The claim check did not finish within ${CLAIM_CHECK_TIMEOUT_MS / 1000} seconds and was cancelled.`,
+          detail: `The claim check did not finish within ${timeoutMs / 1000} seconds and was cancelled.`,
         });
       } else {
         console.error("[EXULU] claim check failed.", err);

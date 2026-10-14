@@ -134,6 +134,7 @@ Claim check (`POST /claims/check`) verifies an answer's claims against the sourc
 | Variable | Required? | Component | Purpose | Example |
 |---|---|---|---|---|
 | `CLAIM_CHECK_DEFAULT_MODEL` | No | Server | LiteLLM model name used for a claim check when the request names no `model` and no agent configuration supplies one (`claim_check.model`, the retrieval tool's `utility_model`, or the agent's own model). **Required only for agent-less calls** — an API client that posts an answer plus its own sources and names no `agent` gets HTTP 400 until this is set. Calls that name an `agent` resolve the model from its configuration and ignore this variable. | `vertex-gemini-2.5-flash` |
+| `CLAIM_CHECK_TIMEOUT_MS` | No | Server | Request deadline for `POST /claims/check`, in milliseconds. Defaults to `60000`. A check that has not finished by this deadline is cancelled (provider calls aborted, in-flight slot released) and the caller gets `504`. A non-numeric or non-positive value is ignored and the default is used instead — the deadline is never disabled. Raise this **together with** `claim_check.caps.maxSentences` on an agent: a higher cap means more sentences and more provider calls, so a cap raised without a matching deadline increase just moves where the 504 lands, after the calls — and therefore their cost — have already been spent. | `120000` |
 
 ---
 

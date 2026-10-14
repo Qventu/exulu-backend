@@ -5,6 +5,7 @@ import {
   registerClaimCheckRoutes,
   CLAIM_CHECK_PATH,
   CLAIM_CHECK_TIMEOUT_MS,
+  resolveClaimCheckTimeoutMs,
   type ClaimCheckRouteDeps,
 } from "./routes";
 import { claimCheckRateLimiter } from "./rate-limit";
@@ -588,6 +589,62 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
     }
   });
 
+  // Finding 2: the docs tell a tenant who wants full coverage of a long
+  // answer to raise claim_check.caps.maxSentences, but the 60s deadline was a
+  // hard constant — raising the cap without raising this just moves the
+  // 504 later, after more calls were spent. The deadline now reads
+  // CLAIM_CHECK_TIMEOUT_MS so an operator can size both together.
+  it("races the deadline from CLAIM_CHECK_TIMEOUT_MS instead of the hardcoded 60s default", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const originalEnv = process.env.CLAIM_CHECK_TIMEOUT_MS;
+    process.env.CLAIM_CHECK_TIMEOUT_MS = "500";
+    jest.useFakeTimers({
+      doNotFake: [
+        "Date", "hrtime", "nextTick", "performance", "queueMicrotask",
+        "requestAnimationFrame", "cancelAnimationFrame", "requestIdleCallback",
+        "cancelIdleCallback", "setImmediate", "clearImmediate", "setInterval", "clearInterval",
+      ],
+    });
+    try {
+      let signal: AbortSignal | undefined;
+      const runCheck = jest.fn((args: any) => {
+        signal = args.signal;
+        return new Promise(() => {}) as Promise<any>;
+      });
+      const limiter = claimCheckRateLimiter({ perMinute: 100, perHour: 1000, maxInFlight: 1 });
+      const { app } = buildApp({ runCheck, limiter });
+
+      const pending = new Promise<{ status: number; body: any }>((resolve, reject) => {
+        request(app)
+          .post(CLAIM_CHECK_PATH)
+          .send(BODY)
+          .end((err, r) => (err ? reject(err) : resolve(r)));
+      });
+
+      // The env-configured 500ms deadline has not elapsed yet — this would
+      // still be well inside the hardcoded 60,000ms default too, so it only
+      // proves the request is still pending, not which deadline is active.
+      await jest.advanceTimersByTimeAsync(400);
+      expect(signal?.aborted).toBeFalsy();
+
+      // Crossing 500ms (but nowhere near 60,000ms) must trigger the timeout:
+      // this is the assertion that fails if the module ignores the env var
+      // and keeps racing the 60s constant.
+      await jest.advanceTimersByTimeAsync(100);
+      jest.useRealTimers();
+      const res = await pending;
+
+      expect(res.status).toBe(504);
+      expect(String(res.body.detail)).toContain("0.5 seconds");
+      expect(signal!.aborted).toBe(true);
+    } finally {
+      jest.useRealTimers();
+      if (originalEnv === undefined) delete process.env.CLAIM_CHECK_TIMEOUT_MS;
+      else process.env.CLAIM_CHECK_TIMEOUT_MS = originalEnv;
+      warnSpy.mockRestore();
+    }
+  });
+
   it("500s and releases the limiter slot when the engine throws", async () => {
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     const limiter = claimCheckRateLimiter({ perMinute: 2, perHour: 10, maxInFlight: 1 });
@@ -597,5 +654,40 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
     const second = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
     expect(second.status).toBe(500);
     errorSpy.mockRestore();
+  });
+});
+
+describe("resolveClaimCheckTimeoutMs", () => {
+  const originalEnv = process.env.CLAIM_CHECK_TIMEOUT_MS;
+
+  afterEach(() => {
+    if (originalEnv === undefined) delete process.env.CLAIM_CHECK_TIMEOUT_MS;
+    else process.env.CLAIM_CHECK_TIMEOUT_MS = originalEnv;
+  });
+
+  it("falls back to the 60s default when the env var is unset", () => {
+    delete process.env.CLAIM_CHECK_TIMEOUT_MS;
+    expect(resolveClaimCheckTimeoutMs()).toBe(CLAIM_CHECK_TIMEOUT_MS);
+  });
+
+  it("reads a valid positive value from the env var", () => {
+    process.env.CLAIM_CHECK_TIMEOUT_MS = "120000";
+    expect(resolveClaimCheckTimeoutMs()).toBe(120_000);
+  });
+
+  // The deadline must never be disabled: a cap raise without a matching
+  // deadline raise is strictly worse than the default's own "partial"
+  // degradation, so garbage input has to land back on a real, finite
+  // deadline rather than NaN (which never fires) or a negative/zero value
+  // (which fires immediately or not at all).
+  it.each([
+    ["non-numeric", "not-a-number"],
+    ["empty string", ""],
+    ["zero", "0"],
+    ["negative", "-5000"],
+    ["a numeric prefix followed by garbage", "5000ms"],
+  ])("falls back to the default for a %s value", (_label, raw) => {
+    process.env.CLAIM_CHECK_TIMEOUT_MS = raw;
+    expect(resolveClaimCheckTimeoutMs()).toBe(CLAIM_CHECK_TIMEOUT_MS);
   });
 });
