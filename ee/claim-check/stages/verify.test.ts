@@ -98,4 +98,15 @@ describe("runVerification", () => {
     expect(args.maxOutputTokens).toBe(CLAIM_CHECK_MAX_OUTPUT_TOKENS);
     expect(args.temperature).toBe(0);
   });
+
+  it("returns nothing for an empty claim list, without calling the model", async () => {
+    const { outcomes, usage } = await runVerification({
+      claims: [],
+      evidence: EVIDENCE,
+      model: {} as any,
+    });
+    expect(microCall).not.toHaveBeenCalled();
+    expect(outcomes).toEqual([]);
+    expect(usage).toEqual({ calls: 0, inputTokens: 0, outputTokens: 0 });
+  });
 });
