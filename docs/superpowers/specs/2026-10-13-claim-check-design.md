@@ -338,12 +338,22 @@ line in `review-step.tsx` and `summary-card.tsx`.
 ### 5.2 Persistence
 
 A reload must not lose the panel. One table `claim_checks` (`session`, `message_id`, `payload`
-jsonb, `created_at`), written by the endpoint and returned with the session's messages. Created
-through the `core-schema` / initdb path with a column-existence guard — never a standalone
-migration script.
+jsonb, `score_label`, `user`, `created_at`), written by the endpoint whenever a request names both
+`session` and `messageId`. Row uniqueness is **(session, message_id, user)** and the write is an
+`onConflict(...).merge()` upsert, never a delete-then-insert: a destructive statement that has to
+remember to carry a user scope is a defect waiting to recur. Created through the `core-schema` /
+initdb path with a column-existence guard — never a standalone migration script.
 
-A Redis result cache keyed by a hash of (question, answer, sources, options, model), 24 h, makes a
-frontend retry, a double-fire or a reload free.
+Checks are read back through **`GET /claims/check/:session`**, not alongside the session's
+messages: the payload holds the answer's sentences and verbatim source quotes, so it gets one
+deliberate read path, scoped to the authenticated caller in the query itself (`session` AND `user`,
+never a fetch-by-session with a JS filter), and the table has no GraphQL surface at all. The chat
+loads it when a session opens. (The spec originally said "returned with the session's messages";
+the separate route is the better choice and this is the amendment, not a deviation.)
+
+The same row is also consulted by the POST before any model call, so a double-fire, a re-check or a
+retry is free — see §9 for what that leaves of the Redis result cache keyed by a hash of
+(question, answer, sources, options, model).
 
 ## 6. Error handling & resilience
 
@@ -482,6 +492,18 @@ settle it.
 - Embedding-based evidence selection.
 - Per-claim retrieval for external callers (they bring their own sources).
 - Claim-exact highlighting inside rendered Markdown.
+- **In-body sentence highlighting, deferred with a measurement (Stage 3).** Two premises had to hold
+  for whole-answer offsets to land on the rendered answer. The first holds: `streamdown`'s
+  `parseMarkdownIntoBlocks` is lossless (`join("") === input`) across German text, lists, fenced
+  code, tables and runs of blank lines — measured, and pinned by a test. The second does not:
+  `message-renderer.tsx` renders **each text part through its own `Response` call** rather than the
+  joined answer, and mutates the text first — stripping `<file>` tags and replacing citation-shaped
+  blobs with `<cite-marker-*>` elements. So the rendered string is not character-identical to the
+  string the backend segmented, and highlights would drift. The offset-mapping utility
+  (`claim-check-highlight.ts`) is built and tested but deliberately **not wired**; wiring it needs a
+  second measurement first (is the rendered string still character-identical to `answerTextOf`?) or
+  a renderer that renders the joined answer once. The panel lists every claim with its evidence
+  quote, so the feature is complete without this.
 - An `ExuluEval` test-case integration for continuous scoring in the evals UI.
 - **Evidence the fragment cannot represent, as claim-check evidence.** The whole class in §5's
   table: session-attached items, `read_session_file`, `parse_document`, `view_document_page`,
