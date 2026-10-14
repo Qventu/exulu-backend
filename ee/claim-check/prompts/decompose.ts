@@ -1,6 +1,6 @@
 //
 // Our wording of the paper's Decomposition stage (arXiv 2502.10855 §3.4).
-import { SAME_LANGUAGE_RULE } from "./shared";
+import { fenced, SAME_LANGUAGE_RULE, UNTRUSTED_TEXT_RULE } from "./shared";
 
 export const DECOMPOSE_SYSTEM = `You support a fact-checking pipeline.
 
@@ -27,6 +27,8 @@ verifiable claim after all, return an empty list for it — never invent one.
 
 ${SAME_LANGUAGE_RULE}
 
+${UNTRUSTED_TEXT_RULE}
+
 Answer for EVERY target index you were given and for no other index.`;
 
 export function decomposeUserPrompt(args: {
@@ -39,9 +41,9 @@ export function decomposeUserPrompt(args: {
     args.question,
     "",
     "EXCERPT:",
-    args.excerpt,
+    fenced("EXCERPT", args.excerpt),
     "",
     "TARGET SENTENCES:",
-    ...args.targets.map((t) => `[${t.index}] ${t.text}`),
+    fenced("TARGET SENTENCES", args.targets.map((t) => `[${t.index}] ${t.text}`).join("\n")),
   ].join("\n");
 }

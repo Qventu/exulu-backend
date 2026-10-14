@@ -6,7 +6,7 @@ import { microCall } from "@EE/agentic-retrieval/pipeline/micro-call";
 import { splitIntoSentences, buildWindows } from "../split";
 import { runSelectAndDisambiguate } from "./select-disambiguate";
 import { CLAIM_CHECK_MAX_OUTPUT_TOKENS } from "../types";
-import { SAME_LANGUAGE_RULE } from "../prompts/shared";
+import { SAME_LANGUAGE_RULE, UNTRUSTED_TEXT_RULE } from "../prompts/shared";
 
 const ANSWER =
   "Die FST-2XT ist eine Steuerung. Das zeigt, wie wichtig gute Technik ist. Sie wurde dort getauscht.";
@@ -124,5 +124,14 @@ describe("runSelectAndDisambiguate", () => {
     (microCall as jest.Mock).mockResolvedValue({ output: { sentences: [] }, text: "", usage: { inputTokens: 1, outputTokens: 1 } });
     await runSelectAndDisambiguate({ windows: windows(), question: "q", model: {} as any });
     expect(String((microCall as jest.Mock).mock.calls[0][0].system)).toContain(SAME_LANGUAGE_RULE);
+  });
+  // Finding 13: see verify.test.ts.
+  it("fences the caller-supplied excerpt and explains the fences", async () => {
+    (microCall as jest.Mock).mockResolvedValue({ output: { sentences: [] }, text: "", usage: { inputTokens: 1, outputTokens: 1 } });
+    await runSelectAndDisambiguate({ windows: windows(), question: "q", model: {} as any });
+    const args = (microCall as jest.Mock).mock.calls[0][0];
+    expect(String(args.prompt)).toContain("<<<BEGIN EXCERPT>>>");
+    expect(String(args.prompt)).toContain("<<<END EXCERPT>>>");
+    expect(String(args.system)).toContain(UNTRUSTED_TEXT_RULE);
   });
 });

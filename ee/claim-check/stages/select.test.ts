@@ -6,7 +6,7 @@ import { microCall } from "@EE/agentic-retrieval/pipeline/micro-call";
 import { splitIntoSentences, buildWindows } from "../split";
 import { excerptFor, runSelection } from "./select";
 import { CLAIM_CHECK_MAX_OUTPUT_TOKENS } from "../types";
-import { SAME_LANGUAGE_RULE } from "../prompts/shared";
+import { SAME_LANGUAGE_RULE, UNTRUSTED_TEXT_RULE } from "../prompts/shared";
 
 const ANSWER =
   "Die FST-2XT ist eine Steuerung. Das zeigt, wie wichtig gute Technik ist. " +
@@ -138,5 +138,18 @@ describe("runSelection", () => {
     const built = buildWindows(splitIntoSentences(answer, "de"), 5, 5);
     await runSelection({ windows: built, question: "Womit arbeitet sie?", model: {} as any });
     expect(String((microCall as jest.Mock).mock.calls[0][0].prompt)).toContain("Section: FST-2XT Steuerung");
+  });
+  // Finding 13: the answer text is caller-supplied too, and in the IMP case it
+  // is a model's rendering of user-uploaded documents.
+  it("fences the excerpt and the target sentences, and explains the fences", async () => {
+    (microCall as jest.Mock).mockResolvedValue({ output: { sentences: [] }, text: "", usage: { inputTokens: 1, outputTokens: 1 } });
+    await runSelection({ windows: windows(), question: "q", model: {} as any });
+    const args = (microCall as jest.Mock).mock.calls[0][0];
+    const prompt = String(args.prompt);
+    expect(prompt).toContain("<<<BEGIN EXCERPT>>>");
+    expect(prompt).toContain("<<<END EXCERPT>>>");
+    expect(prompt).toContain("<<<BEGIN TARGET SENTENCES>>>");
+    expect(prompt).toContain("<<<END TARGET SENTENCES>>>");
+    expect(String(args.system)).toContain(UNTRUSTED_TEXT_RULE);
   });
 });

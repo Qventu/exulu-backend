@@ -1,6 +1,6 @@
 // Our wording of the paper's Selection stage (arXiv 2502.10855 §3.2). The
 // paper's appendix prompt is a behaviour reference, not a source text.
-import { SAME_LANGUAGE_RULE } from "./shared";
+import { fenced, SAME_LANGUAGE_RULE, UNTRUSTED_TEXT_RULE } from "./shared";
 
 export const SELECT_SYSTEM = `You support a fact-checking pipeline.
 
@@ -29,6 +29,8 @@ sentence is already verifiable, return null for the rewrite.
 
 ${SAME_LANGUAGE_RULE}
 
+${UNTRUSTED_TEXT_RULE}
+
 Answer for EVERY target sentence index you were given, and for no other index. Keep each reason
 under 15 words.`;
 
@@ -42,9 +44,9 @@ export function selectUserPrompt(args: {
     args.question,
     "",
     "EXCERPT:",
-    args.excerpt,
+    fenced("EXCERPT", args.excerpt),
     "",
     "TARGET SENTENCES:",
-    ...args.targets.map((t) => `[${t.index}] ${t.text}`),
+    fenced("TARGET SENTENCES", args.targets.map((t) => `[${t.index}] ${t.text}`).join("\n")),
   ].join("\n");
 }

@@ -1,6 +1,6 @@
 // Our wording of the paper's Disambiguation stage (arXiv 2502.10855 §3.3).
 // This stage is the paper's distinctive contribution: it refuses to guess.
-import { SAME_LANGUAGE_RULE } from "./shared";
+import { fenced, SAME_LANGUAGE_RULE, UNTRUSTED_TEXT_RULE } from "./shared";
 
 /** The stage's rules, without the lead-in line, so the merged fast-path prompt
  *  (task 7) can compose them instead of string-replacing the lead-in out. */
@@ -33,7 +33,9 @@ words.`;
 
 export const DISAMBIGUATE_SYSTEM = `You support a fact-checking pipeline.
 
-${DISAMBIGUATE_RULES}`;
+${DISAMBIGUATE_RULES}
+
+${UNTRUSTED_TEXT_RULE}`;
 
 export function disambiguateUserPrompt(args: {
   question: string;
@@ -45,9 +47,9 @@ export function disambiguateUserPrompt(args: {
     args.question,
     "",
     "EXCERPT:",
-    args.excerpt,
+    fenced("EXCERPT", args.excerpt),
     "",
     "TARGET SENTENCES:",
-    ...args.targets.map((t) => `[${t.index}] ${t.text}`),
+    fenced("TARGET SENTENCES", args.targets.map((t) => `[${t.index}] ${t.text}`).join("\n")),
   ].join("\n");
 }

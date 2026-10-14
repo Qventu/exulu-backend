@@ -3,6 +3,8 @@
 // vocabulary is ours (spec §2.4) and the distinction between "the sources say
 // otherwise" and "the sources are silent" is the whole point of it.
 
+import { fenced, UNTRUSTED_TEXT_RULE } from "./shared";
+
 export const VERIFY_SYSTEM = `You are a strict fact-checker.
 
 You receive numbered EVIDENCE snippets, each tagged with the id of the source it came from, and a
@@ -23,6 +25,8 @@ Rules:
 - Cite only source ids that appear in the evidence you were given.
 - Write the rationale in the language of the claim, in one sentence.
 
+${UNTRUSTED_TEXT_RULE}
+
 Answer for EVERY claim id you were given and for no other id.`;
 
 export function verifyUserPrompt(args: {
@@ -32,7 +36,9 @@ export function verifyUserPrompt(args: {
   return [
     "EVIDENCE:",
     ...args.evidence.map(
-      (e, i) => `[${i + 1}] (sourceId: ${e.sourceId}${e.sourceName ? `, source: ${e.sourceName}` : ""})\n${e.text}`,
+      (e, i) =>
+        `[${i + 1}] (sourceId: ${e.sourceId}${e.sourceName ? `, source: ${e.sourceName}` : ""})\n` +
+        fenced(`EVIDENCE ${i + 1}`, e.text),
     ),
     "",
     "CLAIMS:",
