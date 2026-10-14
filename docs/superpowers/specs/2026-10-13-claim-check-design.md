@@ -251,6 +251,21 @@ The client already holds the full tool output — it renders source cards from i
 from what it has. When the agent has the feature off, or the viewer is a guest/external user and
 `showToExternalUsers` is false, the fragment is absent and no check ever runs.
 
+`isGuest` is `treatAsGuest(req, user)`, not a role test: the public surface renders in guest mode
+even for a signed-in internal visitor, so the surface and the role are ORed. The endpoint's own
+403 applies the same OR — one product rule, two enforcement points. (Stage 3 built the role half
+only and the task review caught it; recorded here because the plan, not the spec, was wrong.)
+
+**A turn that also ran the session-items retrieval tool emits no fragment at all.**
+`createSessionItemsRetrievalTool` is attached to any session with uploaded items and coexists with
+agentic retrieval, but its output is `{ result: JSON.stringify(array) }` with no `chunks` key, so
+its evidence cannot reach the check. Scoring an answer that leans on an attached document against
+the agentic evidence alone would return `unsupported` for claims that are in fact grounded — a
+false hallucination alarm, which §2.4's honesty invariants exist to prevent. A missing panel is the
+safe failure. A parse failure of that tool's output suppresses too: "cannot prove it empty" is not
+"empty". Lifting this needs a second output-shape handler in `finish-metadata.ts` **and** in the
+frontend's `collectSources`, listed in §10.
+
 ### 5.1 Frontend (separate repo, sibling worktree)
 
 Mirrors the recalled-memories pattern exactly: `chat/components/claim-check.tsx` +
@@ -411,5 +426,8 @@ settle it.
 - Per-claim retrieval for external callers (they bring their own sources).
 - Claim-exact highlighting inside rendered Markdown.
 - An `ExuluEval` test-case integration for continuous scoring in the evals UI.
+- Session-attached items as claim-check evidence. Their retrieval tool ships a different output
+  shape, and until both `finish-metadata.ts` and the frontend's `collectSources` handle it, a turn
+  that used it is suppressed rather than checked against partial evidence (see §5).
 - Fixing `suppress_duplicate_passages`' missing wizard entry — noted here because this design
   shares its failure mode, but it is a separate change.
