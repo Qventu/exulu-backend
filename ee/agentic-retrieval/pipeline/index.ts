@@ -623,9 +623,10 @@ export function createAgenticRetrievalTool(opts: {
       // scripts/memory-eval, which is the only measurement of what a knowledge base with
       // no duplicates actually receives from the flag: up to 35 extra marginal pin
       // candidates, each carrying pinBoost, with suppression a no-op.
-      // Absent or empty = normal behaviour; any other value activates it.
+      // Explicit on-list only (case-insensitive, trimmed): "1"/"true"/"yes"/"on" activate it.
+      // Everything else — absent, empty/whitespace, "0"/"false"/"no"/"off", or unrecognised — is normal behaviour.
       const suppressionHatch = process.env.EXULU_DISABLE_DUPLICATE_SUPPRESSION ?? "";
-      const suppressionDisabledByEnv = suppressionHatch !== "";
+      const suppressionDisabledByEnv = ["1", "true", "yes", "on"].includes(suppressionHatch.trim().toLowerCase());
       if (suppressionDisabledByEnv && cfg.suppressDuplicatePassages) {
         // Logged on every run it affects, not once at boot: a developer who sets it and
         // forgets would otherwise read a silently different benchmark as a real result.

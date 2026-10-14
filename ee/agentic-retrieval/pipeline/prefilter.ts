@@ -27,7 +27,9 @@ type ItemsCache = {
 const SUPPLEMENT_MIN_TOKEN_LENGTH = 4;
 /** Most items the supplementary pass may add on top of the primary result. */
 const SUPPLEMENT_BUDGET = 15;
-/** Budget used when suppress_duplicate_passages is on; safe only with suppression active. */
+/** Budget used when suppress_duplicate_passages is on; safe only with suppression active,
+ *  except under the EXULU_DISABLE_DUPLICATE_SUPPRESSION benchmarking escape hatch, which
+ *  deliberately requests this wider budget with suppression off. */
 export const SUPPLEMENT_BUDGET_WIDE = 50;
 
 // ---------------------------------------------------------------------------

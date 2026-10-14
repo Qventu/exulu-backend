@@ -433,4 +433,29 @@ describe("EXULU_DISABLE_DUPLICATE_SUPPRESSION (benchmark escape hatch)", () => {
     expect(warn.mock.calls.flat().join(" ")).toContain("EXULU_DISABLE_DUPLICATE_SUPPRESSION");
     warn.mockRestore();
   });
+
+  it("activates on every on-list value, case-insensitively and trimmed (1, true, yes, on)", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    for (const v of ["1", "true", "TRUE", " yes ", "On"]) {
+      warn.mockClear();
+      process.env.EXULU_DISABLE_DUPLICATE_SUPPRESSION = v;
+      const { rerankResults, resolveIdentifierPins } = await runOnce();
+      expect(rerankResults.mock.calls[0][0].findNearDuplicates).toBeUndefined();
+      expect(resolveIdentifierPins.mock.calls[0][0].suppressDuplicatePassages).toBe(true);
+      expect(warn).toHaveBeenCalledTimes(1);
+    }
+    warn.mockRestore();
+  });
+
+  it("does NOT activate for 0/false/off-list values — only the on-list does (regression: these used to invert)", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    for (const v of ["0", "false", "FALSE", "no", "off", "   ", "nonsense"]) {
+      process.env.EXULU_DISABLE_DUPLICATE_SUPPRESSION = v;
+      const { rerankResults, resolveIdentifierPins } = await runOnce();
+      expect(typeof rerankResults.mock.calls[0][0].findNearDuplicates).toBe("function");
+      expect(resolveIdentifierPins.mock.calls[0][0].suppressDuplicatePassages).toBe(true);
+    }
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
 });
