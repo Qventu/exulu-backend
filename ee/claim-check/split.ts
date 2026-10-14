@@ -3,7 +3,12 @@
 // Sentence segmentation for claim extraction. Two jobs the paper's NLTK
 // splitter does not have to do: keep character offsets into the ORIGINAL
 // answer (the UI highlights by offset), and ignore the parts of a Markdown
-// answer that are not prose (headings, fences, tables, bullets).
+// answer that carry no claim (headings, fenced code, table rows).
+//
+// List items and numbered steps ARE prose: in a German maintenance answer the
+// specifics (causes, steps, part numbers) live in exactly those lines, and a
+// sentence that is never emitted is never checked, never counted and never
+// reported — the answer would come back "ok" without having been read.
 import { preprocessQuery } from "@SRC/utils/query-preprocessing";
 import type { Sentence, SentenceWindow } from "./types";
 
@@ -56,16 +61,36 @@ export function localeFromText(text: string): string {
   return LOCALE_BY_LANGUAGE[language] ?? "en";
 }
 
-/** True for lines that are structure, not prose: bullets, numbered items, table rows, rules, quotes. */
+/**
+ * A list bullet ("- ", "* ", "+ ") or a numbered step ("1. ", "1) "),
+ * including its indentation and the whitespace after the marker. The match
+ * length is where the item's CONTENT starts, which is what keeps offsets
+ * exact: a sentence's `start` points at the content, never at the marker, so
+ * answer.slice(start, end) === text still holds.
+ */
+const LIST_MARKER = /^(?:\s*)(?:[-*+]|\d+[.)])\s+/;
+
+/**
+ * True for lines that carry no claim: blank lines, table rows (a fragment
+ * whose claim semantics need their own treatment), horizontal rules and block
+ * quotes. Fences are handled by the caller, which also tracks their state.
+ * List items are NOT here — they are prose, see listContentStart.
+ */
 function isNonProseLine(line: string): boolean {
   const t = line.trim();
   if (!t) return true;
   if (t.startsWith("|")) return true;
-  if (/^[-*+]\s/.test(t)) return true;
-  if (/^\d+[.)]\s/.test(t)) return true;
   if (/^(-{3,}|_{3,}|\*{3,})$/.test(t)) return true;
+  // A marker with nothing after it ("-", "1.") carries no content at all.
+  if (/^(?:[-*+]|\d+[.)])$/.test(t)) return true;
   if (t.startsWith(">")) return true;
   return false;
+}
+
+/** Offset of a list item's content within the line, or null when the line is not a list item. */
+function listContentStart(line: string): number | null {
+  const match = LIST_MARKER.exec(line);
+  return match ? match[0].length : null;
 }
 
 /**
@@ -113,6 +138,24 @@ function collectBlocks(answer: string): Block[] {
 
     if (isNonProseLine(line)) {
       closeRun();
+      continue;
+    }
+
+    // A list item is its own block: the marker is excluded from the block, so
+    // it can never leak into a sentence's text, and the items of one list are
+    // never segmented as a single flowing sentence (they rarely end in a
+    // period, so one unit would glue them all together).
+    const contentStart = listContentStart(line);
+    if (contentStart !== null) {
+      closeRun();
+      const start = lineStart + contentStart;
+      if (lineEnd > start) {
+        blocks.push({
+          start,
+          end: lineEnd,
+          headingPath: headingPath.filter((h): h is string => Boolean(h)),
+        });
+      }
       continue;
     }
 

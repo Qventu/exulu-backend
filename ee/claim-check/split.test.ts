@@ -59,8 +59,10 @@ describe("splitIntoSentences", () => {
     expect(offsetsAreExact(answer)).toBe(true);
   });
 
-  // Review Focus 1
-  it("does not emit markdown table rows or list bullets as sentences", () => {
+  // Review Focus 1 / Finding 2: table rows and fenced code stay excluded —
+  // code is not a claim, and a table row is a fragment whose claim semantics
+  // need their own treatment.
+  it("does not emit markdown table rows or fenced code as sentences", () => {
     const answer = [
       "Übersicht:",
       "",
@@ -68,10 +70,75 @@ describe("splitIntoSentences", () => {
       "| --- | --- |",
       "| Schalter | 7 |",
       "",
-      "- Punkt eins",
-      "- Punkt zwei",
+      "```",
+      "rm -rf /tmp. Kein Satz.",
+      "```",
     ].join("\n");
     expect(splitIntoSentences(answer, "de").map((s) => s.text)).toEqual(["Übersicht:"]);
+  });
+
+  // Finding 2: bullets and numbered steps used to produce NO sentence at all —
+  // no sentences[] entry, no limits count, no note — so the response reported
+  // "ok" for content it had never examined. They are prose now; the marker is
+  // stripped and the offsets point at the content after it.
+  it("segments list bullets and numbered items as prose, with offsets after the marker", () => {
+    const answer = [
+      "- Punkt eins ist wahr.",
+      "* Punkt zwei ist falsch.",
+      "+ Punkt drei fehlt.",
+      "1. Erster Schritt ist nötig.",
+      "2) Zweiter Schritt folgt.",
+    ].join("\n");
+    const sentences = splitIntoSentences(answer, "de");
+    expect(sentences.map((s) => s.text)).toEqual([
+      "Punkt eins ist wahr.",
+      "Punkt zwei ist falsch.",
+      "Punkt drei fehlt.",
+      "Erster Schritt ist nötig.",
+      "Zweiter Schritt folgt.",
+    ]);
+    expect(offsetsAreExact(answer)).toBe(true);
+    // The marker itself is never part of the sentence, and never part of its range.
+    expect(answer[sentences[0]!.start - 1]).toBe(" ");
+    expect(answer.slice(sentences[3]!.start, sentences[3]!.end)).toBe("Erster Schritt ist nötig.");
+  });
+
+  it("ignores a bare marker with no content and keeps horizontal rules out", () => {
+    const answer = ["-", "- ", "---", "***", "- Echter Punkt."].join("\n");
+    expect(splitIntoSentences(answer, "de").map((s) => s.text)).toEqual(["Echter Punkt."]);
+  });
+
+  // Finding 2: the German fixture this feature's first tenant actually posts —
+  // a heading, prose, two bullets, two numbered steps and a table.
+  it("checks the bullets and steps of a German maintenance answer but not its table rows", () => {
+    const answer = [
+      "## FST-2XT Steuerung",
+      "",
+      "Die Fernabschaltung hat mehrere Ursachen.",
+      "",
+      "- Der Kabinenlichtschalter steht auf AUS.",
+      "- Die Sicherung F3 ist defekt.",
+      "",
+      "1. Schaltschrank öffnen und Sicherung F3 prüfen.",
+      "2. Kabinenlichtschalter auf EIN stellen.",
+      "",
+      "| Teil | Nr. |",
+      "| --- | --- |",
+      "| Sicherung | F3 |",
+    ].join("\n");
+    const sentences = splitIntoSentences(answer, "de");
+    const texts = sentences.map((s) => s.text);
+
+    expect(texts).toEqual([
+      "Die Fernabschaltung hat mehrere Ursachen.",
+      "Der Kabinenlichtschalter steht auf AUS.",
+      "Die Sicherung F3 ist defekt.",
+      "Schaltschrank öffnen und Sicherung F3 prüfen.",
+      "Kabinenlichtschalter auf EIN stellen.",
+    ]);
+    expect(texts.some((t) => t.includes("|"))).toBe(false);
+    expect(offsetsAreExact(answer)).toBe(true);
+    expect(sentences.every((s) => s.headingPath[0] === "FST-2XT Steuerung")).toBe(true);
   });
 
   // Review Focus 2
