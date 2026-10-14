@@ -4,7 +4,7 @@ jest.mock("@EE/agentic-retrieval/pipeline/micro-call", () => ({
 }));
 import { microCall } from "@EE/agentic-retrieval/pipeline/micro-call";
 import { splitIntoSentences, buildWindows } from "../split";
-import { runSelection } from "./select";
+import { excerptFor, runSelection } from "./select";
 import { CLAIM_CHECK_MAX_OUTPUT_TOKENS } from "../types";
 import { SAME_LANGUAGE_RULE } from "../prompts/shared";
 
@@ -100,5 +100,43 @@ describe("runSelection", () => {
     (microCall as jest.Mock).mockResolvedValue({ output: { sentences: [] }, text: "", usage: { inputTokens: 1, outputTokens: 1 } });
     await runSelection({ windows: windows(), question: "q", model: {} as any });
     expect(String((microCall as jest.Mock).mock.calls[0][0].system)).toContain(SAME_LANGUAGE_RULE);
+  });
+  // Finding 11: the heading path was computed, carried on every Sentence and
+  // read nowhere, so a sentence whose subject only appears in its section
+  // title could not be resolved and was refused as cannot_disambiguate.
+  it("leads the excerpt with the heading path the sentences sit under", () => {
+    const answer = [
+      "# Fehlerbehebung",
+      "",
+      "## FST-2XT Steuerung",
+      "Sie arbeitet mit 230 Volt.",
+    ].join("\n");
+    const built = buildWindows(splitIntoSentences(answer, "de"), 5, 5);
+    const excerpt = excerptFor(built);
+    expect(excerpt).toBe("Section: Fehlerbehebung > FST-2XT Steuerung\n\nSie arbeitet mit 230 Volt.");
+  });
+
+  it("lists each distinct heading path once and omits the line when there is no heading", () => {
+    const answer = [
+      "## Ursachen",
+      "Der Schalter ist defekt.",
+      "",
+      "## Abhilfe",
+      "Die Sicherung wird getauscht.",
+    ].join("\n");
+    const built = buildWindows(splitIntoSentences(answer, "de"), 5, 5);
+    const excerpt = excerptFor(built);
+    expect(excerpt.startsWith("Section: Ursachen\nSection: Abhilfe\n\n")).toBe(true);
+
+    const plain = buildWindows(splitIntoSentences("Der Schalter ist defekt.", "de"), 5, 5);
+    expect(excerptFor(plain)).toBe("Der Schalter ist defekt.");
+  });
+
+  it("carries the heading path into the prompt the model receives", async () => {
+    (microCall as jest.Mock).mockResolvedValue({ output: { sentences: [] }, text: "", usage: { inputTokens: 1, outputTokens: 1 } });
+    const answer = ["## FST-2XT Steuerung", "Sie arbeitet mit 230 Volt."].join("\n");
+    const built = buildWindows(splitIntoSentences(answer, "de"), 5, 5);
+    await runSelection({ windows: built, question: "Womit arbeitet sie?", model: {} as any });
+    expect(String((microCall as jest.Mock).mock.calls[0][0].prompt)).toContain("Section: FST-2XT Steuerung");
   });
 });

@@ -16,8 +16,16 @@ const schema = z.object({
   ),
 });
 
-/** The excerpt shown to the model: the batch's sentences plus their windows, in answer order.
- *  When sentenceTexts is provided, uses those rewrites instead of original text. */
+/** The excerpt shown to the model: the batch's sentences plus their windows, in answer order,
+ *  led by the Markdown heading path they sit under.
+ *  When sentenceTexts is provided, uses those rewrites instead of original text.
+ *
+ *  Finding 11: split.ts strips heading lines and carries the path on every
+ *  Sentence, but nothing read it — so a sentence whose subject lives in its
+ *  section title ("## FST-2XT Steuerung" / "Sie arbeitet mit 230 Volt.") had
+ *  no way to resolve its referent and got refused as cannot_disambiguate.
+ *  That is silent coverage loss on exactly the sectioned Markdown this
+ *  feature targets. */
 export function excerptFor(windows: SentenceWindow[], sentenceTexts?: Map<number, string>): string {
   const byIndex = new Map<number, string>();
   for (const w of windows) {
@@ -25,7 +33,15 @@ export function excerptFor(windows: SentenceWindow[], sentenceTexts?: Map<number
       byIndex.set(s.index, sentenceTexts?.get(s.index) ?? s.text);
     }
   }
-  return [...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, text]) => text).join(" ");
+  const body = [...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, text]) => text).join(" ");
+
+  const sections: string[] = [];
+  for (const w of windows) {
+    const path = w.sentence.headingPath.filter(Boolean).join(" > ");
+    if (path && !sections.includes(path)) sections.push(path);
+  }
+  if (sections.length === 0) return body;
+  return `${sections.map((path) => `Section: ${path}`).join("\n")}\n\n${body}`;
 }
 
 export async function runSelection(args: {
