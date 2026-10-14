@@ -1,21 +1,27 @@
 // src/exulu/claim-check/finish-metadata.ts
 //
 // The chat's trigger for a claim check, merged onto the SDK `finish` part the
-// same way recalledMemoriesMetadata is (spec §5).
+// same way recalledMemoriesMetadata is (spec §5; Stage 4 amendment §4).
 //
 // Two rules the shape encodes:
 //
-//  - IDS ONLY. The client already holds the retrieval tool's output — it renders
-//    source cards from it — so re-sending the evidence here would double a
-//    payload that averages ~89,000 characters per turn. The frontend assembles
-//    the `sources[]` array for POST /claims/check from what it already has.
-//  - ABSENT, NOT EMPTY. When the check is off, or the viewer may not see it, the
-//    fragment is missing entirely. The frontend's rule is "no fragment, no check
-//    ever runs", so a present-but-false fragment would be a second state nobody
-//    needs.
+//  - MANIFEST, NOT CONTENT. The client already holds every source's content —
+//    it rendered the retrieval chunks, the recalled-memories panel and the
+//    tool outputs already, so re-sending any of it here would double a
+//    payload that averages ~89,000 characters per turn. This fragment names
+//    each source by `type` and `id`, and the client locates the matching part
+//    BY TOOL CALL ID and assembles POST /claims/check's `sources[]` from what
+//    it already has. See manifestFor's docblock for the one entry per kind.
+//  - ABSENT, NOT EMPTY. When the check is off, the viewer may not see it, or
+//    this turn used evidence that is still genuinely unreachable (§5), the
+//    fragment is missing entirely. The frontend's rule is "no fragment, no
+//    check ever runs", so a present-but-false fragment would be a second
+//    state nobody needs — and naming a source the client cannot in fact
+//    produce is worse than that: the client's completeness guard then
+//    refuses the WHOLE check, not just the one source.
 import type { User } from "@EXULU_TYPES/models/user";
-import type { RecallCollector } from "@SRC/exulu/memory/recall-collector";
 import type { ClaimCheckConfig } from "@EE/agentic-retrieval/pipeline/config";
+import type { ClaimCheckSourceType } from "@EE/claim-check/types";
 import { isExternalOrAnonymousUser } from "@SRC/exulu/resolve-max-steps";
 import { AGENTIC_RETRIEVAL_TOOL_NAME } from "@EE/agentic-retrieval/pipeline/index";
 import { SESSION_ITEMS_RETRIEVAL_TOOL_NAME } from "@SRC/templates/tools/session-items-retrieval-tool";
@@ -25,164 +31,162 @@ import { VIEW_DOCUMENT_PAGE_TOOL_NAME } from "@SRC/templates/tools/view-document
 import { INTERNET_SEARCH_TOOL_NAME } from "@SRC/templates/tools/perplexity";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 
+/** One source the client must locate (by `toolCallId`, when it has one) and send. */
+export type ClaimCheckManifestEntry = {
+  type: ClaimCheckSourceType;
+  id: string;
+  /** Absent for a `memory` entry: recalled memories reach the model through
+   * the system prompt, not a tool call, so there is no call to locate it by. */
+  toolCallId?: string;
+};
+
 /** What the chat needs to post a check: that it may, and what to send. */
 export type ClaimCheckTrigger = {
   enabled: true;
-  /** Item ids of the chunks this turn retrieved, first-seen order, deduplicated. */
-  sourceIds: string[];
-  /**
-   * The retrieval tool calls that introduced at least one NEW source id this
-   * turn — not "every call that ran", and not "every call whose evidence is
-   * in sourceIds". A call whose chunks all duplicated an earlier call's is
-   * folded into sourceIds above but omitted here.
-   */
-  toolCallIds: string[];
+  /** One entry per source the client should send, first-seen order, deduplicated by id. */
+  sources: ClaimCheckManifestEntry[];
 };
+
+/** A tool's AI-SDK part type, derived from the one display-name literal its
+ * factory registers rather than a second hardcoded spelling of it — so a
+ * rename of that literal fails this module's own test suite instead of
+ * silently turning the detection it feeds off. */
+const partTypeOf = (toolName: string) => `tool-${sanitizeToolName(toolName)}`;
 
 /**
  * The retrieval tool is renamed per agent in the UI, but the AI-SDK tool key
  * — and so the `tool-${...}` part type this module matches on — is derived
  * from the one display-name literal the tool factory registers
- * (`AGENTIC_RETRIEVAL_TOOL_NAME`). Deriving it here instead of hardcoding a
- * second copy of the sanitized string means a rename of that literal fails
- * this module's own test suite instead of silently turning the feature off.
+ * (`AGENTIC_RETRIEVAL_TOOL_NAME`).
  */
-export const RETRIEVAL_PART_TYPES = new Set([`tool-${sanitizeToolName(AGENTIC_RETRIEVAL_TOOL_NAME)}`]);
+export const RETRIEVAL_PART_TYPES = new Set([partTypeOf(AGENTIC_RETRIEVAL_TOOL_NAME)]);
 
 /**
- * The session-attached-items search tool runs alongside agentic retrieval on
- * any session with items attached, but its output has no `chunks` key, so it
- * can never contribute source ids here. When it DID return something this
- * turn, part of the answer may be grounded in evidence this fragment cannot
- * see — checking anyway would score that part as unsupported and raise a
- * false hallucination alarm. Follow-up (out of scope here): teach this module
- * — and the frontend's `collectSources` — a second output-shape handler for
- * session-items evidence so it can be included instead of suppressed.
+ * `read_session_file` and `parse_document` share one output shape — `{ content }`
+ * on success, `{ error }` on failure — so one handler in `manifestFor` serves
+ * both (spec §4's table).
  */
-const SESSION_ITEMS_PART_TYPE = `tool-${sanitizeToolName(SESSION_ITEMS_RETRIEVAL_TOOL_NAME)}`;
+const DOCUMENT_PART_TYPES = new Set([partTypeOf(SESSION_FILE_READ_TOOL_NAME), partTypeOf(PARSE_DOCUMENT_TOOL_NAME)]);
+
+/** `internet_search`'s part type — one web source per call (spec §4). */
+const WEB_PART_TYPE = partTypeOf(INTERNET_SEARCH_TOOL_NAME);
 
 /**
- * The rest of the same class (spec §5): tools whose output is evidence the
- * model reads and this fragment cannot represent, because `sourceIds` can
- * only name knowledge-base item ids and the frontend assembles `sources[]`
- * from retrieval chunks alone.
- *
- * All four are reachable on the same turn as agentic retrieval, and the first
- * three need no agent opt-in at all — `read_session_file`, `parse_document`
- * and `view_document_page` are registered for EVERY session once
- * `fileUploads.s3Bucket` is configured. A turn that reads a PDF and also
- * calls Context Search would otherwise emit a fragment covering the retrieval
- * half only, and every PDF-grounded claim would come back `unsupported` —
- * `score.ts` puts `unsupported` in the numerator of the label share, so the
- * panel renders an alert for an answer that was fully grounded in the user's
- * own document. §2.4's honesty invariants exist to prevent exactly that, and
- * a missing panel is the safe failure.
- *
- * Unlike session-items above there is no "proven empty" shape to exempt: each
- * of these returns prose, bytes or an image, so the only honest reading of a
- * call is "the model may have used it". Presence of the part suppresses.
+ * The session-attached-items search tool's part type. Its output has no
+ * `chunks` key (unlike agentic retrieval), so it needs its own manifest
+ * handler rather than sharing `RETRIEVAL_PART_TYPES`'s.
+ */
+const SESSION_ITEMS_PART_TYPE = partTypeOf(SESSION_ITEMS_RETRIEVAL_TOOL_NAME);
+
+/**
+ * What remains genuinely unreachable after Stage 4 (spec §5): `view_document_page`'s
+ * output is `{ attached: true, filename, page, note }` — the evidence is a
+ * RENDERED IMAGE, not text the client could ever hand the (text-only) claim-check
+ * engine. This is not a deferred case like the four Stage 4 covers; it is permanent.
  *
  * Each part type is derived from the tool's own exported display-name literal
  * (never a second hardcoded spelling), so a rename fails this module's test
  * suite instead of silently turning the suppression off.
  */
-export const INVISIBLE_EVIDENCE_PART_TYPES = new Set([
-  `tool-${sanitizeToolName(SESSION_FILE_READ_TOOL_NAME)}`,
-  `tool-${sanitizeToolName(PARSE_DOCUMENT_TOOL_NAME)}`,
-  `tool-${sanitizeToolName(VIEW_DOCUMENT_PAGE_TOOL_NAME)}`,
-  `tool-${sanitizeToolName(INTERNET_SEARCH_TOOL_NAME)}`,
-]);
+export const INVISIBLE_EVIDENCE_PART_TYPES = new Set([partTypeOf(VIEW_DOCUMENT_PAGE_TOOL_NAME)]);
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
 
-/** Item ids and tool-call ids from a turn's retrieval parts; never throws. */
-function retrievedIdsOf(toolResults: unknown): { sourceIds: string[]; toolCallIds: string[] } {
-  const sourceIds: string[] = [];
-  const seen = new Set<string>();
-  const toolCallIds: string[] = [];
-  if (!Array.isArray(toolResults)) return { sourceIds, toolCallIds };
+/** Item ids from one retrieval part's output (`{ result: JSON string }` → `.chunks[].item_id`); never throws. */
+function chunkItemIdsOf(output: unknown): string[] {
+  const raw = isRecord(output) ? output.result : undefined;
+  if (typeof raw !== "string") return [];
 
-  for (const part of toolResults) {
-    if (!isRecord(part) || typeof part.type !== "string") continue;
-    // A renamed retrieval tool still starts with the same prefix shapes; match
-    // the known names rather than any tool, so a web search or a memory write
-    // never looks like evidence.
-    if (!RETRIEVAL_PART_TYPES.has(part.type)) continue;
-    const raw = isRecord(part.output) ? part.output.result : undefined;
-    if (typeof raw !== "string") continue;
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      // A truncated or offloaded tool output is not a reason to break the
-      // turn's finish part. Skip it; with no ids the fragment stays absent.
-      continue;
-    }
-    if (!isRecord(parsed) || !Array.isArray(parsed.chunks)) continue;
-
-    let contributed = false;
-    for (const chunk of parsed.chunks) {
-      if (!isRecord(chunk)) continue;
-      const id = typeof chunk.item_id === "string" ? chunk.item_id : undefined;
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      sourceIds.push(id);
-      contributed = true;
-    }
-    // Only a call that introduced a NEW id is recorded — see ClaimCheckTrigger's
-    // toolCallIds doc comment.
-    if (contributed && typeof part.toolCallId === "string") toolCallIds.push(part.toolCallId);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // A truncated or offloaded tool output is not a reason to break the
+    // turn's finish part. Skip it; with no ids this call contributes nothing.
+    return [];
   }
+  if (!isRecord(parsed) || !Array.isArray(parsed.chunks)) return [];
 
-  return { sourceIds, toolCallIds };
+  const ids: string[] = [];
+  for (const chunk of parsed.chunks) {
+    if (!isRecord(chunk)) continue;
+    const id = typeof chunk.item_id === "string" ? chunk.item_id : undefined;
+    if (id) ids.push(id);
+  }
+  return ids;
 }
 
-/** True when any part of this turn came from a tool in the class above. */
+/**
+ * The manifest the client fills in. One entry per source it must send, each
+ * naming the handler (`type`) and where to find it (`toolCallId`). The client
+ * locates parts BY TOOL CALL ID — no tool display name appears on the frontend
+ * any more, which is what makes a rename on this side harmless.
+ *
+ * Never throws, and never names a source this function cannot vouch for:
+ * a retrieval chunk with its source reference stripped, a document call that
+ * errored or returned no content, or a memory this viewer may not see all
+ * contribute nothing. Naming an entry the client cannot in fact recover is
+ * worse than omitting it — the client's own completeness guard refuses the
+ * WHOLE check on a count mismatch (spec §4).
+ */
+function manifestFor(args: {
+  toolResults: unknown;
+  recalledMemories: { id: string }[] | undefined;
+}): ClaimCheckManifestEntry[] {
+  const out: ClaimCheckManifestEntry[] = [];
+  const seen = new Set<string>();
+  const add = (entry: ClaimCheckManifestEntry) => {
+    if (seen.has(entry.id)) return;
+    seen.add(entry.id);
+    out.push(entry);
+  };
+
+  for (const memory of args.recalledMemories ?? []) {
+    if (typeof memory?.id === "string" && memory.id) add({ type: "memory", id: `memory:${memory.id}` });
+  }
+
+  for (const part of Array.isArray(args.toolResults) ? args.toolResults : []) {
+    if (!isRecord(part) || typeof part.type !== "string" || typeof part.toolCallId !== "string") continue;
+
+    if (RETRIEVAL_PART_TYPES.has(part.type)) {
+      for (const id of chunkItemIdsOf(part.output)) {
+        add({ type: "knowledge_base", id, toolCallId: part.toolCallId });
+      }
+      continue;
+    }
+
+    if (DOCUMENT_PART_TYPES.has(part.type)) {
+      // `{ content }` on success, `{ error }` on failure. An error string is not
+      // evidence: naming it would have the check verify the answer against a
+      // failure message and report grounded claims unsupported.
+      const output = isRecord(part.output) ? part.output : undefined;
+      const content = typeof output?.content === "string" ? output.content : "";
+      if (content.trim()) add({ type: "document", id: `tool:${part.toolCallId}`, toolCallId: part.toolCallId });
+      continue;
+    }
+
+    if (part.type === WEB_PART_TYPE) {
+      add({ type: "web", id: `tool:${part.toolCallId}`, toolCallId: part.toolCallId });
+      continue;
+    }
+
+    if (part.type === SESSION_ITEMS_PART_TYPE) {
+      add({ type: "session_item", id: `tool:${part.toolCallId}`, toolCallId: part.toolCallId });
+      continue;
+    }
+  }
+
+  return out;
+}
+
+/** True when any part of this turn came from a tool in the permanently-uncoverable class above. */
 function invisibleEvidenceToolRan(toolResults: unknown): boolean {
   if (!Array.isArray(toolResults)) return false;
   return toolResults.some(
     (part) => isRecord(part) && typeof part.type === "string" && INVISIBLE_EVIDENCE_PART_TYPES.has(part.type),
   );
-}
-
-/**
- * True when the session-items tool ran this turn and may have contributed
- * evidence this fragment cannot represent.
- *
- * The only shape that does NOT suppress is a cleanly-parsed EMPTY ARRAY:
- * that is proof the tool found nothing, and proven-empty is proven harmless.
- * Everything else counts as contributed — "cannot prove it empty" is not
- * "empty":
- *
- *  - An **offloaded** result. This tool is not in
- *    `OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS`, so `guardToolOutput` replaces a large
- *    output with `{ truncated, notice, preview }` and there is no `result`
- *    key at all. Skipping that (the previous `continue`) meant this tool's
- *    LARGEST results — the ones most likely to have grounded the answer —
- *    were precisely the ones that failed to suppress.
- *  - A `result` that is not a string, a payload that does not parse, or one
- *    that parses to anything other than an array.
- */
-function sessionItemsContributed(toolResults: unknown): boolean {
-  if (!Array.isArray(toolResults)) return false;
-
-  for (const part of toolResults) {
-    if (!isRecord(part) || part.type !== SESSION_ITEMS_PART_TYPE) continue;
-    const raw = isRecord(part.output) ? part.output.result : undefined;
-    if (typeof raw !== "string") return true;
-
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed) || parsed.length > 0) return true;
-    } catch {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 /**
@@ -196,7 +200,8 @@ const INLINED_DOCUMENT_MARKER = '<file file name = "';
 
 /**
  * True when this turn's prompt carried an attached file — the attachment half
- * of the invisible-evidence class.
+ * of the invisible-evidence class (spec §5: extraction happens server-side,
+ * so the client holds the raw file and never the extracted text).
  *
  * Two signals, because a document's attachment leaves two different traces and
  * only one of them survives a turn:
@@ -299,14 +304,31 @@ export type ClaimCheckTurnContext = {
    */
   messages: unknown;
   /**
-   * The turn's memory recall, same object `recalledMemoriesMetadata` gets.
-   * Undefined when the agent has no memory base.
+   * The recalled-memories list this VIEWER may see this turn — exactly what
+   * `recalledMemoriesMetadata({ recall, agent, isGuest })` returns under its
+   * `recalledMemories` key, or undefined when it returned nothing at all
+   * (recall found nothing this turn, OR it found something this viewer is
+   * gated from seeing). Passed explicitly from routes.ts rather than derived
+   * here from `agent`/`isGuest`: `recalledMemoriesMetadata` already owns the
+   * "may this viewer see it" rule, and re-deriving it here is how the two
+   * drift apart (a guest turn then names memory sources the client cannot
+   * produce, and the client's completeness guard refuses the whole check).
    */
-  recall: Pick<RecallCollector, "list"> | undefined;
+  recalledMemories?: { id: string }[];
+  /**
+   * True when the turn's recall actually found something (`recall.list().length > 0`),
+   * independent of whether this viewer may see it. Needed to tell "recall
+   * found nothing" (false — nothing is being hidden, the turn simply emits
+   * with whatever other evidence exists) apart from "recall found something
+   * but this viewer is gated from it" (true, with `recalledMemories`
+   * undefined — real evidence the model saw that this fragment cannot
+   * represent for this viewer, see the suppression below).
+   */
+  recallHadItems: boolean;
 };
 
-/** Message metadata fragment merged on the SDK `finish` part (spec §5). */
-export function claimCheckMetadata({ config, user, isGuest, isLicensed, toolResults, messages, recall }:
+/** Message metadata fragment merged on the SDK `finish` part (spec §5; Stage 4 amendment §4). */
+export function claimCheckMetadata({ config, user, isGuest, isLicensed, toolResults, messages, recalledMemories, recallHadItems }:
   ClaimCheckTurnContext & { toolResults: unknown }
 ): { claimCheck: ClaimCheckTrigger } | Record<string, never> {
   if (!config.enabled) return {};
@@ -322,38 +344,40 @@ export function claimCheckMetadata({ config, user, isGuest, isLicensed, toolResu
   if (!user?.id) return {};
   if ((isGuest || isExternalOrAnonymousUser(user)) && !config.showToExternalUsers) return {};
   if (invisibleEvidenceToolRan(toolResults)) return {};
-  if (sessionItemsContributed(toolResults)) return {};
   if (turnCarriedFileAttachment(messages)) return {};
-  // A recalled memory reaches the model through the SYSTEM prompt
-  // (generate-stream.ts → memoryRecall.promptBlock), never through a tool
-  // result, so the check cannot be given it and a claim resting on one scores
-  // `unsupported`. Non-empty recall therefore suppresses — the same emptiness
-  // test recalledMemoriesMetadata applies one line above the call site.
-  if ((recall?.list().length ?? 0) > 0) return {};
+  // A recall the viewer may not see is still invisible evidence: the client
+  // has no memory text to send, so the check would run against part of the
+  // answer's evidence. recalledMemoriesMetadata already owns that rule — ask
+  // it (via the two fields above), do not restate its condition here.
+  if (recallHadItems && !recalledMemories) return {};
 
-  const { sourceIds, toolCallIds } = retrievedIdsOf(toolResults);
-  // No retrieval, no evidence: a check here would mark every claim unsupported
-  // for want of sources, which is a worse answer than no check at all.
-  if (sourceIds.length === 0) return {};
+  const sources = manifestFor({ toolResults, recalledMemories });
+  // No evidence at all, no check: a check with no sources marks every claim
+  // unsupported for want of sources, which is a worse answer than no check.
+  if (sources.length === 0) return {};
 
-  return { claimCheck: { enabled: true, sourceIds, toolCallIds } };
+  return { claimCheck: { enabled: true, sources } };
 }
 
 
 /**
  * Every part type `claimCheckMetadata` reads: the retrieval evidence itself
- * plus every suppression signal. `recordToolResult` keeps nothing else, so a
- * twenty-tool turn holds two entries instead of twenty — it used to hold a
- * reference to EVERY tool's final output (sandbox bash, image generation,
- * MCP) for the length of the turn, none of which this module can read.
+ * plus every other recognised source and the one remaining suppression
+ * signal. `recordToolResult` keeps nothing else, so a twenty-tool turn holds
+ * a handful of entries instead of twenty — it used to hold a reference to
+ * EVERY tool's final output (sandbox bash, image generation, MCP) for the
+ * length of the turn, none of which this module can read.
  *
- * Derived from the three sets above rather than spelled out again: a type
- * added to the suppression class is recorded automatically. Getting that
- * wrong would not merely waste memory — an unrecorded suppression signal is
- * a FALSE "unsupported" verdict, which is the whole point of C1.
+ * Derived from the sets above rather than spelled out again: a type added to
+ * any of them is recorded automatically. Getting that wrong would not merely
+ * waste memory — an unrecorded source is evidence this fragment silently
+ * fails to name, and an unrecorded suppression signal is a FALSE
+ * "unsupported" verdict, which is the whole point of C1.
  */
 export const RECORDED_PART_TYPES = new Set([
   ...RETRIEVAL_PART_TYPES,
+  ...DOCUMENT_PART_TYPES,
+  WEB_PART_TYPE,
   SESSION_ITEMS_PART_TYPE,
   ...INVISIBLE_EVIDENCE_PART_TYPES,
 ]);
@@ -402,11 +426,17 @@ type ClaimCheckStreamPart = {
  * reached the client. There is a realistic way for that to happen:
  * `guardToolOutput` (src/exulu/tool-output-offload.ts) replaces an over-cap
  * tool output with `{ truncated, notice, preview }`, which has no `result`
- * key, so `retrievedIdsOf` skips it and the fragment goes missing. Agentic
+ * key, so `chunkItemIdsOf` skips it and the fragment goes missing. Agentic
  * retrieval is exempt from that offload today only because of a `Set` literal
  * in an unrelated file (`OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS` in
  * convert-exulu-tools-to-ai-sdk-tools.ts, which has its own test asserting
  * agentic_context_search is still in it).
+ *
+ * `ctx`'s `recalledMemories`/`recallHadItems` are read lazily (whatever the
+ * caller's ctx object does to make that true — e.g. accessor properties
+ * backed by a live recall collector) because, like `toolResults` here, they
+ * are only final once the turn's stream has actually run; `ctx` itself is
+ * captured once, before the stream starts.
  *
  * The config is read ONCE here, at the start of the turn, and handed to
  * `claimCheckMetadata` — never parsed twice per turn by two callers who could
