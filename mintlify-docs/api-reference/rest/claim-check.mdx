@@ -71,9 +71,9 @@ The model to run the check with is resolved in order, first hit wins:
 2. `claim_check.model` configured on the named `agent`;
 3. that agent's `utility_model`;
 4. the agent's own model;
-5. the platform's default claim-check model, for agent-less calls.
+5. the platform's default claim-check model, for agent-less calls: the `CLAIM_CHECK_DEFAULT_MODEL` environment variable on the backend.
 
-If none of these resolves to a usable model, the endpoint responds `400` naming `claim_check.default_model` as the missing configuration, rather than silently picking a model nobody chose. Everyone other than a super admin who wants a non-default model should configure `claim_check.model` on the agent (step 2) rather than requesting it per call.
+If none of these resolves to a usable model, the endpoint responds `400` naming `CLAIM_CHECK_DEFAULT_MODEL` as the missing configuration, rather than silently picking a model nobody chose. Everyone other than a super admin who wants a non-default model should configure `claim_check.model` on the agent (step 2) rather than requesting it per call.
 
 ## Response
 
@@ -142,7 +142,7 @@ When `agent` is set and `options.reRetrieve` is on, `unsupported` claims get one
 | Status | When |
 |---|---|
 | `200` | The check ran, `status` is `"ok"` or `"partial"`. |
-| `400` | The request body failed validation, or no model could be resolved (`detail` names `claim_check.default_model`). |
+| `400` | The request body failed validation, or no model could be resolved (`detail` names `CLAIM_CHECK_DEFAULT_MODEL`). |
 | `401` | Authentication failed. |
 | `403` | The API key is not scoped to the named `agent`, or the caller cannot read it; the named agent has `claim_check.enabled` off; or the caller is an external/guest identity and that agent has `claim_check.showToExternalUsers` off. Also returned when a non-super-admin caller sets `model`, `options.fidelity: "paper"`, or `options.completions` above 1 in the request body. |
 | `404` | The deployment is not licensed for claim check. The endpoint does not advertise a feature the deployment has not bought, so this looks identical to a route that does not exist. Also returned, with `{ "detail": "Agent {id} not found." }`, when an `agent` is named that does not exist. |
@@ -190,7 +190,7 @@ curl -X POST "https://your-imp-host/claims/check" \
   }'
 ```
 
-This call has no `agent`, so the model comes from the platform's default claim-check model. To use an `agent` with its own `claim_check.model` configuration instead, add `"agent": "<uuid>"`. Only a super-admin key may add `"model": "<model-id>"` to pick a model per call; any other caller gets `403` for that field.
+This call has no `agent`, so the model comes from the platform's default claim-check model (`CLAIM_CHECK_DEFAULT_MODEL`). To use an `agent` with its own `claim_check.model` configuration instead, add `"agent": "<uuid>"`. Only a super-admin key may add `"model": "<model-id>"` to pick a model per call; any other caller gets `403` for that field.
 
 For this input, the first sentence resolves to a `supported` claim and the second — an opinion with nothing to verify — is reported as `no_verifiable_content`, so `score.label` is `"ok"`.
 

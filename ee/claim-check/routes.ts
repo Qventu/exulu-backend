@@ -236,10 +236,14 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
     ].filter((id): id is string => Boolean(id));
 
     if (candidates.length === 0) {
+      // The platform default comes from the CLAIM_CHECK_DEFAULT_MODEL env var
+      // (see src/exulu/routes.ts). The DB-backed platform setting the spec
+      // sketched does not exist and is a recorded deferral, so naming it here
+      // was a first-run dead end for the agent-less API client.
       res.status(400).json({
         detail:
           "No model to run the check with: pass `model`, configure claim_check.model on the agent, " +
-          "or set the platform setting claim_check.default_model.",
+          "or set the CLAIM_CHECK_DEFAULT_MODEL environment variable on the backend.",
       });
       return;
     }

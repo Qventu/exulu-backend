@@ -298,7 +298,9 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
     });
     const res = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
     expect(res.status).toBe(400);
-    expect(String(res.body.detail)).toContain("claim_check.default_model");
+    // Finding 12: the message used to name a platform setting
+    // `claim_check.default_model` that does not exist in the codebase.
+    expect(String(res.body.detail)).toContain("CLAIM_CHECK_DEFAULT_MODEL");
     expect(runCheck).not.toHaveBeenCalled();
   });
 
