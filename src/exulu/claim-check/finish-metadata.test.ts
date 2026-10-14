@@ -335,10 +335,21 @@ describe("claimCheckMetadata", () => {
       expect(meta.claimCheck.sources).toContainEqual({ type: "session_item", id: "tool:call_2", toolCallId: "call_2" });
     });
 
-    // The largest results — an offloaded placeholder with no `result` key at
-    // all — are precisely the ones most likely to have grounded the answer,
-    // and precisely the ones that cannot be read here at all.
-    it("does not name a session_item entry when the session-items output was offloaded (truncated/notice/preview)", () => {
+    // Fix round 3, Critical 4: THE THIRD OUTCOME. "Found nothing" and "here
+    // it is" are not the only two answers a handler can give. An offloaded
+    // output — `{ truncated, notice, preview }`, no `result` key — is
+    // evidence this module cannot represent: the model read its
+    // 4,000-character preview, and `read_session_file`'s 16,000-char slices
+    // sit right on the offload floor for a <=40k-window model. Reading that
+    // as "the tool found nothing" emits the fragment and has the check score
+    // the answer against the REMAINING sources.
+    //
+    // These assertions are `toEqual({})` on purpose. Stage 3 suppressed this
+    // shape deliberately; the test that pinned it was rewritten into "does
+    // not name a session_item entry", which PASSES while the dangerous
+    // behaviour is live. The whole-fragment assertion is the only form that
+    // cannot be weakened away again.
+    it("SUPPRESSES THE WHOLE FRAGMENT when the session-items output was offloaded (truncated/notice/preview)", () => {
       const both = [
         ...retrievalParts,
         {
@@ -347,17 +358,53 @@ describe("claimCheckMetadata", () => {
           output: { truncated: true, notice: "stored as tool-output-context_search-ab12.txt", preview: "…" },
         },
       ];
-      const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both, messages: [] } as any) as any;
-      expect(meta.claimCheck.sources.some((s: any) => s.type === "session_item")).toBe(false);
+      expect(
+        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both, messages: [] } as any),
+      ).toEqual({});
     });
 
-    it("does not name a session_item entry when the output cannot be parsed", () => {
+    it("SUPPRESSES THE WHOLE FRAGMENT when the session-items output cannot be parsed", () => {
       const both = [
         ...retrievalParts,
         { type: sessionItemsPartType, toolCallId: "call_2", output: { result: "<<not json>>" } },
       ];
-      const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any) as any;
-      expect(meta.claimCheck.sources.some((s: any) => s.type === "session_item")).toBe(false);
+      expect(
+        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any),
+      ).toEqual({});
+    });
+
+    it("SUPPRESSES THE WHOLE FRAGMENT when the payload parses to something other than an array", () => {
+      const both = [
+        ...retrievalParts,
+        sessionItemsPart({ chunks: [{ item_id: "i9", chunk_content: "230 Volt." }] }),
+      ];
+      expect(
+        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any),
+      ).toEqual({});
+    });
+
+    // The flat shape an earlier gate was written against — one bare item per
+    // element. The tool does not emit it, so an element shaped like this is
+    // evidence in a form this module cannot map; it must not read as "found
+    // nothing".
+    it("SUPPRESSES THE WHOLE FRAGMENT for an element that is not a per-context response at all", () => {
+      const both = [...retrievalParts, sessionItemsPart([{ id: "s1", content: "230 Volt." }])];
+      expect(
+        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any),
+      ).toEqual({});
+    });
+
+    // Text the client cannot attribute to an item is text the client DROPS:
+    // it keys its sources on `item_id`. Evidence the model read and the
+    // check will not receive, so the fragment goes.
+    it("SUPPRESSES THE WHOLE FRAGMENT for a chunk with text but no item_id", () => {
+      const both = [
+        ...retrievalParts,
+        sessionItemsPart([{ context: { id: "ctx_1" }, chunks: [{ chunk_content: "230 Volt." }] }]),
+      ];
+      expect(
+        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any),
+      ).toEqual({});
     });
   });
 
@@ -427,7 +474,9 @@ describe("claimCheckMetadata", () => {
       expect(out.claimCheck.sources.some((s: any) => s.id === "tool:call_4")).toBe(false);
     });
 
-    // Review Focus 2
+    // Review Focus 2. An `{ error }` output is the tool's own clean failure:
+    // the model was handed a failure message, which is not evidence, so this
+    // is "provably nothing" — the entry goes, the fragment stays.
     it("does not name a document tool call that failed", () => {
       const out = claimCheckMetadata({
         config: configOf('{"enabled":true}'),
@@ -437,6 +486,43 @@ describe("claimCheckMetadata", () => {
         toolResults: [...retrievalParts, { type: "tool-read_session_file", toolCallId: "call_4", output: { error: "Could not read session file" } }],
       } as any) as any;
       expect(out.claimCheck.sources.some((s: any) => s.id === "tool:call_4")).toBe(false);
+      expect(out.claimCheck.sources.length).toBeGreaterThan(0); // the kb sources still count
+    });
+
+    // Fix round 3, Critical 4, the document arm's third outcome. An
+    // offloaded document read is the dangerous one: `read_session_file`
+    // returns 16,000-character slices, which sit right on the offload floor
+    // for a <=40k-window model, and the model read the 4,000-char preview.
+    // `toEqual({})`, for the reason the session-items block spells out.
+    it("SUPPRESSES THE WHOLE FRAGMENT when a document tool's output was offloaded", () => {
+      expect(
+        claimCheckMetadata({
+          config: configOf('{"enabled":true}'),
+          user: user(),
+          isGuest: false,
+          isLicensed: true,
+          toolResults: [
+            ...retrievalParts,
+            {
+              type: "tool-read_session_file",
+              toolCallId: "call_4",
+              output: { truncated: true, notice: "stored as tool-output-read_session_file-ab12.txt", preview: "230 Volt. …" },
+            },
+          ],
+        } as any),
+      ).toEqual({});
+    });
+
+    it("SUPPRESSES THE WHOLE FRAGMENT when a document tool's output is a shape it never emits", () => {
+      expect(
+        claimCheckMetadata({
+          config: configOf('{"enabled":true}'),
+          user: user(),
+          isGuest: false,
+          isLicensed: true,
+          toolResults: [...retrievalParts, { type: "tool-read_session_file", toolCallId: "call_4", output: "230 Volt." }],
+        } as any),
+      ).toEqual({});
     });
 
     // internet_search → a web entry, named unconditionally (no content/error

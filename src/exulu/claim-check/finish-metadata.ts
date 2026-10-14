@@ -137,43 +137,6 @@ function chunkItemIdsOf(output: unknown): string[] {
 }
 
 /**
- * True when the client can provably build at least one source from a
- * session-items call's output — **the client's own predicate, mirrored**
- * (frontend `sessionItemSources` in `claim-check-data.ts`), not a second
- * guess at the shape.
- *
- * The measured shape: `{ result: JSON.stringify(results.flat()) }` where
- * `results` holds one `context.search(...)` response PER CONTEXT referenced
- * in the session — `{ …, context: { name, id }, chunks:
- * VectorSearchChunkResult[] }` — or, for a context with no embedder, that
- * context's bare error STRING (the tool's own catch branch). So the chunks
- * nest one level deeper than agentic retrieval's output, and
- * `parsed.length > 0` means "a context was searched", not "an item was
- * found".
- *
- * Getting that wrong is not a degraded source: the two commonest outcomes —
- * `[{ context, chunks: [] }]` (searched, matched nothing, which is the
- * common case on a session with pinned items) and an embedder-less context —
- * would name an entry the client provably cannot fulfil, and the client's
- * completeness guard refuses the WHOLE manifest over any one such entry,
- * knowledge-base half included, with no error and nothing logged.
- */
-function sessionItemsFoundAny(parsed: unknown): boolean {
-  if (!Array.isArray(parsed)) return false;
-  for (const element of parsed) {
-    // A bare string is the embedder-not-configured message, not evidence —
-    // skipped here exactly as the client skips every non-object element.
-    if (!isRecord(element) || !Array.isArray(element.chunks)) continue;
-    for (const row of element.chunks) {
-      if (!isRecord(row) || typeof row.item_id !== "string") continue;
-      const text = typeof row.chunk_content === "string" ? row.chunk_content : "";
-      if (text.trim()) return true;
-    }
-  }
-  return false;
-}
-
-/**
  * A tool output's `{ result: <JSON string> }` payload, parsed — or
  * `UNREADABLE` when there is no string `result` (an offloaded
  * `{ truncated, notice, preview }` placeholder has none) or it does not
@@ -192,6 +155,102 @@ function parsedToolPayload(output: unknown): unknown {
 }
 
 /**
+ * What a covered tool's output lets this module say about the evidence that
+ * tool contributed. **Three answers, not two** (fix round 3, Critical 4):
+ *
+ *  - `readable` — the client can provably build at least one source from it,
+ *    so the entry is named;
+ *  - `nothing` — a cleanly-parsed EMPTY result. The tool genuinely
+ *    contributed no evidence, so the entry is skipped and the fragment is
+ *    still emitted: the check runs against the turn's other sources, which
+ *    IS the whole of the answer's evidence;
+ *  - `unreadable` — the tool contributed evidence this fragment cannot
+ *    represent: an OFFLOADED output (`{ truncated, notice, preview }`, no
+ *    `result` key — `guardToolOutput` in src/exulu/tool-output-offload.ts,
+ *    whose 4,000-char preview the model DID read), a payload that does not
+ *    parse, or a shape the tool does not emit. The whole fragment is then
+ *    suppressed, exactly as `view_document_page` already does, because
+ *    scoring an answer against part of its evidence reports grounded claims
+ *    `unsupported`.
+ *
+ * Inverting Stage 3's suppression gates into Stage 4's inclusion gates
+ * collapsed the third answer into the second: an offloaded output read
+ * exactly like "the tool found nothing". `read_session_file`'s 16,000-char
+ * slices sit right on the offload floor for a <=40k-window model, so this is
+ * not a corner case.
+ */
+type Readability = "readable" | "nothing" | "unreadable";
+
+/**
+ * A session-items call's output, classified.
+ *
+ * The measured shape: `{ result: JSON.stringify(results.flat()) }` where
+ * `results` holds one `context.search(...)` response PER CONTEXT referenced
+ * in the session — `{ …, context: { name, id }, chunks:
+ * VectorSearchChunkResult[] }` — or, for a context with no embedder, that
+ * context's bare error STRING (the tool's own catch branch). So the chunks
+ * nest one level deeper than agentic retrieval's output, and
+ * `parsed.length > 0` (the gate this replaced) meant "a context was
+ * searched", not "an item was found".
+ *
+ * `readable` is **the client's own predicate, mirrored** (frontend
+ * `sessionItemSources` in `claim-check-data.ts`), not a second guess at the
+ * shape: at least one element that is a record whose `chunks` is an array
+ * holding an entry with a string `item_id` and non-blank `chunk_content`.
+ * Getting that wrong is not a degraded source — the two commonest outcomes
+ * (`[{ context, chunks: [] }]`, which is the common case on a session with
+ * pinned items, and an embedder-less context) would name an entry the client
+ * provably cannot fulfil, and the client's completeness guard refuses the
+ * WHOLE manifest over any one such entry, knowledge-base half included, with
+ * no error and nothing logged.
+ *
+ * `unreadable` covers the offloaded/unparseable/non-array payload, an
+ * element that is neither a context response nor the embedder string, and a
+ * chunk carrying text the client cannot attribute to an item — it keys its
+ * sources on `item_id`, so such text is text it silently drops.
+ */
+function sessionItemsReadability(output: unknown): Readability {
+  const parsed = parsedToolPayload(output);
+  if (!Array.isArray(parsed)) return "unreadable";
+  let found = false;
+  for (const element of parsed) {
+    // A bare string is the embedder-not-configured message, not evidence —
+    // skipped here exactly as the client skips every non-object element.
+    if (typeof element === "string") continue;
+    if (!isRecord(element) || !Array.isArray(element.chunks)) return "unreadable";
+    for (const row of element.chunks) {
+      if (!isRecord(row)) return "unreadable";
+      const text = typeof row.chunk_content === "string" ? row.chunk_content : "";
+      if (!text.trim()) continue;
+      if (typeof row.item_id !== "string") return "unreadable";
+      found = true;
+    }
+  }
+  return found ? "readable" : "nothing";
+}
+
+/**
+ * A `read_session_file` / `parse_document` call's output, classified.
+ * `{ content, … }` on success, `{ error }` on failure — one handler serves
+ * both (spec §4's table).
+ *
+ * An `{ error }` output is `nothing`, not `unreadable`: the model was handed
+ * a failure message, which is not evidence, so the turn's other sources are
+ * still the whole of the answer's evidence. Naming it would instead have the
+ * check verify the answer against a failure message and report grounded
+ * claims unsupported.
+ *
+ * Everything else — an offloaded placeholder, or any shape with neither a
+ * string `content` nor a string `error` — is `unreadable`.
+ */
+function documentReadability(output: unknown): Readability {
+  if (!isRecord(output)) return "unreadable";
+  if (typeof output.content === "string") return output.content.trim() ? "readable" : "nothing";
+  if (typeof output.error === "string") return "nothing";
+  return "unreadable";
+}
+
+/**
  * The manifest the client fills in. One entry per source it must send, each
  * naming the handler (`type`) and where to find it (`toolCallId`). The client
  * locates parts BY TOOL CALL ID — no tool display name appears on the frontend
@@ -199,18 +258,25 @@ function parsedToolPayload(output: unknown): unknown {
  *
  * Never throws, and never names a source this function cannot vouch for:
  * a retrieval chunk with its source reference stripped, a document call that
- * errored or returned no content, a session-items call that found nothing (or
- * whose output cannot be read at all), or a memory this viewer may not see or
- * whose information is blank all contribute nothing. Naming an entry the
- * client cannot in fact recover is worse than omitting it — the client's own
- * completeness guard counts MANIFEST ENTRIES, not final sources, and refuses
- * the WHOLE check the moment any one named entry produces nothing (spec §4;
- * F3's guard).
+ * errored or returned no content, a session-items call that found nothing, or
+ * a memory this viewer may not see or whose information is blank all
+ * contribute nothing. Naming an entry the client cannot in fact
+ * recover is worse than omitting it — the client's own completeness guard
+ * counts MANIFEST ENTRIES, not final sources, and refuses the WHOLE check the
+ * moment any one named entry produces nothing (spec §4; F3's guard).
+ *
+ * **Returns `null` when a covered tool contributed evidence this manifest
+ * cannot represent at all** — the `unreadable` third outcome (see
+ * `Readability`). That is not "one fewer source": the caller withholds the
+ * whole fragment, the way `view_document_page` and an attachment already do,
+ * because a check run against the remaining sources reports grounded claims
+ * `unsupported`. "Nothing here" and "here it is" cannot be the only two
+ * answers a handler gives; "I cannot represent this turn" is the third.
  */
 function manifestFor(args: {
   toolResults: unknown;
   recalledMemories: { id: string; information?: string }[] | undefined;
-}): ClaimCheckManifestEntry[] {
+}): ClaimCheckManifestEntry[] | null {
   const out: ClaimCheckManifestEntry[] = [];
   const seen = new Set<string>();
   const add = (entry: ClaimCheckManifestEntry) => {
@@ -249,12 +315,11 @@ function manifestFor(args: {
     }
 
     if (DOCUMENT_PART_TYPES.has(part.type)) {
-      // `{ content }` on success, `{ error }` on failure. An error string is not
-      // evidence: naming it would have the check verify the answer against a
-      // failure message and report grounded claims unsupported.
-      const output = isRecord(part.output) ? part.output : undefined;
-      const content = typeof output?.content === "string" ? output.content : "";
-      if (content.trim()) add({ type: "document", id: `tool:${part.toolCallId}`, toolCallId: part.toolCallId });
+      const readability = documentReadability(part.output);
+      if (readability === "unreadable") return null;
+      if (readability === "readable") {
+        add({ type: "document", id: `tool:${part.toolCallId}`, toolCallId: part.toolCallId });
+      }
       continue;
     }
 
@@ -268,8 +333,11 @@ function manifestFor(args: {
       // contexts, so "a context was searched" is not "an item was found" —
       // naming an entry the client cannot fulfil silences the whole check,
       // the same problem the memory and document handlers guard against. The
-      // predicate is the client's own arm, mirrored; see its docblock.
-      if (sessionItemsFoundAny(parsedToolPayload(part.output))) {
+      // readable predicate is the client's own arm, mirrored; see the
+      // classifier's docblock.
+      const readability = sessionItemsReadability(part.output);
+      if (readability === "unreadable") return null;
+      if (readability === "readable") {
         add({ type: "session_item", id: `tool:${part.toolCallId}`, toolCallId: part.toolCallId });
       }
       continue;
@@ -457,6 +525,12 @@ export function claimCheckMetadata({ config, user, isGuest, isLicensed, toolResu
   if (recallHadItems && !recalledMemories) return {};
 
   const sources = manifestFor({ toolResults, recalledMemories });
+  // `null`: a covered tool contributed evidence this fragment cannot
+  // represent (an offloaded output, a payload that will not parse, a shape
+  // the tool does not emit). The model read it; the check never would. Same
+  // outcome as view_document_page and an attachment — withhold everything
+  // rather than score the answer against the rest of its evidence.
+  if (sources === null) return {};
   // No evidence at all, no check: a check with no sources marks every claim
   // unsupported for want of sources, which is a worse answer than no check.
   if (sources.length === 0) return {};
