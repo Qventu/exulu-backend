@@ -4975,13 +4975,18 @@ export const createExpressRoutes = async (
         messages: messagesBySession.get(s.id) ?? [],
       }));
 
-      const [feedback, promptFavorites, tracking] = await Promise.all([
+      const [feedback, promptFavorites, tracking, claimChecks] = await Promise.all([
         db.from("feedback").where({ user: targetUser.id }).catch(() => []),
         db
           .from("prompt_favorites")
           .where({ user_id: targetUser.id })
           .catch(() => []),
         db.from("tracking").where({ user: targetUser.id }).catch(() => []),
+        // The stored claim checks keyed to this user. `payload` is personal
+        // data (their answers' sentences, verbatim source quotes), so Art. 15
+        // covers it. Same `.catch(() => [])` as its siblings: the table only
+        // exists on deployments licensed for claim-check.
+        db.from("claim_checks").where({ user: targetUser.id }).catch(() => []),
       ]);
 
       const exportedAt = new Date().toISOString();
@@ -5001,6 +5006,7 @@ export const createExpressRoutes = async (
         `  - feedback.json         feedback the user submitted`,
         `  - prompt_favorites.json prompt-library favourites`,
         `  - tracking.json         tracking events linked to the user`,
+        `  - claim_checks.json     answer verification results stored for the user`,
         ``,
       ].join("\n");
 
@@ -5014,6 +5020,7 @@ export const createExpressRoutes = async (
         JSON.stringify(promptFavorites, null, 2),
       );
       zip.file("tracking.json", JSON.stringify(tracking, null, 2));
+      zip.file("claim_checks.json", JSON.stringify(claimChecks, null, 2));
 
       const buffer = await zip.generateAsync({ type: "nodebuffer" });
       const filename = `user-${targetUser.id}-export-${exportedAt.replace(/[:.]/g, "-")}.zip`;
@@ -5046,6 +5053,15 @@ export const createExpressRoutes = async (
         await trx("agent_messages").where({ user: targetUser.id }).delete();
         await trx("agent_sessions").where({ user: targetUser.id }).delete();
         await trx("feedback").where({ user: targetUser.id }).delete();
+        // Stored claim checks: `payload` holds the user's answers and verbatim
+        // source quotes, keyed by `user`, so the docblock's "every row
+        // referencing them" covers it. Guarded by hasTable because the table
+        // only exists on deployments licensed for claim-check — an unguarded
+        // delete would abort this transaction (and so the user deletion)
+        // everywhere else.
+        if (await trx.schema.hasTable("claim_checks")) {
+          await trx("claim_checks").where({ user: targetUser.id }).delete();
+        }
         await trx("prompt_favorites")
           .where({ user_id: targetUser.id })
           .delete();

@@ -21,6 +21,7 @@ Returns a ZIP archive containing every personal-data record held for the target 
 | `feedback.json` | Feedback entries submitted by the user. |
 | `prompt_favorites.json` | Saved prompt favourites. |
 | `tracking.json` | Usage tracking entries. |
+| `claim_checks.json` | Stored answer-verification results (claim check), including each checked sentence and the source quotes it was verified against. Present and empty on deployments not licensed for claim check. |
 
 ### Request
 
@@ -49,6 +50,7 @@ Hard-deletes the target user and all personally identifiable data in a single da
 
 - Messages and agent sessions.
 - Feedback, prompt favourites, and usage tracking.
+- Stored claim checks (skipped on deployments not licensed for claim check, where the table does not exist).
 - RBAC entries (role assignments, team memberships, project access).
 - The users row itself.
 
