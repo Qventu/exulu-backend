@@ -525,7 +525,9 @@ git commit -m "feat(claim-check): parse the trigger and assemble sources from th
 
 **Interfaces:**
 - Consumes: `summarise`, `ClaimCheckResult` and friends (Task F2, F1).
-- Produces: `export function ClaimCheck({ state, guestMode }: { state: ClaimCheckState; guestMode?: boolean })` and `export type ClaimCheckState = { status: "running" } | { status: "done"; result: ClaimCheckResult } | { status: "failed" } | null`.
+- Produces: `export function ClaimCheck({ state, guestMode, sourceNames }: { state: ClaimCheckState; guestMode?: boolean; sourceNames?: Record<string, string> })`
+
+**Each claim row renders its evidence quote**, and the source's name when `sourceNames` carries one for that `evidence[].sourceId` (fall back to the quote alone — never render a raw id at a reader). The quote is the whole reason a verdict is auditable: it is what lets someone see *why* a claim was called supported or contradicted, and this plan's decision to defer in-body highlighting and source-viewer links rests on the quote being present. A claim row without it is an unexplained accusation. and `export type ClaimCheckState = { status: "running" } | { status: "done"; result: ClaimCheckResult } | { status: "failed" } | null`.
 
 The panel is presentational: it takes state and renders. It never fetches — Task F4 owns that, so this task's tests need no network.
 
@@ -820,7 +822,10 @@ export function claimCheckRequestFor({ message, question, session, agentId, loca
   const trigger = parseClaimCheckTrigger(message.metadata);
   if (!trigger) return null;
   const sources = collectSources(message, trigger.sourceIds);
-  if (sources.length === 0) return null;
+  // Fewer sources than the fragment named means the client can no longer
+  // produce evidence the backend expected. Checking anyway would score
+  // grounded claims unsupported; a missing panel is the honest failure.
+  if (sources.length !== trigger.sourceIds.length) return null;
   const answer = answerTextOf(message);
   if (!answer.trim()) return null;
   return {
@@ -880,7 +885,9 @@ git commit -m "feat(claim-check): fire the check when a stream ends and rehydrat
 - Test: `app/(application)/chat/components/message-column-claim-check.test.tsx`
 
 **Interfaces:**
-- Consumes: `ClaimCheck` **and `ClaimCheckState`** from `./claim-check` (F3); `claimChecks` from the controller (F4).
+- Consumes: `ClaimCheck` **and `ClaimCheckState`** from `./claim-check` (F3); `claimChecks` from the controller (F4); `collectSources` from `./claim-check-data` (F2).
+
+The factory also supplies the panel's `sourceNames`: call `collectSources(message, trigger.sourceIds)` for the message being rendered and map `id -> name` from the result (skipping entries with no name). The data is already in the message parts, so this costs nothing and turns each evidence quote into "handbuch.pdf: …" instead of an anonymous snippet.
 - Produces: `ClaimCheckComponent?: React.ComponentType<{ message: UIMessage; agent: Agent }>` on `MessageRendererProps`.
 
 `RecalledMemoriesComponent`'s shape is frozen and has no `guestMode` prop, which is why `message-column.tsx` wraps it in a factory closure. Do the same here, and carry `claimChecks` in the same closure so the component needs no new prop.
