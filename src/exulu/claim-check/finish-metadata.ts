@@ -15,10 +15,15 @@
 //    needs.
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import type { User } from "@EXULU_TYPES/models/user";
+import type { RecallCollector } from "@SRC/exulu/memory/recall-collector";
 import { pipelineConfigFor } from "@EE/claim-check/agent-config";
 import { isExternalOrAnonymousUser } from "@SRC/exulu/resolve-max-steps";
 import { AGENTIC_RETRIEVAL_TOOL_NAME } from "@EE/agentic-retrieval/pipeline/index";
 import { SESSION_ITEMS_RETRIEVAL_TOOL_NAME } from "@SRC/templates/tools/session-items-retrieval-tool";
+import { SESSION_FILE_READ_TOOL_NAME } from "@SRC/templates/tools/session-file-read-tool";
+import { PARSE_DOCUMENT_TOOL_NAME } from "@SRC/templates/tools/parse-document-tool";
+import { VIEW_DOCUMENT_PAGE_TOOL_NAME } from "@SRC/templates/tools/view-document-page-tool";
+import { INTERNET_SEARCH_TOOL_NAME } from "@SRC/templates/tools/perplexity";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 
 /** What the chat needs to post a check: that it may, and what to send. */
@@ -56,6 +61,38 @@ export const RETRIEVAL_PART_TYPES = new Set([`tool-${sanitizeToolName(AGENTIC_RE
  * session-items evidence so it can be included instead of suppressed.
  */
 const SESSION_ITEMS_PART_TYPE = `tool-${sanitizeToolName(SESSION_ITEMS_RETRIEVAL_TOOL_NAME)}`;
+
+/**
+ * The rest of the same class (spec §5): tools whose output is evidence the
+ * model reads and this fragment cannot represent, because `sourceIds` can
+ * only name knowledge-base item ids and the frontend assembles `sources[]`
+ * from retrieval chunks alone.
+ *
+ * All four are reachable on the same turn as agentic retrieval, and the first
+ * three need no agent opt-in at all — `read_session_file`, `parse_document`
+ * and `view_document_page` are registered for EVERY session once
+ * `fileUploads.s3Bucket` is configured. A turn that reads a PDF and also
+ * calls Context Search would otherwise emit a fragment covering the retrieval
+ * half only, and every PDF-grounded claim would come back `unsupported` —
+ * `score.ts` puts `unsupported` in the numerator of the label share, so the
+ * panel renders an alert for an answer that was fully grounded in the user's
+ * own document. §2.4's honesty invariants exist to prevent exactly that, and
+ * a missing panel is the safe failure.
+ *
+ * Unlike session-items above there is no "proven empty" shape to exempt: each
+ * of these returns prose, bytes or an image, so the only honest reading of a
+ * call is "the model may have used it". Presence of the part suppresses.
+ *
+ * Each part type is derived from the tool's own exported display-name literal
+ * (never a second hardcoded spelling), so a rename fails this module's test
+ * suite instead of silently turning the suppression off.
+ */
+export const INVISIBLE_EVIDENCE_PART_TYPES = new Set([
+  `tool-${sanitizeToolName(SESSION_FILE_READ_TOOL_NAME)}`,
+  `tool-${sanitizeToolName(PARSE_DOCUMENT_TOOL_NAME)}`,
+  `tool-${sanitizeToolName(VIEW_DOCUMENT_PAGE_TOOL_NAME)}`,
+  `tool-${sanitizeToolName(INTERNET_SEARCH_TOOL_NAME)}`,
+]);
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
@@ -104,6 +141,14 @@ function retrievedIdsOf(toolResults: unknown): { sourceIds: string[]; toolCallId
   return { sourceIds, toolCallIds };
 }
 
+/** True when any part of this turn came from a tool in the class above. */
+function invisibleEvidenceToolRan(toolResults: unknown): boolean {
+  if (!Array.isArray(toolResults)) return false;
+  return toolResults.some(
+    (part) => isRecord(part) && typeof part.type === "string" && INVISIBLE_EVIDENCE_PART_TYPES.has(part.type),
+  );
+}
+
 /**
  * True when the session-items tool ran this turn and may have contributed
  * evidence this fragment cannot represent: a non-empty array, or an output
@@ -131,8 +176,46 @@ function sessionItemsContributed(toolResults: unknown): boolean {
   return false;
 }
 
+/**
+ * True when any message of this turn's prompt carries a `file` part.
+ *
+ * This is the attachment half of the same class. `processFilePartsInMessages`
+ * (src/exulu/generate-stream.ts) runs over the WHOLE message array — loaded
+ * history plus the new message — and replaces each attached document's
+ * `file` part with a `text` part holding the extracted text, inline in the
+ * user message. So by the time the model answers, a PDF's contents are
+ * indistinguishable from text the user typed, and nothing in the assistant's
+ * parts records that a document was read.
+ *
+ * The pre-inlining `file` part is therefore the only signal that cannot be
+ * confused with ordinary typed text: it is a structured part type the client
+ * emits for an actual upload, where the markers the inlining leaves behind
+ * (the `<file file name = "…">` wrapper, or an `[Error extracting text from
+ * file …]` string) are plain text any user could type verbatim.
+ *
+ * Both kinds of `file` part count. An image part survives inlining unchanged
+ * and is read by the model directly; a document part becomes inline text.
+ * Either way the check never sees it.
+ *
+ * Reading the whole array rather than only the last message is deliberate: a
+ * document attached three turns ago is re-inlined into every later prompt, so
+ * it can still ground this turn's answer. The cost is that compaction may
+ * have dropped it from the model's view while it is still in the array — that
+ * errs towards silence, which is the safe direction.
+ */
+export function turnCarriedFileAttachment(messages: unknown): boolean {
+  if (!Array.isArray(messages)) return false;
+  for (const message of messages) {
+    if (!isRecord(message) || !Array.isArray(message.parts)) continue;
+    for (const part of message.parts) {
+      if (isRecord(part) && part.type === "file") return true;
+    }
+  }
+  return false;
+}
+
 /** Message metadata fragment merged on the SDK `finish` part (spec §5). */
-export function claimCheckMetadata({ agent, user, isGuest, toolResults }: {
+export function claimCheckMetadata({ agent, user, isGuest, toolResults, messages, recall }: {
   agent: ExuluAgent;
   user?: User;
   /**
@@ -144,11 +227,33 @@ export function claimCheckMetadata({ agent, user, isGuest, toolResults }: {
    */
   isGuest: boolean;
   toolResults: unknown;
+  /**
+   * This turn's prompt messages **before** file-part inlining — pass
+   * `[...result.previousMessages, message]` from the chat route.
+   * `result.originalMessages` is the post-inlining view and cannot be used:
+   * by then every attached document is a text part (see
+   * turnCarriedFileAttachment). Explicitly passed rather than read from a
+   * global so this function stays pure.
+   */
+  messages: unknown;
+  /**
+   * The turn's memory recall, same object `recalledMemoriesMetadata` gets.
+   * Undefined when the agent has no memory base.
+   */
+  recall: Pick<RecallCollector, "list"> | undefined;
 }): { claimCheck: ClaimCheckTrigger } | Record<string, never> {
   const cfg = pipelineConfigFor(agent).claimCheck;
   if (!cfg.enabled) return {};
   if ((isGuest || isExternalOrAnonymousUser(user)) && !cfg.showToExternalUsers) return {};
+  if (invisibleEvidenceToolRan(toolResults)) return {};
   if (sessionItemsContributed(toolResults)) return {};
+  if (turnCarriedFileAttachment(messages)) return {};
+  // A recalled memory reaches the model through the SYSTEM prompt
+  // (generate-stream.ts → memoryRecall.promptBlock), never through a tool
+  // result, so the check cannot be given it and a claim resting on one scores
+  // `unsupported`. Non-empty recall therefore suppresses — the same emptiness
+  // test recalledMemoriesMetadata applies one line above the call site.
+  if ((recall?.list().length ?? 0) > 0) return {};
 
   const { sourceIds, toolCallIds } = retrievedIdsOf(toolResults);
   // No retrieval, no evidence: a check here would mark every claim unsupported

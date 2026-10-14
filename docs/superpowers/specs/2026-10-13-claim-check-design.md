@@ -256,15 +256,48 @@ even for a signed-in internal visitor, so the surface and the role are ORed. The
 403 applies the same OR — one product rule, two enforcement points. (Stage 3 built the role half
 only and the task review caught it; recorded here because the plan, not the spec, was wrong.)
 
-**A turn that also ran the session-items retrieval tool emits no fragment at all.**
-`createSessionItemsRetrievalTool` is attached to any session with uploaded items and coexists with
-agentic retrieval, but its output is `{ result: JSON.stringify(array) }` with no `chunks` key, so
-its evidence cannot reach the check. Scoring an answer that leans on an attached document against
-the agentic evidence alone would return `unsupported` for claims that are in fact grounded — a
-false hallucination alarm, which §2.4's honesty invariants exist to prevent. A missing panel is the
-safe failure. A parse failure of that tool's output suppresses too: "cannot prove it empty" is not
-"empty". Lifting this needs a second output-shape handler in `finish-metadata.ts` **and** in the
-frontend's `collectSources`, listed in §10.
+**A fragment is emitted only when every source the answer could have drawn on is one the check
+will receive.** `sourceIds` can only name knowledge-base item ids, and the frontend assembles
+`sources[]` from the retrieval tool's chunks alone, so any other evidence the model was given this
+turn is invisible to the check. Scoring an answer against a subset of the evidence it actually used
+returns `unsupported` for claims that are in fact grounded, and `score.ts` puts `unsupported` in
+the numerator of the label share — so the panel renders an **alert** for a correct answer. §2.4's
+honesty invariants exist to prevent exactly that. A missing panel is the safe failure; when in
+doubt between emitting and staying silent, the fragment stays absent.
+
+The whole class, all of it suppressing in `finish-metadata.ts`:
+
+| Invisible evidence | How it reaches the model | Attached when |
+|---|---|---|
+| `createSessionItemsRetrievalTool` | `{ result: JSON.stringify(array) }`, no `chunks` key | any session with knowledge items attached |
+| `read_session_file` | prose from a session file | **every** session with `fileUploads.s3Bucket` configured — no agent opt-in |
+| `parse_document` | extracted document text | same |
+| `view_document_page` | a rendered page image | same |
+| `internet_search` | web results | per agent, via its tool config |
+| A document attached to the message | `processFilePartsInMessages` inlines the extracted text as a **text part of the user message** | always — "upload a PDF and ask about it" |
+| A recalled memory | `memoryRecall.promptBlock`, injected into the **system prompt** | any agent with `agent.memory` |
+
+Each tool's part type is derived from that tool's own exported display-name literal
+(`tool-${sanitizeToolName(NAME)}`), never a second hardcoded spelling, so a rename fails the test
+suite instead of silently turning a suppression off. For the session-items tool a **cleanly-parsed
+empty array** still emits — proven empty is proven harmless — and anything else (a non-empty array,
+an unparseable payload, an offloaded `{ truncated, notice, preview }` object) suppresses: "cannot
+prove it empty" is not "empty". The other tools have no empty shape to prove, so presence of the
+call suppresses. The attachment signal is the **pre-inlining** `file` part on a message of the
+turn, which is the only marker that cannot be mistaken for text the user typed; the post-inlining
+`<file file name = "…">` wrapper is ordinary text and is not used.
+
+**The functional cost is deliberate: an agent with memory enabled and a non-empty recall produces
+no claim check at all.** A false "your answer was unfounded" about a correct answer is the worst
+output this system can produce, and that outweighs the panel. The real fix is coverage-aware
+scoring, listed in §10 — not a narrower suppression here.
+
+**An external viewer with `show_sources_to_external_users: false` never gets a fragment either**,
+whatever `claim_check.showToExternalUsers` says: `serializeOutput` strips `item_id` from every
+chunk for that viewer, so there are no source ids to send. That is the right outcome (the check
+would have no evidence to verify against) but it is a consequence of the other flag, not of this
+one — an admin who enables `showToExternalUsers` while sources are hidden gets silence, and that
+is pinned by a test in `finish-metadata.test.ts`.
 
 ### 5.1 Frontend (separate repo, sibling worktree)
 
@@ -426,8 +459,18 @@ settle it.
 - Per-claim retrieval for external callers (they bring their own sources).
 - Claim-exact highlighting inside rendered Markdown.
 - An `ExuluEval` test-case integration for continuous scoring in the evals UI.
-- Session-attached items as claim-check evidence. Their retrieval tool ships a different output
-  shape, and until both `finish-metadata.ts` and the frontend's `collectSources` handle it, a turn
-  that used it is suppressed rather than checked against partial evidence (see §5).
+- **Evidence the fragment cannot represent, as claim-check evidence.** The whole class in §5's
+  table: session-attached items, `read_session_file`, `parse_document`, `view_document_page`,
+  `internet_search`, a document attached to the message, and a recalled memory. Each would need an
+  output-shape (or prompt-block) handler in `finish-metadata.ts` **and** in the frontend's
+  `collectSources` before it could be sent as a source; until then a turn that used any of them is
+  suppressed rather than checked against partial evidence (see §5).
+- **Coverage-aware scoring — the real fix for the above, and the one that would let those turns be
+  checked again.** Today a claim whose evidence set could not include a source the answer used is
+  scored as if the sources were complete, which is what makes a partial fragment dangerous and
+  forces the all-or-nothing suppression. The rule: when the evidence given to the check is known to
+  be incomplete for a claim, its label must be `n/a` with a stated reason — never `warn` or
+  `alert`. That is an engine change plus a §2.4 amendment (a fourth honesty rule beside the three
+  there), not a chat-surface change, so it is out of scope for the stage-3 branch that found this.
 - Fixing `suppress_duplicate_passages`' missing wizard entry — noted here because this design
   shares its failure mode, but it is a separate change.

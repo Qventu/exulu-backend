@@ -1,6 +1,15 @@
-import { claimCheckMetadata, recordToolResult, RETRIEVAL_PART_TYPES } from "./finish-metadata";
+import {
+  claimCheckMetadata,
+  recordToolResult,
+  INVISIBLE_EVIDENCE_PART_TYPES,
+  RETRIEVAL_PART_TYPES,
+} from "./finish-metadata";
 import { AGENTIC_RETRIEVAL_TOOL_NAME } from "@EE/agentic-retrieval/pipeline/index";
 import { SESSION_ITEMS_RETRIEVAL_TOOL_NAME } from "@SRC/templates/tools/session-items-retrieval-tool";
+import { SESSION_FILE_READ_TOOL_NAME } from "@SRC/templates/tools/session-file-read-tool";
+import { PARSE_DOCUMENT_TOOL_NAME } from "@SRC/templates/tools/parse-document-tool";
+import { VIEW_DOCUMENT_PAGE_TOOL_NAME } from "@SRC/templates/tools/view-document-page-tool";
+import { INTERNET_SEARCH_TOOL_NAME } from "@SRC/templates/tools/perplexity";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 
 /** An assistant message's parts, as the SDK shapes them. */
@@ -203,6 +212,200 @@ describe("claimCheckMetadata", () => {
       expect(
         claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, toolResults: both }),
       ).toEqual({});
+    });
+  });
+
+  // Fix round 2, Critical 1: session-items search was only the narrowest
+  // member of a class. Every one of these tools puts evidence in front of the
+  // model that the fragment's sourceIds cannot represent, and each is
+  // reachable on the same turn as agentic retrieval — so a check run on such
+  // a turn scores PDF- or web-grounded claims `unsupported` and renders an
+  // alert for an answer that was in fact grounded.
+  describe("a tool whose evidence the check will never see ran this turn", () => {
+    const partTypeOf = (name: string) => `tool-${sanitizeToolName(name)}`;
+
+    it.each([
+      ["read_session_file", SESSION_FILE_READ_TOOL_NAME],
+      ["parse_document", PARSE_DOCUMENT_TOOL_NAME],
+      ["view_document_page", VIEW_DOCUMENT_PAGE_TOOL_NAME],
+      ["internet_search", INTERNET_SEARCH_TOOL_NAME],
+    ])("is ABSENT when %s ran alongside agentic retrieval", (_label, toolName) => {
+      const both = [
+        ...retrievalParts,
+        { type: partTypeOf(toolName), toolCallId: "call_2", output: { result: "whatever it returned" } },
+      ];
+      expect(
+        claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, toolResults: both }),
+      ).toEqual({});
+    });
+
+    it("derives each part type from the tool's own exported name literal", () => {
+      expect([...INVISIBLE_EVIDENCE_PART_TYPES].sort()).toEqual(
+        [
+          partTypeOf(SESSION_FILE_READ_TOOL_NAME),
+          partTypeOf(PARSE_DOCUMENT_TOOL_NAME),
+          partTypeOf(VIEW_DOCUMENT_PAGE_TOOL_NAME),
+          partTypeOf(INTERNET_SEARCH_TOOL_NAME),
+        ].sort(),
+      );
+    });
+
+    // The suppression must not swallow the feature: the turn the check was
+    // built for — agentic retrieval and nothing else — still emits.
+    it("still emits for a turn whose only tool was agentic retrieval", () => {
+      expect(
+        claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, toolResults: retrievalParts }),
+      ).toEqual({ claimCheck: { enabled: true, sourceIds: ["i1", "i2"], toolCallIds: ["call_1"] } });
+    });
+  });
+
+  // Fix round 2, Minor 4: for an external viewer whose agent has
+  // show_sources_to_external_users off, the retrieval pipeline's
+  // serializeOutput strips item_id (and the other reference fields) from
+  // every chunk, so there is nothing for the fragment to name. Absent is the
+  // right outcome — a check with no sources marks everything unsupported —
+  // but it follows from the OTHER flag, so an admin who enables
+  // claim_check.showToExternalUsers while sources are hidden gets silence.
+  // Pinned here so that stays a decision rather than an accident.
+  it("is ABSENT when the chunks had their source references stripped (hidden sources)", () => {
+    // Exactly what serializeOutput(result, hideSources: true) produces:
+    // stripSourceReferences sets item_id/item_name/context/chunk_id to
+    // undefined, and JSON.stringify drops undefined keys entirely.
+    const stripped = [
+      {
+        type: "tool-Context_Search",
+        toolCallId: "call_1",
+        output: {
+          result: JSON.stringify({ chunks: [{ chunk_content: "Die FST-2XT arbeitet mit 230 Volt." }] }),
+        },
+      },
+    ];
+    expect(
+      claimCheckMetadata({
+        agent: agentWith('{"enabled":true,"showToExternalUsers":true}'),
+        user: user({ role: { id: "r1", name: "external" } }),
+        isGuest: true,
+        toolResults: stripped,
+        messages: [],
+        recall: undefined,
+      }),
+    ).toEqual({});
+  });
+
+  // Fix round 2, Critical 1: the same class, reached without any tool call.
+  describe("the turn carried an attached document", () => {
+    const fileMessage = {
+      id: "m1",
+      role: "user",
+      parts: [
+        { type: "file", mediaType: "application/pdf", filename: "wartung.pdf", url: "https://s3/wartung.pdf" },
+        { type: "text", text: "Was steht da zur Wartung?" },
+      ],
+    };
+    const textMessage = { id: "m0", role: "user", parts: [{ type: "text", text: "Hallo" }] };
+
+    it("is ABSENT when this turn's user message carries a file part", () => {
+      expect(
+        claimCheckMetadata({
+          agent: agentWith('{"enabled":true}'),
+          user: user(),
+          isGuest: false,
+          toolResults: retrievalParts,
+          messages: [textMessage, fileMessage],
+          recall: undefined,
+        }),
+      ).toEqual({});
+    });
+
+    // generate-stream re-inlines EVERY file part of the loaded history on
+    // every turn (processFilePartsInMessages runs over history + the new
+    // message), so a PDF attached three turns ago is still in this turn's
+    // prompt and can still ground this turn's answer.
+    it("is ABSENT when an earlier message in the session carried the file part", () => {
+      expect(
+        claimCheckMetadata({
+          agent: agentWith('{"enabled":true}'),
+          user: user(),
+          isGuest: false,
+          toolResults: retrievalParts,
+          messages: [fileMessage, textMessage],
+          recall: undefined,
+        }),
+      ).toEqual({});
+    });
+
+    it("still emits when no message of the turn carries a file part", () => {
+      expect(
+        claimCheckMetadata({
+          agent: agentWith('{"enabled":true}'),
+          user: user(),
+          isGuest: false,
+          toolResults: retrievalParts,
+          messages: [textMessage],
+          recall: undefined,
+        }),
+      ).toEqual({ claimCheck: { enabled: true, sourceIds: ["i1", "i2"], toolCallIds: ["call_1"] } });
+    });
+
+    it("treats a malformed messages argument as no signal rather than throwing", () => {
+      expect(() =>
+        claimCheckMetadata({
+          agent: agentWith('{"enabled":true}'),
+          user: user(),
+          isGuest: false,
+          toolResults: retrievalParts,
+          messages: "not an array" as unknown,
+          recall: undefined,
+        }),
+      ).not.toThrow();
+    });
+  });
+
+  // Fix round 2, Critical 1: a recalled memory is injected into the SYSTEM
+  // prompt, never into a tool result, so the check receives none of it. The
+  // functional cost is deliberate and recorded in spec §5: an agent with
+  // memory enabled and a non-empty recall produces no claim check.
+  describe("a memory was recalled this turn", () => {
+    const recallWith = (count: number) =>
+      ({ list: () => Array.from({ length: count }, (_, i) => ({ id: `mem-${i}` })) }) as any;
+
+    it("is ABSENT when the recall is non-empty", () => {
+      expect(
+        claimCheckMetadata({
+          agent: agentWith('{"enabled":true}'),
+          user: user(),
+          isGuest: false,
+          toolResults: retrievalParts,
+          messages: [],
+          recall: recallWith(1),
+        }),
+      ).toEqual({});
+    });
+
+    it("still emits when the recall ran and found nothing", () => {
+      expect(
+        claimCheckMetadata({
+          agent: agentWith('{"enabled":true}'),
+          user: user(),
+          isGuest: false,
+          toolResults: retrievalParts,
+          messages: [],
+          recall: recallWith(0),
+        }),
+      ).toEqual({ claimCheck: { enabled: true, sourceIds: ["i1", "i2"], toolCallIds: ["call_1"] } });
+    });
+
+    it("still emits when there was no recall collector at all (memory off)", () => {
+      expect(
+        claimCheckMetadata({
+          agent: agentWith('{"enabled":true}'),
+          user: user(),
+          isGuest: false,
+          toolResults: retrievalParts,
+          messages: [],
+          recall: undefined,
+        }),
+      ).toEqual({ claimCheck: { enabled: true, sourceIds: ["i1", "i2"], toolCallIds: ["call_1"] } });
     });
   });
 });

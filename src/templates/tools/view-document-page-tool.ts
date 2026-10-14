@@ -10,6 +10,14 @@ import type { ExuluConfig } from "@SRC/exulu/app";
 import type { User } from "@EXULU_TYPES/models/user";
 import { renderPdfPageToPng } from "./document-render-helpers";
 
+/**
+ * This tool's display name — exported so the sanitized key it maps to (used
+ * by claim-check's finish-metadata to detect that a turn looked at evidence
+ * the check will never see) breaks loudly on a rename instead of silently
+ * turning that detection off.
+ */
+export const VIEW_DOCUMENT_PAGE_TOOL_NAME = "view_document_page";
+
 /** ≈5MB after base64 — the common provider per-image limit. */
 const MAX_IMAGE_BYTES = 3_750_000;
 const SCALE_PRIMARY = 1568;
@@ -145,7 +153,7 @@ export const createViewDocumentPageTool = ({
 
   return ExuluTool.internal({
     id: "view_document_page",
-    name: "view_document_page",
+    name: VIEW_DOCUMENT_PAGE_TOOL_NAME,
     needsApproval: false,
     description:
       "LOOK at a page of an uploaded PDF/Office document, or at an uploaded image, from this session's " +

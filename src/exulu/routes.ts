@@ -905,7 +905,19 @@ export const createExpressRoutes = async (
                 // only tells it that it may, and which sources to send. Same
                 // isGuest expression as recalledMemoriesMetadata above: a
                 // signed-in visitor on the public surface is external too.
-                ...claimCheckMetadata({ agent, user, isGuest: treatAsGuest(req, user), toolResults: turnToolResults }),
+                // `messages` is the PRE-inlining view of this turn's prompt
+                // (history + the new message): result.originalMessages has
+                // already had every attached document turned into a text
+                // part, which is the one thing the fragment must suppress on.
+                // `recall` is the same collector the line above reads.
+                ...claimCheckMetadata({
+                  agent,
+                  user,
+                  isGuest: treatAsGuest(req, user),
+                  toolResults: turnToolResults,
+                  messages: [...result.previousMessages, ...(message ? [message] : [])],
+                  recall: result.recall,
+                }),
               };
             }
             return undefined;
