@@ -74,6 +74,7 @@ import { registerViewerIdentityRoutes } from "./viewer-identity-routes.ts";
 import { registerClaimCheckRoutes } from "@EE/claim-check/routes";
 import { claimCheckRateLimiter } from "@EE/claim-check/rate-limit";
 import { runClaimCheck } from "@EE/claim-check/run";
+import { makeSecondChance } from "@EE/claim-check/second-chance";
 import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
 import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
 import { transcriptionService } from "./transcription/service.ts";
@@ -5171,6 +5172,8 @@ export const createExpressRoutes = async (
     // Platform default model for callers with no agent; empty until an
     // operator sets it.
     platformDefaultModel: async () => process.env.CLAIM_CHECK_DEFAULT_MODEL ?? "",
+    secondChanceFor: ({ agent, user, model, cap }) =>
+      makeSecondChance({ agent, user, role: user?.role?.id, model, contexts: contexts ?? [], cap }),
   });
 
   // Serve bytes. Auth depends on the row's auth_mode.
