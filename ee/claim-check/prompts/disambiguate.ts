@@ -1,5 +1,6 @@
 // Our wording of the paper's Disambiguation stage (arXiv 2502.10855 §3.3).
 // This stage is the paper's distinctive contribution: it refuses to guess.
+import { SAME_LANGUAGE_RULE } from "./shared";
 
 /** The stage's rules, without the lead-in line, so the merged fast-path prompt
  *  (task 7) can compose them instead of string-replacing the lead-in out. */
@@ -25,8 +26,10 @@ clarified sentence that resolves all of them (or null if nothing needed changing
 ambiguity would leave readers split, the sentence cannot be used: return resolvable=false, even
 when other parts of it are perfectly clear.
 
-Never add information that the question and excerpt do not support. Answer for EVERY target index
-you were given and for no other index. Keep each reason under 20 words.`;
+Never add information that the question and excerpt do not support. ${SAME_LANGUAGE_RULE}
+
+Answer for EVERY target index you were given and for no other index. Keep each reason under 20
+words.`;
 
 export const DISAMBIGUATE_SYSTEM = `You support a fact-checking pipeline.
 

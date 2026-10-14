@@ -1,5 +1,6 @@
 //
 // Our wording of the paper's Decomposition stage (arXiv 2502.10855 §3.4).
+import { SAME_LANGUAGE_RULE } from "./shared";
 
 export const DECOMPOSE_SYSTEM = `You support a fact-checking pipeline.
 
@@ -22,8 +23,11 @@ in square brackets: "The [Boston] city council expects its law [banning plastic 
 Set inferred=true for any claim that relies on such bracketed context, false otherwise.
 
 Split a sentence into as many claims as it genuinely makes, and no more. If a sentence makes no
-verifiable claim after all, return an empty list for it — never invent one. Answer for EVERY
-target index you were given and for no other index.`;
+verifiable claim after all, return an empty list for it — never invent one.
+
+${SAME_LANGUAGE_RULE}
+
+Answer for EVERY target index you were given and for no other index.`;
 
 export function decomposeUserPrompt(args: {
   question: string;

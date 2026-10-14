@@ -1,5 +1,6 @@
 // Our wording of the paper's Selection stage (arXiv 2502.10855 §3.2). The
 // paper's appendix prompt is a behaviour reference, not a source text.
+import { SAME_LANGUAGE_RULE } from "./shared";
 
 export const SELECT_SYSTEM = `You support a fact-checking pipeline.
 
@@ -25,6 +26,8 @@ Rules:
 If a sentence mixes verifiable and unverifiable content, return a rewritten version that keeps
 only the verifiable content, staying as close to the original wording as possible. If the whole
 sentence is already verifiable, return null for the rewrite.
+
+${SAME_LANGUAGE_RULE}
 
 Answer for EVERY target sentence index you were given, and for no other index. Keep each reason
 under 15 words.`;

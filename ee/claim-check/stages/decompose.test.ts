@@ -6,6 +6,7 @@ import { microCall } from "@EE/agentic-retrieval/pipeline/micro-call";
 import { splitIntoSentences, buildWindows } from "../split";
 import { runDecomposition } from "./decompose";
 import { CLAIM_CHECK_MAX_OUTPUT_TOKENS } from "../types";
+import { SAME_LANGUAGE_RULE } from "../prompts/shared";
 
 const ANSWER = "Die FST-2XT arbeitet mit 230 Volt und wird im Schaltschrank montiert.";
 const windows = () => buildWindows(splitIntoSentences(ANSWER, "de"), 5, 0);
@@ -109,5 +110,11 @@ describe("runDecomposition", () => {
     const args = (microCall as jest.Mock).mock.calls[0][0];
     expect(args.maxOutputTokens).toBe(CLAIM_CHECK_MAX_OUTPUT_TOKENS);
     expect(args.temperature).toBe(0);
+  });
+  // Finding 10: see select.test.ts.
+  it("pins the output language in the system prompt", async () => {
+    (microCall as jest.Mock).mockResolvedValue({ output: { sentences: [] }, text: "", usage: { inputTokens: 1, outputTokens: 1 } });
+    await runDecomposition({ windows: windows(), question: "q", sentenceTexts: new Map(), model: {} as any });
+    expect(String((microCall as jest.Mock).mock.calls[0][0].system)).toContain(SAME_LANGUAGE_RULE);
   });
 });

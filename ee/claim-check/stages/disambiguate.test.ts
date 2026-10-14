@@ -6,6 +6,7 @@ import { microCall } from "@EE/agentic-retrieval/pipeline/micro-call";
 import { splitIntoSentences, buildWindows } from "../split";
 import { runDisambiguation } from "./disambiguate";
 import { CLAIM_CHECK_MAX_OUTPUT_TOKENS } from "../types";
+import { SAME_LANGUAGE_RULE } from "../prompts/shared";
 
 const ANSWER = "Die FST-2XT meldet einen Fehler. Sie wurde dort getauscht.";
 const windows = () => buildWindows(splitIntoSentences(ANSWER, "de"), 5, 0);
@@ -110,5 +111,11 @@ describe("runDisambiguation", () => {
     expect(outcomes.every((o) => o.resolvable === false)).toBe(true);
     expect(outcomes[0]!.reason).toBe("no disambiguation returned for this sentence");
     expect((microCall as jest.Mock).mock.calls[0][0].maxOutputTokens).toBe(CLAIM_CHECK_MAX_OUTPUT_TOKENS);
+  });
+  // Finding 10: see select.test.ts.
+  it("pins the output language in the system prompt", async () => {
+    (microCall as jest.Mock).mockResolvedValue({ output: { sentences: [] }, text: "", usage: { inputTokens: 1, outputTokens: 1 } });
+    await runDisambiguation({ windows: windows(), question: "q", sentenceTexts: new Map(), model: {} as any });
+    expect(String((microCall as jest.Mock).mock.calls[0][0].system)).toContain(SAME_LANGUAGE_RULE);
   });
 });

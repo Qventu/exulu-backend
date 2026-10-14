@@ -6,6 +6,7 @@ import { microCall } from "@EE/agentic-retrieval/pipeline/micro-call";
 import { splitIntoSentences, buildWindows } from "../split";
 import { runSelection } from "./select";
 import { CLAIM_CHECK_MAX_OUTPUT_TOKENS } from "../types";
+import { SAME_LANGUAGE_RULE } from "../prompts/shared";
 
 const ANSWER =
   "Die FST-2XT ist eine Steuerung. Das zeigt, wie wichtig gute Technik ist. " +
@@ -91,5 +92,13 @@ describe("runSelection", () => {
     const { outcomes } = await runSelection({ windows: windows(), question: "q", model: {} as any });
     expect(outcomes.map((o) => o.index)).toEqual([0, 1, 2]);
     expect(outcomes.every((o) => o.verifiable === false)).toBe(true);
+  });
+  // Finding 10: a flash-class model that translates a German sentence into
+  // English makes the claim unscorable against German passages and poisons the
+  // second-chance query. The instruction must be in the composed prompt.
+  it("pins the output language in the system prompt", async () => {
+    (microCall as jest.Mock).mockResolvedValue({ output: { sentences: [] }, text: "", usage: { inputTokens: 1, outputTokens: 1 } });
+    await runSelection({ windows: windows(), question: "q", model: {} as any });
+    expect(String((microCall as jest.Mock).mock.calls[0][0].system)).toContain(SAME_LANGUAGE_RULE);
   });
 });
