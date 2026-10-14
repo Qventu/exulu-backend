@@ -9,7 +9,8 @@ import { runSelection } from "./stages/select";
 import { runDisambiguation } from "./stages/disambiguate";
 import { runDecomposition } from "./stages/decompose";
 import { runVerification } from "./stages/verify";
-import { runClaimCheck } from "./run";
+import { MAX_EVIDENCE_PER_CALL, runClaimCheck, selectGroupEvidence } from "./run";
+import { indexSources, selectEvidence } from "./evidence";
 import { CLAIM_CHECK_DEFAULTS, type ClaimCheckOptions } from "./types";
 
 const USAGE = { calls: 1, inputTokens: 100, outputTokens: 10 };
@@ -469,6 +470,88 @@ describe("runClaimCheck — resilience", () => {
 // places that used to turn an omitted outcome into a verdict about the text.
 // Finding 5: per-source truncation has to be visible — the engine drops
 // everything past 60,000 characters per source and never searches it.
+// Finding 6: evidence selection is a per-claim job (spec §2.2). Pooling a
+// group's claim texts into one query starved the weaker-scoring claims, and
+// the failure mode is a false "unsupported".
+describe("evidence selection per claim", () => {
+  // Four passages carry two rare terms of claim A each (score 3.58); the one
+  // passage that supports claim B carries three less-rare terms (3.30). The
+  // pooled top-4 is therefore exactly the four A passages, and claim B goes
+  // into verification with nothing that mentions it.
+  const SELECTION_SOURCES = [
+    { id: "a1", content: "Steuerung meldet." },
+    { id: "a2", content: "Fernabschaltung Sicherung." },
+    { id: "a3", content: "Defekt Schaltschrank." },
+    { id: "a4", content: "Verschlossen Kabinenlicht." },
+    { id: "b1", content: "Kabinentuer Dienstag getauscht." },
+    { id: "d1", content: "Kabinentuer Dienstag getauscht Protokoll." },
+  ];
+  const CLAIM_A =
+    "Die Steuerung meldet eine Fernabschaltung, die Sicherung ist defekt, der Schaltschrank ist verschlossen und das Kabinenlicht flackert.";
+  const CLAIM_B = "Die Kabinentuer wurde am Dienstag getauscht.";
+
+  it("is a fixture where pooling really does starve the second claim", () => {
+    const pooled = selectEvidence([CLAIM_A, CLAIM_B], indexSources(SELECTION_SOURCES), 4);
+    expect(pooled.map((p) => p.sourceId)).not.toContain("b1");
+  });
+
+  it("gives two claims with disjoint vocabularies each their own supporting passage", async () => {
+    const answer = "Die Steuerung meldet eine Fernabschaltung. Die Kabinentuer wurde getauscht.";
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: w.sentence.index === 0 ? CLAIM_A : CLAIM_B, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    await runClaimCheck({
+      question: "q",
+      answer,
+      sources: SELECTION_SOURCES,
+      model: {} as any,
+      options: options(),
+      locale: "de",
+    });
+
+    // Both claims are in ONE verification group (BATCH.verifySentences = 3).
+    expect((runVerification as jest.Mock).mock.calls).toHaveLength(1);
+    const evidence = (runVerification as jest.Mock).mock.calls[0][0].evidence as { sourceId: string }[];
+    const ids = evidence.map((e) => e.sourceId);
+    expect(ids).toContain("b1");
+    expect(ids.some((id) => id.startsWith("a"))).toBe(true);
+  });
+
+  it("deduplicates the union by passage identity and caps it per call", () => {
+    const sources = Array.from({ length: 20 }, (_, i) => ({
+      id: `s${i}`,
+      content: `Begriff${i} Begriff${i} dokumentiert.`,
+    }));
+    const passages = indexSources(sources);
+    const claims = Array.from({ length: 20 }, (_, i) => `Begriff${i} ist dokumentiert.`);
+
+    const union = selectGroupEvidence(claims, passages);
+    expect(union).toHaveLength(MAX_EVIDENCE_PER_CALL);
+    // Rank-first filling: every one of the first twelve claims contributed its
+    // OWN best passage, instead of the first four claims taking three each.
+    expect(new Set(union.map((e) => e.sourceId)).size).toBe(MAX_EVIDENCE_PER_CALL);
+    for (let i = 0; i < MAX_EVIDENCE_PER_CALL; i += 1) {
+      expect(union.map((e) => e.sourceId)).toContain(`s${i}`);
+    }
+  });
+
+  it("returns nothing when there are no passages at all", () => {
+    expect(selectGroupEvidence(["irgendein Claim"], [])).toEqual([]);
+  });
+});
+
 describe("runClaimCheck — source truncation", () => {
   it("flags limits.truncated and notes the dropped characters when a source is cut", async () => {
     (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>

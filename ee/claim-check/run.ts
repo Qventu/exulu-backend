@@ -19,7 +19,13 @@ import {
   type SentenceWindow,
 } from "./types";
 import { buildWindows, localeFromText, splitIntoSentences } from "./split";
-import { indexSourcesWithLimits, MAX_CHARS_PER_SOURCE, selectEvidence, type SourceTruncation } from "./evidence";
+import {
+  indexSourcesWithLimits,
+  MAX_CHARS_PER_SOURCE,
+  selectEvidence,
+  type IndexedPassage,
+  type SourceTruncation,
+} from "./evidence";
 import { runSelectAndDisambiguate } from "./stages/select-disambiguate";
 import { runSelection } from "./stages/select";
 import { runDisambiguation } from "./stages/disambiguate";
@@ -30,6 +36,15 @@ import { addUsage, EMPTY_USAGE, type StageUsage } from "./stages/usage";
 import { mapWithConcurrency } from "./concurrency";
 
 export const BATCH = { selectDisambiguate: 10, decompose: 5, verifySentences: 3 };
+/**
+ * Evidence selection is a PER-CLAIM job (spec §2.2): score the passages for
+ * one claim and take its best few. Pooling a whole verification group's claim
+ * texts into one query starved the weaker-scoring claims — six to ten claims
+ * shared four snippets — and the failure mode is a false "unsupported".
+ */
+export const EVIDENCE_PER_CLAIM = 3;
+/** Ceiling on the union, so a group of ten claims cannot blow up one prompt. */
+export const MAX_EVIDENCE_PER_CALL = 12;
 export const MAX_IN_FLIGHT = 6;
 export const STAGE_FAILURE_ABORT = 0.4;
 /** Paper §D: 3 completions, 2 successes required, for Selection and Disambiguation. */
@@ -106,6 +121,35 @@ async function runBatched<R>(
   }
 
   return good;
+}
+
+/**
+ * Per-claim selection, unioned and deduplicated by passage identity
+ * (sourceId + text, which is what makes a passage the same passage; a source
+ * id alone is not unique — a document is many passages).
+ *
+ * Filled by RANK, not by claim: every claim's best snippet lands before any
+ * claim's second, so the ceiling cuts extra context rather than cutting a
+ * claim's only supporting passage.
+ */
+export function selectGroupEvidence(claimTexts: string[], passages: IndexedPassage[]): EvidenceSnippet[] {
+  const perClaim = claimTexts.map((text) => selectEvidence([text], passages, EVIDENCE_PER_CLAIM));
+  const union: EvidenceSnippet[] = [];
+  const seen = new Set<string>();
+
+  for (let rank = 0; rank < EVIDENCE_PER_CLAIM; rank += 1) {
+    for (const snippets of perClaim) {
+      const snippet = snippets[rank];
+      if (!snippet) continue;
+      const key = `${snippet.sourceId}\u0000${snippet.text}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      union.push(snippet);
+      if (union.length >= MAX_EVIDENCE_PER_CALL) return union;
+    }
+  }
+
+  return union;
 }
 
 function markNotChecked(state: StageState, windows: SentenceWindow[], reason: string): void {
@@ -401,7 +445,7 @@ export async function runClaimCheck(args: {
       const groups = chunk([...bySentence.values()], BATCH.verifySentences).map((g) => g.flat());
 
       const verified = await mapWithConcurrency(groups, MAX_IN_FLIGHT, async (group) => {
-        const evidence = selectEvidence(group.map((c) => c.text), passages);
+        const evidence = selectGroupEvidence(group.map((c) => c.text), passages);
         return runVerification({
           claims: group.map((c) => ({ id: c.id, text: c.text })),
           evidence,
