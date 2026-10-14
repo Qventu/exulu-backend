@@ -21,6 +21,8 @@ export async function runVerification(args: {
   evidence: EvidenceSnippet[];
   model: LanguageModel;
   temperature?: number;
+  /** Cancels the provider call when the request's deadline passes. */
+  signal?: AbortSignal;
 }): Promise<{ outcomes: VerifyOutcome[]; usage: StageUsage }> {
   if (args.claims.length === 0) return { outcomes: [], usage: { ...EMPTY_USAGE } };
 
@@ -46,6 +48,7 @@ export async function runVerification(args: {
     schema,
     temperature: args.temperature ?? 0,
     maxOutputTokens: CLAIM_CHECK_MAX_OUTPUT_TOKENS,
+    ...(args.signal ? { abortSignal: args.signal } : {}),
   });
 
   const knownSourceIds = new Set(args.evidence.map((e) => e.sourceId));

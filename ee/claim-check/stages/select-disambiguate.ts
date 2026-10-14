@@ -32,6 +32,8 @@ export async function runSelectAndDisambiguate(args: {
   question: string;
   model: LanguageModel;
   temperature?: number;
+  /** Cancels the provider call when the request's deadline passes. */
+  signal?: AbortSignal;
 }): Promise<{
   selection: SelectionOutcome[];
   disambiguation: DisambiguationOutcome[];
@@ -50,6 +52,7 @@ export async function runSelectAndDisambiguate(args: {
     schema,
     temperature: args.temperature ?? 0,
     maxOutputTokens: CLAIM_CHECK_MAX_OUTPUT_TOKENS,
+    ...(args.signal ? { abortSignal: args.signal } : {}),
   });
 
   const returned = new Map((output?.sentences ?? []).map((s) => [s.index, s]));

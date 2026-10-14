@@ -33,6 +33,8 @@ export async function runSelection(args: {
   question: string;
   model: LanguageModel;
   temperature?: number;
+  /** Cancels the provider call when the request's deadline passes. */
+  signal?: AbortSignal;
 }): Promise<{ outcomes: SelectionOutcome[]; usage: StageUsage }> {
   const targets = args.windows.map((w) => ({ index: w.sentence.index, text: w.sentence.text }));
 
@@ -43,6 +45,7 @@ export async function runSelection(args: {
     schema,
     temperature: args.temperature ?? 0,
     maxOutputTokens: CLAIM_CHECK_MAX_OUTPUT_TOKENS,
+    ...(args.signal ? { abortSignal: args.signal } : {}),
   });
 
   const returned = new Map((output?.sentences ?? []).map((s) => [s.index, s]));

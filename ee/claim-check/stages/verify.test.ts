@@ -99,6 +99,15 @@ describe("runVerification", () => {
     expect(args.temperature).toBe(0);
   });
 
+  // Finding 7: the request deadline has to reach the provider call, or a hung
+  // provider keeps spending the caller's 60 s after the answer was given up on.
+  it("forwards the request's abort signal to the provider call", async () => {
+    (microCall as jest.Mock).mockResolvedValue({ output: { claims: [] }, text: "", usage: { inputTokens: 1, outputTokens: 1 } });
+    const controller = new AbortController();
+    await runVerification({ claims: CLAIMS, evidence: EVIDENCE, model: {} as any, signal: controller.signal });
+    expect((microCall as jest.Mock).mock.calls[0][0].abortSignal).toBe(controller.signal);
+  });
+
   it("returns nothing for an empty claim list, without calling the model", async () => {
     const { outcomes, usage } = await runVerification({
       claims: [],

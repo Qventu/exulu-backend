@@ -32,6 +32,18 @@ export const MAX_SENTENCES_CEILING = 120;
 export const MAX_CLAIMS_CEILING = 200;
 export const MAX_RERETRIEVALS_CEILING = 10;
 
+/**
+ * Request deadline (spec §4). Without it, a hung provider holds one of the 20
+ * global in-flight slots until the transport gives up, and twenty such
+ * requests 429 the endpoint deployment-wide. The engine races a timer: the
+ * signal cancels the provider calls, the slot is released either way, and the
+ * caller gets a 504 rather than an open socket.
+ */
+export const CLAIM_CHECK_TIMEOUT_MS = 60_000;
+
+/** Thrown by the deadline race only, so the catch can tell 504 from 500. */
+class ClaimCheckTimeoutError extends Error {}
+
 /** requested ?? configured, then floored by both the configured value and the module ceiling. */
 function clampCap(requested: number | undefined, configured: number, ceiling: number): number {
   return Math.min(requested ?? configured, configured, ceiling);
@@ -80,6 +92,7 @@ export type ClaimCheckRouteDeps = {
     options: ClaimCheckOptions;
     locale?: string;
     secondChance?: (claimText: string) => Promise<any[]>;
+    signal?: AbortSignal;
   }) => Promise<ClaimCheckResult>;
   isLicensed: () => boolean;
   limiter: ClaimCheckRateLimiter;
@@ -248,27 +261,49 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
       return;
     }
 
+    const controller = new AbortController();
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
       const secondChance =
         agent && options.reRetrieve && deps.secondChanceFor
           ? deps.secondChanceFor({ agent, user, model, cap: options.caps.maxReRetrievals })
           : undefined;
 
-      const result = await deps.runCheck({
-        question: body.question,
-        answer: body.answer,
-        sources: body.sources,
-        model,
-        options,
-        ...(body.locale ? { locale: body.locale } : {}),
-        ...(secondChance ? { secondChance } : {}),
+      const timedOut = new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(() => {
+          controller.abort();
+          reject(new ClaimCheckTimeoutError());
+        }, CLAIM_CHECK_TIMEOUT_MS);
       });
+
+      const result = await Promise.race([
+        deps.runCheck({
+          question: body.question,
+          answer: body.answer,
+          sources: body.sources,
+          model,
+          options,
+          signal: controller.signal,
+          ...(body.locale ? { locale: body.locale } : {}),
+          ...(secondChance ? { secondChance } : {}),
+        }),
+        timedOut,
+      ]);
       res.status(200).json(result);
     } catch (err) {
-      console.error("[EXULU] claim check failed.", err);
-      res.status(500).json({ detail: "The claim check failed." });
+      if (err instanceof ClaimCheckTimeoutError) {
+        console.warn(`[EXULU] claim check exceeded the ${CLAIM_CHECK_TIMEOUT_MS} ms deadline.`);
+        res.status(504).json({
+          detail: `The claim check did not finish within ${CLAIM_CHECK_TIMEOUT_MS / 1000} seconds and was cancelled.`,
+        });
+      } else {
+        console.error("[EXULU] claim check failed.", err);
+        res.status(500).json({ detail: "The claim check failed." });
+      }
     } finally {
-      // Always release: an unreleased slot leaks the global in-flight budget.
+      // Always release: an unreleased slot leaks the global in-flight budget —
+      // including on the timeout path, where the engine may still be unwinding.
+      if (deadline) clearTimeout(deadline);
       deps.limiter.release();
     }
   });

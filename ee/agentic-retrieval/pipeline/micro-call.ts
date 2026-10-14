@@ -46,6 +46,12 @@ export type MicroCallArgs<OUTPUT> = {
   /** Total attempts for transient failures (network, provider 429/5xx). */
   maxAttempts?: number;
   retryBaseDelayMs?: number;
+  /**
+   * Cancels the provider request. Callers with a request deadline (claim
+   * check's 60 s cap) pass one so a hung provider stops holding a slot;
+   * retries stop as soon as it is aborted.
+   */
+  abortSignal?: AbortSignal;
 };
 
 export async function microCall<OUTPUT = undefined>(
@@ -61,6 +67,7 @@ export async function microCall<OUTPUT = undefined>(
     maxOutputTokens = MICRO_CALL_MAX_OUTPUT_TOKENS,
     maxAttempts = 3,
     retryBaseDelayMs,
+    abortSignal,
   } = args;
 
   return withRetry(
@@ -78,6 +85,7 @@ export async function microCall<OUTPUT = undefined>(
         // rate-limiting.
         maxRetries: 0,
         providerOptions: microCallProviderOptions(model),
+        ...(abortSignal ? { abortSignal } : {}),
       } as Parameters<typeof generateText>[0]);
       // Read .output inside the retried closure — the SDK throws
       // NoOutputGeneratedError from this getter, so reading it later would
@@ -97,8 +105,10 @@ export async function microCall<OUTPUT = undefined>(
     maxAttempts,
     {
       // Empty output is deterministic for identical params — retrying only
-      // added latency before the degraded path. Fail fast instead.
-      shouldRetry: (error) => !NoOutputGeneratedError.isInstance(error),
+      // added latency before the degraded path. Fail fast instead. An aborted
+      // signal is equally final: the caller's deadline has passed, so another
+      // attempt can only spend tokens on a response nobody will read.
+      shouldRetry: (error) => !NoOutputGeneratedError.isInstance(error) && abortSignal?.aborted !== true,
       ...(retryBaseDelayMs !== undefined ? { baseDelayMs: retryBaseDelayMs } : {}),
     },
   );

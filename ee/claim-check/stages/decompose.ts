@@ -22,6 +22,8 @@ export async function runDecomposition(args: {
   sentenceTexts: Map<number, string>;
   model: LanguageModel;
   temperature?: number;
+  /** Cancels the provider call when the request's deadline passes. */
+  signal?: AbortSignal;
 }): Promise<{ outcomes: DecompositionOutcome[]; usage: StageUsage }> {
   const targets = args.windows.map((w) => ({
     index: w.sentence.index,
@@ -43,6 +45,7 @@ export async function runDecomposition(args: {
     schema,
     temperature: args.temperature ?? 0,
     maxOutputTokens: CLAIM_CHECK_MAX_OUTPUT_TOKENS,
+    ...(args.signal ? { abortSignal: args.signal } : {}),
   });
 
   const outcomes: DecompositionOutcome[] = [];

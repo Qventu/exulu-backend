@@ -124,6 +124,34 @@ describe("microCall", () => {
     expect(withoutUsage.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
   });
 
+  // Claim check's 60 s request deadline (spec §4) cancels its provider calls
+  // through this signal, so a hung provider stops holding an in-flight slot.
+  it("forwards an abort signal to the provider and omits it when absent", async () => {
+    (generateText as jest.Mock).mockResolvedValue({ output: { ok: true }, text: "" });
+    const controller = new AbortController();
+    await microCall({ model: {} as any, prompt: "p", schema, abortSignal: controller.signal });
+    expect((generateText as jest.Mock).mock.calls[0][0].abortSignal).toBe(controller.signal);
+
+    (generateText as jest.Mock).mockClear();
+    await microCall({ model: {} as any, prompt: "p", schema });
+    expect("abortSignal" in (generateText as jest.Mock).mock.calls[0][0]).toBe(false);
+  });
+
+  it("does not retry once the abort signal has fired", async () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const controller = new AbortController();
+    (generateText as jest.Mock).mockImplementation(async () => {
+      controller.abort();
+      throw new Error("The operation was aborted");
+    });
+
+    await expect(
+      microCall({ model: {} as any, prompt: "p", schema, abortSignal: controller.signal, retryBaseDelayMs: 1 }),
+    ).rejects.toThrow("aborted");
+    expect(generateText).toHaveBeenCalledTimes(1);
+    errorSpy.mockRestore();
+  });
+
   it("retries a LiteLLM tag-configuration error, which is a 429 aftershock and not a config fault", async () => {
     (generateText as jest.Mock)
       .mockRejectedValueOnce(new Error("Not allowed to access model due to tags configuration"))

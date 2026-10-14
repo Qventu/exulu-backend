@@ -24,6 +24,8 @@ export async function runDisambiguation(args: {
   sentenceTexts: Map<number, string>;
   model: LanguageModel;
   temperature?: number;
+  /** Cancels the provider call when the request's deadline passes. */
+  signal?: AbortSignal;
 }): Promise<{ outcomes: DisambiguationOutcome[]; usage: StageUsage }> {
   const targets = args.windows.map((w) => ({
     index: w.sentence.index,
@@ -41,6 +43,7 @@ export async function runDisambiguation(args: {
     schema,
     temperature: args.temperature ?? 0,
     maxOutputTokens: CLAIM_CHECK_MAX_OUTPUT_TOKENS,
+    ...(args.signal ? { abortSignal: args.signal } : {}),
   });
 
   const returned = new Map((output?.sentences ?? []).map((s) => [s.index, s]));

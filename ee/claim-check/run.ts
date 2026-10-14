@@ -197,6 +197,12 @@ export async function runClaimCheck(args: {
   locale?: string;
   /** Supplied only for IMP callers with an agent scope (Task 13). */
   secondChance?: (claimText: string) => Promise<EvidenceSnippet[]>;
+  /**
+   * The HTTP handler's 60 s deadline (spec §4). Threaded to every provider
+   * call so a hung provider is cancelled instead of holding one of the twenty
+   * global in-flight slots until the transport gives up.
+   */
+  signal?: AbortSignal;
 }): Promise<ClaimCheckResult> {
   const options = args.options ?? CLAIM_CHECK_DEFAULTS;
   const startedAt = Date.now();
@@ -245,7 +251,7 @@ export async function runClaimCheck(args: {
       for (let run = 0; run < options.completions; run += 1) {
         const results = await runBatched(batches, "selection", state, async (windows) => {
           const { outcomes, usage } = await runSelection({
-            windows, question: args.question, model: args.model, temperature,
+            windows, question: args.question, model: args.model, temperature, ...(args.signal ? { signal: args.signal } : {}),
           });
           return { result: outcomes, usage };
         });
@@ -267,6 +273,7 @@ export async function runClaimCheck(args: {
         const results = await runBatched(chunk(survivors, BATCH.selectDisambiguate), "disambiguation", state, async (windows) => {
           const { outcomes, usage } = await runDisambiguation({
             windows, question: args.question, sentenceTexts: texts, model: args.model, temperature,
+            ...(args.signal ? { signal: args.signal } : {}),
           });
           return { result: outcomes, usage };
         });
@@ -279,7 +286,7 @@ export async function runClaimCheck(args: {
     } else {
       const merged = await runBatched(batches, "selection+disambiguation", state, async (windows) => {
         const out = await runSelectAndDisambiguate({
-          windows, question: args.question, model: args.model, temperature,
+          windows, question: args.question, model: args.model, temperature, ...(args.signal ? { signal: args.signal } : {}),
         });
         return { result: { selection: out.selection, disambiguation: out.disambiguation }, usage: out.usage };
       });
@@ -352,6 +359,7 @@ export async function runClaimCheck(args: {
       const decomposed = await runBatched(chunk(survivorWindows, BATCH.decompose), "decomposition", state, async (windows) => {
         const { outcomes, usage } = await runDecomposition({
           windows, question: args.question, sentenceTexts: decomposeTexts, model: args.model, temperature: 0,
+          ...(args.signal ? { signal: args.signal } : {}),
         });
         return { result: outcomes, usage };
       });
@@ -450,6 +458,7 @@ export async function runClaimCheck(args: {
           claims: group.map((c) => ({ id: c.id, text: c.text })),
           evidence,
           model: args.model,
+          ...(args.signal ? { signal: args.signal } : {}),
         });
       });
 
@@ -524,6 +533,7 @@ export async function runClaimCheck(args: {
               claims: [{ id: claim.id, text: claim.text }],
               evidence: extra,
               model: args.model,
+              ...(args.signal ? { signal: args.signal } : {}),
             });
             state.usage = addUsage(state.usage, usage);
             const verdict = outcomes[0];

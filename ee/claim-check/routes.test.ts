@@ -1,7 +1,12 @@
 // ee/claim-check/routes.test.ts
 import express from "express";
 import request from "supertest";
-import { registerClaimCheckRoutes, CLAIM_CHECK_PATH, type ClaimCheckRouteDeps } from "./routes";
+import {
+  registerClaimCheckRoutes,
+  CLAIM_CHECK_PATH,
+  CLAIM_CHECK_TIMEOUT_MS,
+  type ClaimCheckRouteDeps,
+} from "./routes";
 import { claimCheckRateLimiter } from "./rate-limit";
 
 const RESULT = {
@@ -313,6 +318,86 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("partial");
     expect(res.body.notes).toEqual(["selection aborted"]);
+  });
+
+  // Finding 7: spec §4 mandates a 60 s request timeout, and there was none
+  // anywhere in the module — a hung provider held one of the twenty global
+  // in-flight slots until the transport gave up, and twenty such requests
+  // 429 the endpoint deployment-wide.
+  it("504s a check that outlives the deadline, releases the slot and aborts the engine's signal", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    // Only setTimeout/clearTimeout are faked: faking setImmediate, nextTick or
+    // queueMicrotask stalls Node's HTTP server and supertest never connects.
+    jest.useFakeTimers({
+      doNotFake: [
+        "Date", "hrtime", "nextTick", "performance", "queueMicrotask",
+        "requestAnimationFrame", "cancelAnimationFrame", "requestIdleCallback",
+        "cancelIdleCallback", "setImmediate", "clearImmediate", "setInterval", "clearInterval",
+      ],
+    });
+    try {
+      let reached!: () => void;
+      const started = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      let signal: AbortSignal | undefined;
+      const runCheck = jest.fn((args: any) => {
+        signal = args.signal;
+        reached();
+        return new Promise(() => {}) as Promise<any>;
+      });
+      const limiter = claimCheckRateLimiter({ perMinute: 100, perHour: 1000, maxInFlight: 1 });
+      const { app } = buildApp({ runCheck, limiter });
+
+      // .end() dispatches immediately and delivers the response through a
+      // callback; superagent's promise form is lazy AND defers through
+      // setTimeout, so it would never settle while the clock is faked.
+      const pending = new Promise<{ status: number; body: any }>((resolve, reject) => {
+        request(app)
+          .post(CLAIM_CHECK_PATH)
+          .send(BODY)
+          .end((err, r) => (err ? reject(err) : resolve(r)));
+      });
+      await started;
+      expect(signal!.aborted).toBe(false);
+
+      await jest.advanceTimersByTimeAsync(CLAIM_CHECK_TIMEOUT_MS);
+      // Back to real timers before reading the response: superagent defers its
+      // own callbacks through setTimeout, which would never fire while faked.
+      jest.useRealTimers();
+      const res = await pending;
+
+      expect(res.status).toBe(504);
+      expect(String(res.body.detail)).toContain("60 seconds");
+      // The engine's provider calls are cancelled, not left running.
+      expect(signal!.aborted).toBe(true);
+      // The in-flight slot was released on the timeout path too: maxInFlight
+      // is 1, so an unreleased slot would make the next take() fail. (A second
+      // HTTP request cannot test this here — this app's runCheck never
+      // settles, so the request would simply hang.)
+      expect(limiter.take("7").ok).toBe(true);
+    } finally {
+      jest.useRealTimers();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("does not time out a check that finishes in time, and clears its timer", async () => {
+    jest.useFakeTimers({
+      doNotFake: [
+        "Date", "hrtime", "nextTick", "performance", "queueMicrotask",
+        "requestAnimationFrame", "cancelAnimationFrame", "requestIdleCallback",
+        "cancelIdleCallback", "setImmediate", "clearImmediate", "setInterval", "clearInterval",
+      ],
+    });
+    try {
+      const { app } = buildApp();
+      const res = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
+      expect(res.status).toBe(200);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("500s and releases the limiter slot when the engine throws", async () => {

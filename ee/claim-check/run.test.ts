@@ -552,6 +552,38 @@ describe("evidence selection per claim", () => {
   });
 });
 
+// Finding 7: the HTTP handler's 60 s deadline has to reach the provider calls.
+describe("runClaimCheck — abort signal", () => {
+  it("forwards the caller's signal to every stage", async () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockResolvedValue({
+      outcomes: [{ index: 0, claims: [{ text: "c", inferred: false }] }],
+      usage: USAGE,
+    });
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+    const controller = new AbortController();
+
+    await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources: SOURCES,
+      model: {} as any,
+      options: options(),
+      locale: "de",
+      signal: controller.signal,
+    });
+
+    expect((runSelectAndDisambiguate as jest.Mock).mock.calls[0][0].signal).toBe(controller.signal);
+    expect((runDecomposition as jest.Mock).mock.calls[0][0].signal).toBe(controller.signal);
+    expect((runVerification as jest.Mock).mock.calls[0][0].signal).toBe(controller.signal);
+  });
+});
+
 describe("runClaimCheck — source truncation", () => {
   it("flags limits.truncated and notes the dropped characters when a source is cut", async () => {
     (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
