@@ -150,10 +150,21 @@ function invisibleEvidenceToolRan(toolResults: unknown): boolean {
 
 /**
  * True when the session-items tool ran this turn and may have contributed
- * evidence this fragment cannot represent: a non-empty array, or an output
- * this function could not parse at all. A parse failure counts as "produced
- * something" — the safe failure is suppressing the fragment, not running a
- * check against evidence we failed to read.
+ * evidence this fragment cannot represent.
+ *
+ * The only shape that does NOT suppress is a cleanly-parsed EMPTY ARRAY:
+ * that is proof the tool found nothing, and proven-empty is proven harmless.
+ * Everything else counts as contributed — "cannot prove it empty" is not
+ * "empty":
+ *
+ *  - An **offloaded** result. This tool is not in
+ *    `OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS`, so `guardToolOutput` replaces a large
+ *    output with `{ truncated, notice, preview }` and there is no `result`
+ *    key at all. Skipping that (the previous `continue`) meant this tool's
+ *    LARGEST results — the ones most likely to have grounded the answer —
+ *    were precisely the ones that failed to suppress.
+ *  - A `result` that is not a string, a payload that does not parse, or one
+ *    that parses to anything other than an array.
  */
 function sessionItemsContributed(toolResults: unknown): boolean {
   if (!Array.isArray(toolResults)) return false;
@@ -161,12 +172,11 @@ function sessionItemsContributed(toolResults: unknown): boolean {
   for (const part of toolResults) {
     if (!isRecord(part) || part.type !== SESSION_ITEMS_PART_TYPE) continue;
     const raw = isRecord(part.output) ? part.output.result : undefined;
-    if (typeof raw !== "string") continue;
+    if (typeof raw !== "string") return true;
 
     try {
       const parsed: unknown = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return true;
-      // A cleanly-parsed empty array is proven empty — nothing to suppress for.
+      if (!Array.isArray(parsed) || parsed.length > 0) return true;
     } catch {
       return true;
     }

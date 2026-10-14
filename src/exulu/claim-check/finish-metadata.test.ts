@@ -253,6 +253,51 @@ describe("claimCheckMetadata", () => {
       });
     });
 
+    // Fix round 2, Important 3: `if (typeof raw !== "string") continue;`
+    // answered "not suppressed" for an output that is not a string — which is
+    // exactly what an OFFLOADED session-items result looks like. That tool is
+    // not in OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS, so its largest results, the ones
+    // most likely to have grounded the answer, were precisely the ones that
+    // failed to suppress. Only a cleanly-parsed EMPTY ARRAY is proof of
+    // nothing; every other shape counts as contributed.
+    it("is ABSENT when the session-items output was offloaded (truncated/notice/preview)", () => {
+      const both = [
+        ...retrievalParts,
+        {
+          type: sessionItemsPartType,
+          toolCallId: "call_2",
+          output: { truncated: true, notice: "stored as tool-output-context_search-ab12.txt", preview: "…" },
+        },
+      ];
+      expect(
+        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both, messages: [], recall: undefined }),
+      ).toEqual({});
+    });
+
+    it("is ABSENT when the session-items result is not a string at all", () => {
+      const both = [
+        ...retrievalParts,
+        { type: sessionItemsPartType, toolCallId: "call_2", output: { result: [{ id: "s1" }] } },
+      ];
+      expect(
+        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both, messages: [], recall: undefined }),
+      ).toEqual({});
+    });
+
+    it("is ABSENT when the session-items result parses to something that is not an array", () => {
+      const both = [
+        ...retrievalParts,
+        {
+          type: sessionItemsPartType,
+          toolCallId: "call_2",
+          output: { result: JSON.stringify({ items: [{ id: "s1" }] }) },
+        },
+      ];
+      expect(
+        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both, messages: [], recall: undefined }),
+      ).toEqual({});
+    });
+
     it("is ABSENT, fail-safe, when the session-items tool's output cannot be parsed", () => {
       const both = [
         ...retrievalParts,
