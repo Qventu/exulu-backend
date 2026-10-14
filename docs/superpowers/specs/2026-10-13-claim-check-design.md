@@ -363,12 +363,45 @@ Three stages, each independently useful, so the plan can stop at any boundary:
      `enabled: false` by default and there is no UI to set it, so nothing can be configured
      before stage 3 lands the plumbing alongside the verification step.
 2. **Benchmark + tuning.** Fixture extraction, the 30-fixture run, triage, `fast` vs `paper`
-   comparison, final batch sizes and thresholds, eval write-up.
+   comparison, thresholds, eval write-up.
+
+   Two things changed in stage 1 that reshape this stage's job:
+
+   - **The batch sizes are already chosen**, so the benchmark **validates** them rather than
+     picking them. Stage 1 raised `BATCH` from `{10, 5, 3}` to `{25, 15, 8}` on a cost objection,
+     which took a 30-sentence answer from 19 provider calls to 8 (measured in a test, not
+     estimated). What is unmeasured is the *quality* cost of the larger batches — that is the
+     question for the 30 fixtures, and the answer may be to come back down.
+   - **A verbatim short-circuit was built and then removed**; do not rebuild it the same way.
+     The idea is sound: when an answer sentence appears literally in a source, every claim
+     decomposed from it is entailed by that source, so it needs no model call. The implementation
+     tested **contiguous substring containment**, and that is the part to avoid — reviewers found
+     two Critical holes in it, each marking claims `supported` with no model reading them:
+     a sentence that is only the *opening half* of a longer source sentence whose continuation
+     adds a condition or negates it (reachable because the splitter emits markdown bullets as
+     sentences with no terminal period, and German maintenance answers are bullet-heavy), and a
+     source that quotes a sentence in order to refute it (`"Viele Monteure glauben, X. Das trifft
+     nicht zu."`). Tightening the left boundary to "after a terminator and a space" did not close
+     the family either: an abbreviation period (`z. B.`), a list numeral (`2. `) and an ASCII
+     ellipsis (`... `) all read as sentence starts.
+
+     **If this is rebuilt, the rule is exact sentence equality**: segment each source with
+     `split.ts`'s own segmenter — the ICU segmentation plus the abbreviation suppression that
+     already exist and are tested — and require the answer sentence to **equal** one of the
+     source's sentences. That removes the boundary arithmetic the holes lived in.
+
+     It was removed rather than fixed because the arithmetic does not support the risk: the whole
+     19→8 saving comes from the batch sizes, the short-circuit's own contribution is 8→4 and only
+     when every sentence is quoted, and its measured hit rate by source shape was 30/30 on prose,
+     30/30 on numbered lists and **0/30 on markdown lists** — the shape a tenant KB of checklists
+     and PDFs actually has. **Measure the hit rate on the 30 fixtures before building anything**;
+     if it is near zero on real documents, the mechanism does not earn its place.
 3. **Chat surface.** `claimCheckMetadata`, the panel and sentence highlighting, the wizard
    verification step **plus the `claim_check` serialisation plumbing moved from stage 1**, the
    Redis result cache (§5.2), the `claim_checks` table and its load path.
 
-Stage 2 before stage 3 deliberately: the panel should not ship with thresholds nobody measured.
+Stage 2 before stage 3 deliberately: the panel should not ship with thresholds nobody measured, and the cost work above should not be re-litigated without the fixtures to
+settle it.
 
 ## 10. Out of scope
 
