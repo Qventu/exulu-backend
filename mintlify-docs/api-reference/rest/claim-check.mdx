@@ -27,7 +27,7 @@ Sentences that carry nothing to verify — introductions, conclusions, opinions,
   "model": "…",                          // optional, super-admin callers only
   "locale": "de",                        // optional, auto-detected from the answer if omitted
   "options": {
-    "fidelity": "fast",                  // "fast" (default) or "paper"
+    "fidelity": "fast",                  // "fast" (default) or "paper", super-admin only
     "completions": 1,
     "reRetrieve": true,
     "thresholds": { "warn": 0.1, "alert": 0.3 },
@@ -61,7 +61,7 @@ effective cap = min(requested, configured on the agent, module ceiling)
 | `caps.maxClaims` | 200 |
 | `caps.maxReRetrievals` | 10 |
 
-So a request can make a check cheaper and narrower, never more expensive: asking for `maxSentences: 5000` on an agent configured at 120 runs 120. An operator may configure a cap *below* the ceiling; nobody can configure one above it through the request body. The same reasoning gates the two options that multiply the number of provider calls rather than their price — `fidelity: "paper"` (which unmerges every stage and batches one sentence per call) and `completions` above 1 (which votes each of those stages N times). Both are benchmark instruments and both require a super-admin caller; everyone else configures `claim_check.fidelity` and `claim_check.completions` on the agent. `completions` is ignored outside `paper` fidelity, because only `paper` votes.
+So a request can make a check cheaper and narrower, never more expensive: asking for `maxSentences: 5000` on an agent configured at 120 runs 120. An operator may configure a cap *below* the ceiling; nobody can configure one above it through the request body. The same reasoning gates the two options that multiply the number of provider calls rather than their price — `fidelity: "paper"` (which unmerges every stage and batches one sentence per call) and `completions` above 1 (which votes each of those stages N times). Both are benchmark instruments and both require a super-admin caller; everyone else configures `claim_check.fidelity` and `claim_check.completions` on the agent. `completions` is ignored outside `paper` fidelity, because only `paper` votes. `paper` is the paper's own fidelity: the merged selection+disambiguation call is split back into two stages, each stage runs one sentence per call, and each is repeated `completions` times with majority voting. It costs roughly an order of magnitude more calls than `fast` and exists for benchmarking and for callers who want maximum precision.
 
 ### Model resolution
 

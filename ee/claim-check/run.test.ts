@@ -790,6 +790,85 @@ describe("runClaimCheck — paper fidelity and second chance", () => {
     expect(result.sentences[0]!.state).toBe("checked");
   });
 
+  // Finding 9: paper fidelity only unmerged the stages and added voting; both
+  // fidelities batched 10 sentences per selection call and 5 per decomposition
+  // call, so §8's fast-vs-paper comparison could not set the batch sizes.
+  it("issues one call per sentence per completion in paper fidelity", async () => {
+    const answer = "Satz eins ist wahr. Satz zwei ist wahr. Satz drei ist wahr.";
+    (runSelection as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index, verifiable: true, rewritten: null, reason: "fact", answered: true,
+      })),
+      usage: USAGE,
+    }));
+    (runDisambiguation as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index, resolvable: true, clarified: null, reason: "clear", answered: true,
+      })),
+      usage: USAGE,
+    }));
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `claim ${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q",
+      answer,
+      sources: SOURCES,
+      model: {} as any,
+      options: options({ fidelity: "paper", completions: 2 }),
+      locale: "de",
+    });
+
+    const selectionCalls = (runSelection as jest.Mock).mock.calls;
+    const disambiguationCalls = (runDisambiguation as jest.Mock).mock.calls;
+    const decompositionCalls = (runDecomposition as jest.Mock).mock.calls;
+    // 3 sentences x 2 completions, one sentence per call.
+    expect(selectionCalls).toHaveLength(6);
+    expect(disambiguationCalls).toHaveLength(6);
+    expect(selectionCalls.every((c) => c[0].windows.length === 1)).toBe(true);
+    expect(disambiguationCalls.every((c) => c[0].windows.length === 1)).toBe(true);
+    // Decomposition is not voted, but it is one sentence per call too.
+    expect(decompositionCalls).toHaveLength(3);
+    expect(decompositionCalls.every((c) => c[0].windows.length === 1)).toBe(true);
+    expect(result.claims).toHaveLength(3);
+  });
+
+  it("keeps the fast path batched: one merged call and one decomposition call for three sentences", async () => {
+    const answer = "Satz eins ist wahr. Satz zwei ist wahr. Satz drei ist wahr.";
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `claim ${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    await runClaimCheck({
+      question: "q", answer, sources: SOURCES, model: {} as any, options: options(), locale: "de",
+    });
+
+    expect((runSelectAndDisambiguate as jest.Mock).mock.calls).toHaveLength(1);
+    expect((runSelectAndDisambiguate as jest.Mock).mock.calls[0][0].windows).toHaveLength(3);
+    expect((runDecomposition as jest.Mock).mock.calls).toHaveLength(1);
+    expect((runDecomposition as jest.Mock).mock.calls[0][0].windows).toHaveLength(3);
+  });
+
   it("re-retrieves only unsupported claims, up to the cap, and marks the flipped ones rechecked", async () => {
     (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
       allClear(windows.map((w: any) => w.sentence.index)),

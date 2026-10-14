@@ -241,12 +241,19 @@ export async function runClaimCheck(args: {
     const selectWindows = buildWindows(sentences, 5, 5);
     const laterWindows = new Map(buildWindows(sentences, 5, 0).map((w) => [w.sentence.index, w]));
     const temperature = options.completions > 1 ? 0.2 : 0;
-    const batches = chunk(selectWindows, BATCH.selectDisambiguate);
+    // Spec §2.3: paper fidelity "restores one sentence per call". Batching it
+    // the same way as the fast path made §8's fast-vs-paper comparison — the
+    // thing that is supposed to SET the final batch sizes — unable to answer
+    // that question, because both arms batched identically.
+    const paper = options.fidelity === "paper";
+    const selectBatchSize = paper ? 1 : BATCH.selectDisambiguate;
+    const decomposeBatchSize = paper ? 1 : BATCH.decompose;
+    const batches = chunk(selectWindows, selectBatchSize);
 
     const selection: SelectionOutcome[] = [];
     const disambiguation: DisambiguationOutcome[] = [];
 
-    if (options.fidelity === "paper") {
+    if (paper) {
       const selectionRuns: SelectionOutcome[][] = [];
       for (let run = 0; run < options.completions; run += 1) {
         const results = await runBatched(batches, "selection", state, async (windows) => {
@@ -270,7 +277,7 @@ export async function runClaimCheck(args: {
       const texts = new Map(selection.filter((s) => s.rewritten).map((s) => [s.index, s.rewritten!]));
       const disambiguationRuns: DisambiguationOutcome[][] = [];
       for (let run = 0; run < options.completions; run += 1) {
-        const results = await runBatched(chunk(survivors, BATCH.selectDisambiguate), "disambiguation", state, async (windows) => {
+        const results = await runBatched(chunk(survivors, selectBatchSize), "disambiguation", state, async (windows) => {
           const { outcomes, usage } = await runDisambiguation({
             windows, question: args.question, sentenceTexts: texts, model: args.model, temperature,
             ...(args.signal ? { signal: args.signal } : {}),
@@ -356,7 +363,7 @@ export async function runClaimCheck(args: {
         if (text) decomposeTexts.set(index, text);
       }
       const survivorWindows = survivingIndexes.map((i) => laterWindows.get(i)!).filter(Boolean);
-      const decomposed = await runBatched(chunk(survivorWindows, BATCH.decompose), "decomposition", state, async (windows) => {
+      const decomposed = await runBatched(chunk(survivorWindows, decomposeBatchSize), "decomposition", state, async (windows) => {
         const { outcomes, usage } = await runDecomposition({
           windows, question: args.question, sentenceTexts: decomposeTexts, model: args.model, temperature: 0,
           ...(args.signal ? { signal: args.signal } : {}),
