@@ -19,10 +19,10 @@ Sentences that carry nothing to verify — introductions, conclusions, opinions,
 {
   "question": "…",                       // required
   "answer": "…",                         // required
-  "sources": [ { "id": "s1", "name": "handbuch.pdf", "content": "…" } ], // required
+  "sources": [ { "id": "s1", "name": "handbuch.pdf", "content": "…" } ], // optional, defaults to []
   "agent": "uuid",                       // optional: agent config, model, and second-chance retrieval
   "session": "uuid", "messageId": "…",   // optional, provenance only
-  "model": "…",                          // optional model override
+  "model": "…",                          // optional, super-admin callers only
   "locale": "de",                        // optional, auto-detected from the answer if omitted
   "options": {
     "fidelity": "fast",                  // "fast" (default) or "paper"
@@ -38,10 +38,10 @@ Sentences that carry nothing to verify — introductions, conclusions, opinions,
 |---|---|---|
 | `question` | `string` | The question the answer responds to. Required, non-empty. |
 | `answer` | `string` | The answer text to check, as originally produced (markdown as streamed). Required, non-empty. |
-| `sources` | `{ id: string, name?: string, content: string }[]` | The caller's evidence. `id` must be unique within the request and is echoed back in `claims[].evidence[].sourceId`, so a caller can map evidence back to its own records. |
+| `sources` | `{ id: string, name?: string, content: string }[]` | The caller's evidence. `id` must be unique within the request and is echoed back in `claims[].evidence[].sourceId`, so a caller can map evidence back to its own records. **Optional** — an omitted `sources` key validates as an empty array (the schema's permissive shape is deliberate), not a validation error. With no evidence to verify against, every claim the engine extracts comes back `unsupported` with "no evidence was available for this claim"; pass sources if you want anything to resolve as `supported` or `contradicted`. |
 | `agent` | `string` | Optional agent UUID. When set, the caller's API key must be scoped to it and the caller must have read access; the agent's `claim_check` configuration and second-chance retrieval become available. |
 | `session`, `messageId` | `string` | Optional provenance fields; not used for access control. |
-| `model` | `string` | Optional model override, resolved under the caller's own rights (no admin bypass — see Model resolution below). |
+| `model` | `string` | Optional model override. **Accepted only from a super-admin caller** — see Model resolution below. A non-admin caller who sets this field gets `403`, not a silently-ignored parameter. |
 | `locale` | `string` | Optional. Defaults to a locale detected from the answer text. |
 | `options` | object | Optional per-call overrides. Omitted keys fall back to the agent's `claim_check` configuration, then to the engine defaults (`fidelity: "fast"`, `completions: 1`, `reRetrieve: true`, `thresholds: { warn: 0.1, alert: 0.3 }`, `caps: { maxSentences: 120, maxClaims: 200, maxReRetrievals: 10 }`). |
 
@@ -49,13 +49,13 @@ Sentences that carry nothing to verify — introductions, conclusions, opinions,
 
 The model to run the check with is resolved in order, first hit wins:
 
-1. the request's `model`, resolved **without** an RBAC bypass — a request body is not an admin, so a caller can only reach a model they are already entitled to;
+1. the request's `model` — **only honoured when the authenticated caller is a super admin**. Model resolution performs no per-user model entitlement check of its own, so a non-admin caller naming a model here would otherwise be able to reach any model configured on the deployment, including the most expensive one available, on an endpoint deliberately fed arbitrary text. A non-admin caller who sets `model` gets `403` instead, naming the alternative;
 2. `claim_check.model` configured on the named `agent`;
 3. that agent's `utility_model`;
 4. the agent's own model;
 5. the platform's default claim-check model, for agent-less calls.
 
-If none of these resolves to a usable model, the endpoint responds `400` naming `claim_check.default_model` as the missing configuration, rather than silently picking a model nobody chose.
+If none of these resolves to a usable model, the endpoint responds `400` naming `claim_check.default_model` as the missing configuration, rather than silently picking a model nobody chose. Everyone other than a super admin who wants a non-default model should configure `claim_check.model` on the agent (step 2) rather than requesting it per call.
 
 ## Response
 
@@ -124,8 +124,8 @@ When `agent` is set and `options.reRetrieve` is on, `unsupported` claims get one
 | `200` | The check ran, `status` is `"ok"` or `"partial"`. |
 | `400` | The request body failed validation, or no model could be resolved (`detail` names `claim_check.default_model`). |
 | `401` | Authentication failed. |
-| `403` | The API key is not scoped to the named `agent`, or the caller cannot read it. |
-| `404` | The deployment is not licensed for claim check. The endpoint does not advertise a feature the deployment has not bought, so this looks identical to a route that does not exist. |
+| `403` | The API key is not scoped to the named `agent`, or the caller cannot read it. Also returned when a non-super-admin caller sets `model` in the request body. |
+| `404` | The deployment is not licensed for claim check. The endpoint does not advertise a feature the deployment has not bought, so this looks identical to a route that does not exist. Also returned, with `{ "detail": "Agent {id} not found." }`, when an `agent` is named that does not exist. |
 | `413` | A payload cap was exceeded (see below). The engine is never invoked. |
 | `429` | The caller's rate-limit budget, or the server's global in-flight budget, is exhausted. |
 | `500` | The engine failed in a way it could not degrade past (this should be rare — see `status: "partial"` above for the normal degradation path). |
@@ -161,10 +161,11 @@ curl -X POST "https://your-imp-host/claims/check" \
   -d '{
     "question": "Womit arbeitet die FST-2XT?",
     "answer": "Die FST-2XT arbeitet mit 230 Volt. Das ist beeindruckend.",
-    "sources": [{ "id": "s1", "name": "handbuch.pdf", "content": "Die FST-2XT arbeitet mit 230 Volt." }],
-    "model": "your-model-id"
+    "sources": [{ "id": "s1", "name": "handbuch.pdf", "content": "Die FST-2XT arbeitet mit 230 Volt." }]
   }'
 ```
+
+This call has no `agent`, so the model comes from the platform's default claim-check model. To use an `agent` with its own `claim_check.model` configuration instead, add `"agent": "<uuid>"`. Only a super-admin key may add `"model": "<model-id>"` to pick a model per call; any other caller gets `403` for that field.
 
 For this input, the first sentence resolves to a `supported` claim and the second — an opinion with nothing to verify — is reported as `no_verifiable_content`, so `score.label` is `"ok"`.
 

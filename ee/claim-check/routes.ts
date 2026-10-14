@@ -122,6 +122,21 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
     }
     const user = auth.user;
 
+    // R22: `resolveModel`'s `rbacBypass`/`rbacRequest` are declared but read
+    // nowhere, and `MODEL_FORBIDDEN` is never thrown (src/exulu/resolve-model.ts)
+    // — there is no per-user model entitlement check to lean on there. Without
+    // a gate here, any authenticated caller could name an arbitrary (and
+    // arbitrarily expensive) model on an endpoint that is deliberately fed
+    // arbitrary text. So a request-supplied `model` is honoured only for a
+    // super admin; everyone else must configure claim_check.model on the agent.
+    if (body.model && !user.super_admin) {
+      res.status(403).json({
+        detail:
+          "Choosing the model per request requires a super-admin key; configure claim_check.model on the agent instead.",
+      });
+      return;
+    }
+
     let agent: any | undefined;
     if (body.agent) {
       const scope = deps.checkApiKeyScope(user, body.agent);
@@ -160,8 +175,9 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
       return;
     }
 
-    // Resolved under the caller's own rights: a request body is not an admin,
-    // so there is no rbacBypass here (unlike the retrieval tool's utility_model).
+    // No rbacBypass is passed here (unlike the retrieval tool's utility_model) —
+    // that flag is inert in resolveModel today, but the super-admin gate above
+    // is what actually keeps a non-admin caller off an arbitrary model.
     let model: LanguageModel | undefined;
     let lastError: unknown;
     for (const modelId of candidates) {
@@ -173,6 +189,11 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
         }
       } catch (err) {
         lastError = err;
+        // A transient infra failure on an early candidate must stay visible
+        // even when a later candidate resolves and the request succeeds.
+        console.warn(
+          `[EXULU] claim check: model "${modelId}" failed to resolve: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
     if (!model) {

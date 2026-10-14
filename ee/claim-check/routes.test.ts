@@ -52,10 +52,25 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
   });
 
   it("404s when the deployment is not licensed, without running anything", async () => {
-    const { app, runCheck } = buildApp({ isLicensed: () => false });
-    const res = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
+    const authenticate = jest.fn(async () => ({ user: { id: 7, type: "user" } as any }));
+    const checkApiKeyScope = jest.fn(() => ({ allowed: true, code: 200, reason: "" }));
+    const checkRecordAccess = jest.fn(async () => true);
+    const getAgent = jest.fn(async () => ({ id: "agent-1", model: "agent-model", tools: [] }) as any);
+    const { app, runCheck } = buildApp({
+      isLicensed: () => false,
+      authenticate,
+      checkApiKeyScope,
+      checkRecordAccess,
+      getAgent,
+    });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
     expect(res.status).toBe(404);
     expect(runCheck).not.toHaveBeenCalled();
+    // The licence check must run before anything else touches auth, scope or RBAC.
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(checkApiKeyScope).not.toHaveBeenCalled();
+    expect(checkRecordAccess).not.toHaveBeenCalled();
+    expect(getAgent).not.toHaveBeenCalled();
   });
 
   it("401s when authentication fails", async () => {
@@ -84,6 +99,12 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
       .send({ ...BODY, sources: [{ id: "s1", content: "b".repeat(2_000_001) }] });
     expect(tooMuchEvidence.status).toBe(413);
     expect(runCheck).not.toHaveBeenCalled();
+
+    const tooManySources = await request(app)
+      .post(CLAIM_CHECK_PATH)
+      .send({ ...BODY, sources: Array.from({ length: 201 }, (_, i) => ({ id: `s${i}`, content: "x" })) });
+    expect(tooManySources.status).toBe(413);
+    expect(runCheck).not.toHaveBeenCalled();
   });
 
   it("429s when the limiter refuses, and releases the slot after a completed check", async () => {
@@ -94,12 +115,35 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
     expect(second.status).toBe(429);
   });
 
-  it("resolves the request model WITHOUT rbacBypass", async () => {
+  it("resolves a super admin's chosen model WITHOUT rbacBypass (rbacBypass is inert in this codebase — the real gate against a non-admin naming an arbitrary model is the super-admin check, see the 403 test below)", async () => {
     const resolveModel = jest.fn(async ({ modelId }: any) => ({ languageModel: { modelId } }) as any);
-    const { app } = buildApp({ resolveModel });
-    await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, model: "caller-choice" });
+    const { app } = buildApp({
+      resolveModel,
+      authenticate: async () => ({ user: { id: 7, type: "user", super_admin: true } as any }),
+    });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, model: "caller-choice" });
+    expect(res.status).toBe(200);
     expect(resolveModel).toHaveBeenCalledWith(expect.objectContaining({ modelId: "caller-choice" }));
     expect(resolveModel.mock.calls[0][0].rbacBypass).toBeUndefined();
+  });
+
+  it("honours a super-admin caller's model override end to end", async () => {
+    const { app, runCheck } = buildApp({
+      authenticate: async () => ({ user: { id: 7, type: "user", super_admin: true } as any }),
+    });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, model: "caller-choice" });
+    expect(res.status).toBe(200);
+    expect(runCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("403s a non-admin caller's `model` override, without resolving a model or running anything", async () => {
+    const resolveModel = jest.fn(async ({ modelId }: any) => ({ languageModel: { modelId } }) as any);
+    const { app, runCheck } = buildApp({ resolveModel });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, model: "caller-choice" });
+    expect(res.status).toBe(403);
+    expect(String(res.body.detail)).toContain("super-admin");
+    expect(resolveModel).not.toHaveBeenCalled();
+    expect(runCheck).not.toHaveBeenCalled();
   });
 
   it("falls back through claim_check.model, utility_model and the agent model", async () => {
