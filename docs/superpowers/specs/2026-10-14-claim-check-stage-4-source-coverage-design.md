@@ -89,11 +89,27 @@ Every type below is built from data the client already holds in the message it i
 
 | `type` | Content comes from | id / name |
 |---|---|---|
-| `knowledge_base` | the retrieval tool result's `chunks[].chunk_content` — content unchanged from Stage 3, but the part is now located by tool-call id rather than by the tool's display name | `item_id` / `item_name` |
-| `memory` | `metadata.recalledMemories[].information` — the same list the memories panel renders | `memory:<id>` / `title` |
+| `knowledge_base` | the retrieval tool result's `chunks[].chunk_content`, pooled from **every** part of the turn carrying a chunk with this `item_id` and deduplicated by `chunk_id` — content unchanged from Stage 3, and no tool display name is involved | `item_id` / `item_name` |
+| `memory` | `metadata.recalledMemories[].information` — the same list the memories panel renders — falling back to `title` when the information is blank, because the prompt block the model read carries the title too | `memory:<id>` / `title` |
 | `document` | tool result `{ content }` from `read_session_file` **or** `parse_document` — they share the key, so one handler serves both | `tool:<toolCallId>` / the filename from the tool call's input |
-| `web` | `internet_search`'s `{ result: <JSON> }`, one source per cited page; if the citations cannot be parsed, one source named for the search itself | the citation URL / its title |
-| `session_item` | session-items retrieval's `{ result: <JSON array> }`, one source per item | the item's id / its name |
+| `web` | `internet_search`'s `{ result: <JSON> }`: **always** the prose answer in `content` — the text the assistant paraphrased, with the inline citation JSON normalised back to `[n]` — *plus* one source per cited page, so a verdict can still cite a page | the body: `tool:<toolCallId>` / the search query. A page: `tool:<toolCallId>#<index>` / its title, falling back to its URL |
+| `session_item` | session-items retrieval's `{ result: <JSON array> }` of per-context `context.search` responses, one source per item found under `[].chunks[]` | the item's id / its name |
+
+**A `knowledge_base` entry's `toolCallId` is provenance, not a lookup key.** The manifest names one
+entry per item, deduplicated by item id, so an item several retrieval calls returned carries only
+the call that saw it *first* — while each call serialises only its own chunks. Reading that one
+part alone drops every passage the other calls returned for the same item, which is the
+score-it-against-part-of-the-evidence failure §2.4 is about, and the endpoint's duplicate-id 400
+rules out naming the item twice. Default-on `suppress_duplicate_passages` makes it likelier, not
+rarer: it frees result slots for *different* passages of an item already seen. The client therefore
+pools by `item_id`, which keeps attribution correct by construction — a chunk carrying this item's
+id is a passage of this item, whichever call produced it.
+
+**The web body is not optional.** `content` is the prose answer; a `search_results[i].snippet` is a
+sentence or two. Sending only the snippets scores a claim that paraphrases the body but appears in
+no snippet `unsupported` — a false "unfounded" on an ordinary search turn. Extra sources cost no
+model calls (§7). Perplexity's synthesis counting as evidence follows from §2's no-trust-tiers
+decision: the engine checks grounding in the evidence the model was given, not truth.
 
 **The fragment becomes a manifest.** Stage 3's fragment carries parallel `sourceIds` and
 `toolCallIds` arrays, and the client locates retrieval parts by matching the tool's *display
@@ -121,6 +137,25 @@ still the client half of §2.4: verifying an answer against part of its evidence
 produces a false `unsupported`.
 
 ## 5. What stays uncovered, and why
+
+**Each covered handler has three answers, not two.** Inverting Stage 3's suppression gates into
+inclusion gates lost the third one, and losing it is a false-`unsupported` generator:
+
+- **provably nothing** — a cleanly-parsed empty result (a search that matched nothing, a context
+  with no embedder, a document tool's own `{ error }` failure message). The tool contributed no
+  evidence, so the entry is skipped and the fragment is still emitted: the remaining sources *are*
+  the whole of the answer's evidence.
+- **readable** — the entry is named. Every arm's readable predicate mirrors the client's own
+  recovery, literally rather than approximately; the client is the thing that has to produce the
+  source, so its arm is the specification.
+- **unreadable** — the tool contributed evidence this fragment cannot represent: an **offloaded**
+  output (`{ truncated, notice, preview }`, no `result` key, whose 4,000-character preview the
+  model *did* read — `read_session_file`'s 16,000-char slices sit right on the offload floor for a
+  ≤40k-window model, and `internet_search` is not offload-exempt either), a payload that does not
+  parse (`{ result: "Max retries exceeded …" }` after a rate-limited search), or a shape the tool
+  does not emit. **The whole fragment is withheld**, exactly as for `view_document_page` and an
+  attachment below. "Nothing here" and "here it is" cannot be the only two answers: an offloaded
+  output that reads as "nothing here" has the check score the answer against part of its evidence.
 
 Each of these withholds the fragment exactly as Stage 3 does, and each is Stage 5's problem:
 
