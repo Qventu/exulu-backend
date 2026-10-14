@@ -106,6 +106,8 @@ If none of these resolves to a usable model, the endpoint responds `400` naming 
 
 `sentences[].start`/`end` are character offsets into the exact `answer` string the caller sent — `answer.slice(start, end)` reproduces the sentence verbatim, which a UI can use to highlight the original text.
 
+`limits.truncated` is `true` when something was left unexamined: either the answer had more sentences than `caps.maxSentences` (`limits.sentencesSkipped` counts those) **or** at least one source was cut at the per-source character limit (see Payload caps below). `notes` always says which.
+
 ### `status`
 
 `"ok"` or `"partial"`. The engine never throws for an in-progress check — a provider failure, a hit cap, or any other recoverable problem degrades the result to `"partial"` rather than failing the request. **A `partial` result is still a `200`**: it is a legitimate, documented outcome, not an error. Check `notes` for what was degraded and why.
@@ -159,6 +161,8 @@ One request can cost on the order of 18 LLM calls over arbitrary caller-supplied
 | Answer length | 200,000 characters |
 | Number of sources | 200 |
 | Total source content | 2,000,000 characters, summed across all `sources[].content` |
+
+**Per-source truncation** (no `413` — the check still runs): only the first **60,000 characters** of each `sources[].content` are indexed and searched. Anything past that is never read, so a claim that is supported only in the dropped tail comes back `unsupported`. When this happens the response sets `limits.truncated: true` and adds a note naming how many sources were cut and how many characters were dropped. Split a long document into several `sources` entries (or pre-select the relevant part) if you need all of it checked.
 
 **Rate limits** (`429` when exceeded):
 

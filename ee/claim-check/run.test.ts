@@ -467,6 +467,59 @@ describe("runClaimCheck — resilience", () => {
 
 // Finding 4: the model's silence is not a finding against the answer. Both
 // places that used to turn an omitted outcome into a verdict about the text.
+// Finding 5: per-source truncation has to be visible — the engine drops
+// everything past 60,000 characters per source and never searches it.
+describe("runClaimCheck — source truncation", () => {
+  it("flags limits.truncated and notes the dropped characters when a source is cut", async () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockResolvedValue({
+      outcomes: [{ index: 0, claims: [{ text: "c", inferred: false }] }],
+      usage: USAGE,
+    });
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources: [{ id: "handbuch", content: `Die FST-2XT arbeitet mit 230 Volt. ${"x".repeat(60_000)}` }],
+      model: {} as any,
+      options: options(),
+      locale: "de",
+    });
+
+    expect(result.limits.truncated).toBe(true);
+    expect(result.limits.sentencesSkipped).toBe(0);
+    expect(result.notes.some((n) => n.includes("truncated at 60000 characters"))).toBe(true);
+    expect(result.notes.some((n) => n.includes("35 character(s) of evidence were not searched"))).toBe(true);
+  });
+
+  it("leaves limits.truncated false when every source fits", async () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockResolvedValue({
+      outcomes: [{ index: 0, claims: [{ text: "c", inferred: false }] }],
+      usage: USAGE,
+    });
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q", answer: ANSWER, sources: SOURCES, model: {} as any, options: options(), locale: "de",
+    });
+
+    expect(result.limits.truncated).toBe(false);
+    expect(result.notes.some((n) => n.includes("truncated"))).toBe(false);
+  });
+});
+
 describe("runClaimCheck — omitted outcomes", () => {
   it("drops a claim verification returned no verdict for, instead of scoring it unsupported", async () => {
     const answer = "Satz eins ist wahr. Satz zwei ist auch wahr.";

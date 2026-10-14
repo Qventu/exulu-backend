@@ -1,5 +1,5 @@
 import { preprocessQuery } from "@SRC/utils/query-preprocessing";
-import { indexSources, selectEvidence } from "./evidence";
+import { indexSources, indexSourcesWithLimits, MAX_CHARS_PER_SOURCE, selectEvidence } from "./evidence";
 
 const SOURCES = [
   {
@@ -29,6 +29,32 @@ describe("indexSources", () => {
     const passages = indexSources([long], { passageChars: 400, overlapChars: 50, maxCharsPerSource: 2000 });
     expect(passages.length).toBeGreaterThan(1);
     expect(passages.reduce((n, p) => n + p.text.length, 0)).toBeLessThanOrEqual(2000 + 400);
+  });
+
+  // Finding 5: 28.4% of a 601,392-char evidence set used to be dropped
+  // silently — limits.truncated stayed false and no note was emitted, so
+  // claims supported only in a dropped tail came back "unsupported".
+  it("reports how many sources were truncated and how many characters were dropped", () => {
+    const { passages, truncation } = indexSourcesWithLimits(
+      [
+        { id: "big", content: "a".repeat(2500) },
+        { id: "bigger", content: "b".repeat(3000) },
+        { id: "small", content: "Kurzer Satz." },
+      ],
+      { passageChars: 400, overlapChars: 50, maxCharsPerSource: 1000 },
+    );
+    expect(truncation).toEqual({ sources: 2, droppedChars: 1500 + 2000 });
+    expect(passages.every((p) => p.text.length <= 400)).toBe(true);
+  });
+
+  it("reports no truncation when every source fits", () => {
+    expect(indexSourcesWithLimits(SOURCES).truncation).toEqual({ sources: 0, droppedChars: 0 });
+  });
+
+  it("defaults the per-source limit to the documented 60,000 characters", () => {
+    expect(MAX_CHARS_PER_SOURCE).toBe(60_000);
+    const { truncation } = indexSourcesWithLimits([{ id: "huge", content: "x".repeat(60_010) }]);
+    expect(truncation).toEqual({ sources: 1, droppedChars: 10 });
   });
 
   // Review Focus 3

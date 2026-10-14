@@ -19,7 +19,7 @@ import {
   type SentenceWindow,
 } from "./types";
 import { buildWindows, localeFromText, splitIntoSentences } from "./split";
-import { indexSources, selectEvidence } from "./evidence";
+import { indexSourcesWithLimits, MAX_CHARS_PER_SOURCE, selectEvidence, type SourceTruncation } from "./evidence";
 import { runSelectAndDisambiguate } from "./stages/select-disambiguate";
 import { runSelection } from "./stages/select";
 import { runDisambiguation } from "./stages/disambiguate";
@@ -166,6 +166,10 @@ export async function runClaimCheck(args: {
   // whatever was already determined, instead of losing it to the catch below.
   let allSentences: Sentence[] = [];
   let skipped: Sentence[] = [];
+  // Finding 5: evidence past MAX_CHARS_PER_SOURCE is never searched, so what
+  // was dropped has to reach `limits` and `notes` on every return path,
+  // including the catch below.
+  let truncation: SourceTruncation = { sources: 0, droppedChars: 0 };
 
   try {
     const locale = args.locale ?? localeFromText(args.answer);
@@ -265,7 +269,7 @@ export async function runClaimCheck(args: {
         state.states.set(sentence.index, { state: "no_verifiable_content", reason: sel.reason });
         continue;
       }
-      if (dis && dis.answered === false) {
+      if (dis?.answered === false) {
         state.states.set(sentence.index, { state: "not_checked", reason: dis.reason });
         unanswered.push(sentence.index);
         continue;
@@ -369,7 +373,15 @@ export async function runClaimCheck(args: {
 
     // ── Evidence + Verification ──────────────────────────────────────────────
     tStage = Date.now();
-    const passages = indexSources(args.sources);
+    const indexed = indexSourcesWithLimits(args.sources);
+    const passages = indexed.passages;
+    truncation = indexed.truncation;
+    if (truncation.sources > 0) {
+      state.notes.push(
+        `${truncation.sources} source(s) were truncated at ${MAX_CHARS_PER_SOURCE} characters; ` +
+          `${truncation.droppedChars} character(s) of evidence were not searched, so a claim supported only there reads as unsupported`,
+      );
+    }
     lap("evidenceMs", tStage);
 
     tStage = Date.now();
@@ -510,7 +522,7 @@ export async function runClaimCheck(args: {
       claims: finalClaims,
       usage: state.usage,
       timings,
-      limits: { truncated: skipped.length > 0, sentencesSkipped: skipped.length },
+      limits: { truncated: skipped.length > 0 || truncation.sources > 0, sentencesSkipped: skipped.length },
       notes: state.notes,
     };
   } catch (err) {
@@ -528,7 +540,7 @@ export async function runClaimCheck(args: {
       claims: [],
       usage: state.usage,
       timings,
-      limits: { truncated: skipped.length > 0, sentencesSkipped: skipped.length },
+      limits: { truncated: skipped.length > 0 || truncation.sources > 0, sentencesSkipped: skipped.length },
       notes: [...state.notes, `claim check failed internally: ${message}`],
     };
   }

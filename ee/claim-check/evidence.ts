@@ -15,7 +15,24 @@ export type IndexedPassage = {
   tokens: string[];
 };
 
-const DEFAULTS = { passageChars: 1200, overlapChars: 200, maxCharsPerSource: 60000 };
+/**
+ * Per-source hard limit. A 600k-char evidence set is never indexed whole (spec
+ * §4), so anything past this is NOT searched — which is only honest if the
+ * result says so, hence the truncation report below. Without it, a claim
+ * supported only in a dropped tail comes back "unsupported" and the feature
+ * invents a hallucination on the largest real turns.
+ */
+export const MAX_CHARS_PER_SOURCE = 60_000;
+
+const DEFAULTS = { passageChars: 1200, overlapChars: 200, maxCharsPerSource: MAX_CHARS_PER_SOURCE };
+
+/** What indexing had to leave unsearched. */
+export type SourceTruncation = {
+  /** Number of sources whose content was cut. */
+  sources: number;
+  /** Characters of source content that were never indexed. */
+  droppedChars: number;
+};
 
 /** Stemmed, deduplicated content tokens. Language is detected per text. */
 function tokenize(text: string): string[] {
@@ -27,15 +44,29 @@ function tokenize(text: string): string[] {
     .filter((t) => t.length >= 3);
 }
 
-export function indexSources(
+export type IndexOptions = { passageChars?: number; overlapChars?: number; maxCharsPerSource?: number };
+
+/**
+ * Index the sources AND report what had to be dropped, so the caller can set
+ * `limits.truncated` and note it. The passages-only `indexSources` below is
+ * the same function for callers that cannot truncate anything (second-chance
+ * retrieval, which feeds it chunks, not whole documents).
+ */
+export function indexSourcesWithLimits(
   sources: ClaimCheckSource[],
-  opts: { passageChars?: number; overlapChars?: number; maxCharsPerSource?: number } = {},
-): IndexedPassage[] {
+  opts: IndexOptions = {},
+): { passages: IndexedPassage[]; truncation: SourceTruncation } {
   const { passageChars, overlapChars, maxCharsPerSource } = { ...DEFAULTS, ...opts };
   const passages: IndexedPassage[] = [];
+  const truncation: SourceTruncation = { sources: 0, droppedChars: 0 };
 
   for (const source of sources) {
-    const content = (source.content ?? "").slice(0, maxCharsPerSource);
+    const full = source.content ?? "";
+    const content = full.slice(0, maxCharsPerSource);
+    if (full.length > content.length) {
+      truncation.sources += 1;
+      truncation.droppedChars += full.length - content.length;
+    }
     if (!content.trim()) continue;
 
     const step = Math.max(1, passageChars - overlapChars);
@@ -52,7 +83,11 @@ export function indexSources(
     }
   }
 
-  return passages;
+  return { passages, truncation };
+}
+
+export function indexSources(sources: ClaimCheckSource[], opts: IndexOptions = {}): IndexedPassage[] {
+  return indexSourcesWithLimits(sources, opts).passages;
 }
 
 export function selectEvidence(
