@@ -552,7 +552,7 @@ In `messages/de.json`, inside `"chat"`:
       "claimCheckVerdictContradicted": "widersprochen",
       "claimCheckVerdictUnsupported": "ohne Belegstelle",
       "claimCheckInferred": "abgeleitet",
-      "claimCheckRechecked": "nachgeschlagen"
+      "claimCheckRechecked": "nachgeprüft"
 ```
 
 Mirror them in `messages/en.json` with the English wording ("Checking the answer …", "{supported} of {checked} statements supported", "{count} contradicted", "{count} without evidence", and so on). Keep both files' key order identical to each other.
