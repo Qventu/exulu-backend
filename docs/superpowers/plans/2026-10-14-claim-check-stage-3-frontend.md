@@ -450,6 +450,12 @@ export function collectSources(message: UIMessage, sourceIds: string[]): ClaimCh
       .map((c) => (typeof c.chunk_content === "string" ? c.chunk_content : ""))
       .filter(Boolean)
       .join("\n\n");
+    // A source with no text is indistinguishable from a fabricated one: the
+    // check would score every claim that cites this document against nothing
+    // and report them unsupported. Omit it and let the caller notice the
+    // shortfall (see `claimCheckRequestFor`, which refuses to run a check
+    // whose evidence is incomplete) rather than verifying against a void.
+    if (!content) continue;
     out.push(name ? { id, name, content } : { id, content });
   }
   return out;
@@ -717,6 +723,16 @@ export function claimCheckRequestFor(args: {
 ```
 
 It returns `null` whenever no check should run — no trigger fragment, no sources recoverable, or an empty answer — and otherwise the exact body to post.
+
+**It also returns `null` when the evidence is incomplete**: if `collectSources` recovers fewer sources than the fragment's `sourceIds` named, something the backend counted on is no longer in the client's hands, and verifying an answer against part of its evidence reports grounded claims as `unsupported` — a false hallucination alarm, which §2.4's honesty invariants forbid. A missing panel is the safe failure; this is the same ruling as the backend's session-items suppression, applied on the client side. Compare the counts, not the contents:
+
+```typescript
+  const sources = collectSources(message, trigger.sourceIds);
+  // Fewer sources than the fragment named means the client can no longer
+  // produce evidence the backend expected. Checking anyway would score
+  // grounded claims unsupported; a missing panel is the honest failure.
+  if (sources.length !== trigger.sourceIds.length) return null;
+```
 
 - [ ] **Step 1: Write the failing test**
 
