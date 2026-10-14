@@ -151,10 +151,18 @@ const requestSchema = z.object({
       z.object({
         content: z.string(),
         name: z.string().optional(),
-        // Accepted, and deliberately dropped before the engine sees it — see
-        // assignSourceIds below. Validated here anyway so a caller gets a 400
-        // naming the bad value instead of the field being silently ignored.
-        type: z.enum(SOURCE_TYPES).optional(),
+        // Purely informational (spec §2: no trust tiers, dropped before the
+        // engine sees it — see assignSourceIds below), so an unrecognised
+        // value is IGNORED, not rejected: `.catch(undefined)` keeps the enum
+        // as documentation and as the inferred type, but falls back to
+        // `undefined` instead of failing the whole request over a mislabeled
+        // field nothing downstream reads. Before this task, an unknown
+        // `type` wasn't in the schema at all and was silently stripped by
+        // zod's default object parsing — a bare `.optional()` here (no
+        // `.catch`) would turn that pre-existing 200 into a 400, which is a
+        // tightening this loosening-only task must not make. Do not remove
+        // the `.catch` to "validate properly": that is the bug this guards.
+        type: z.enum(SOURCE_TYPES).optional().catch(undefined),
         id: z.string().min(1).optional(),
       }),
     )
@@ -291,8 +299,10 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
     }
     const body = parsed.data;
 
-    // `type` is validated above and discarded here, before anything else
-    // touches `sources` — see assignSourceIds's own doc comment.
+    // `type` was already reduced to a known value or `undefined` above
+    // (unrecognised values are ignored, not rejected — see the schema's
+    // `.catch`) and is discarded here, before anything else touches
+    // `sources` — see assignSourceIds's own doc comment.
     const assigned = assignSourceIds(body.sources);
     if (!assigned.ok) {
       res.status(400).json({ detail: assigned.detail });

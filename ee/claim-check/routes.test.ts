@@ -765,7 +765,7 @@ describe("source normalisation", () => {
     expect(runCheck.mock.calls[0][0].sources).toEqual([{ id: "s1", content: "230 Volt." }]);
   });
 
-  it("keeps a caller's own id and name, and carries type through without acting on it", async () => {
+  it("accepts a `type` on the request without passing it to the engine", async () => {
     const runCheck = jest.fn().mockResolvedValue(RESULT);
     const { app } = buildApp({ runCheck });
     await post(app, {
@@ -794,9 +794,18 @@ describe("source normalisation", () => {
     expect(res.body.detail).toMatch(/duplicate source id/i);
   });
 
-  it("rejects an unknown source type", async () => {
-    const { app } = buildApp({});
-    await post(app, { question: "q", answer: "a", sources: [{ content: "x", type: "guesswork" }] }).expect(400);
+  // Fix round 1: `type` is purely informational (spec §2, no trust tiers) and
+  // the pre-change schema didn't know about it at all — zod's default object
+  // parsing silently stripped it and answered 200. Rejecting a mislabeled
+  // value here would turn that pre-existing 200 into a 400 over a field
+  // nothing downstream reads, which is a tightening this loosening-only task
+  // must not introduce. So an unrecognised value falls back to `undefined`
+  // (schema's `.catch`), not a validation error.
+  it("ignores an unknown source type instead of rejecting the request", async () => {
+    const runCheck = jest.fn().mockResolvedValue(RESULT);
+    const { app } = buildApp({ runCheck });
+    await post(app, { question: "q", answer: "a", sources: [{ content: "x", type: "guesswork" }] }).expect(200);
+    expect(runCheck.mock.calls[0][0].sources).toEqual([{ id: "s1", content: "x" }]);
   });
 
   it("still accepts the Stage 1 shape, id and all", async () => {
