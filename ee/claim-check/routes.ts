@@ -11,7 +11,7 @@ import type { User } from "@EXULU_TYPES/models/user";
 import type { ScopeCheckResult } from "@SRC/utils/check-api-key-scope";
 import { type ClaimCheckOptions, type ClaimCheckResult } from "./types";
 import type { ClaimCheckRateLimiter } from "./rate-limit";
-import { parsePipelineConfig } from "@EE/agentic-retrieval/pipeline/config";
+import { pipelineConfigFor } from "./agent-config";
 
 export const CLAIM_CHECK_PATH = "/claims/check";
 
@@ -72,19 +72,6 @@ export type ClaimCheckRouteDeps = {
     | ((claimText: string) => Promise<any[]>)
     | undefined;
 };
-
-/**
- * The agent's agentic_context_search tool config as a plain record, so it can
- * be run through task 2's `parsePipelineConfig` (the same parser the
- * retrieval tool itself uses) instead of a second, independently-maintained
- * parser for the same `claim_check` blob.
- */
-function toolConfigOf(agent: any): Record<string, unknown> {
-  const tool = (agent?.tools ?? []).find((t: any) => t?.id === "agentic_context_search");
-  const out: Record<string, unknown> = {};
-  for (const entry of tool?.config ?? []) if (entry?.name) out[entry.name] = entry.variable;
-  return out;
-}
 
 export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps): void {
   app.post(CLAIM_CHECK_PATH, async (req: Request, res: Response) => {
@@ -157,7 +144,7 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
 
     // R1: task 2's zod parser, not a hand-rolled one — one parser for the
     // claim_check blob, never two that can drift apart.
-    const cfg = parsePipelineConfig(toolConfigOf(agent));
+    const cfg = pipelineConfigFor(agent);
     const candidates = [
       body.model,
       cfg.claimCheck.model,

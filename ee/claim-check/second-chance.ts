@@ -9,19 +9,11 @@ import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { searchContexts } from "@EE/agentic-retrieval/pipeline/search";
 import { parsePipelineConfig } from "@EE/agentic-retrieval/pipeline/config";
+import { toolConfigOf, hasNoToolConfig } from "./agent-config";
 import { indexSources, selectEvidence } from "./evidence";
 import type { EvidenceSnippet } from "./types";
 
 const MAX_SNIPPETS_PER_CLAIM = 4;
-
-function toolConfigOf(agent: any): Record<string, unknown> {
-  const tool = (agent?.tools ?? []).find((t: any) => t?.id === "agentic_context_search");
-  const out: Record<string, unknown> = {};
-  for (const entry of tool?.config ?? []) {
-    if (entry?.name) out[entry.name] = entry.variable;
-  }
-  return out;
-}
 
 export function makeSecondChance(args: {
   agent: any;
@@ -32,7 +24,7 @@ export function makeSecondChance(args: {
   cap: number;
 }): ((claimText: string) => Promise<EvidenceSnippet[]>) | undefined {
   const raw = toolConfigOf(args.agent);
-  if (Object.keys(raw).length === 0) return undefined;
+  if (hasNoToolConfig(raw)) return undefined;
 
   const cfg = parsePipelineConfig(raw);
   const enabled = args.contexts.filter((c) => cfg.knowledgeBases[c.id]?.enabled !== false);
