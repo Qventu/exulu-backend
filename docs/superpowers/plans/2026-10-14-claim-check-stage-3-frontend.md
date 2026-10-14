@@ -61,6 +61,13 @@ import { getSessionClaimChecks, postClaimCheck } from "./claim-check";
 
 beforeEach(() => request.mockReset());
 
+// NOTE: use `mockRejectedValueOnce`, never `mockRejectedValue`, in a file that
+// calls `mockReset()` in `beforeEach`. Measured on vitest 4.1.8 with a
+// zero-app-code probe: that combination orphans the rejected promise and the
+// test fails with an unhandled rejection pointing at the `new Error(...)` line.
+// `mockRejectedValueOnce` and `mockImplementation(() => Promise.reject(...))`
+// both pass. Do not "fix" it by deleting the reset hook or bumping vitest.
+
 describe("postClaimCheck", () => {
   it("POSTs the body to /claims/check and returns the parsed result", async () => {
     const result = { status: "ok", score: { label: "ok" } };
@@ -77,7 +84,7 @@ describe("postClaimCheck", () => {
   });
 
   it("propagates a rejection rather than swallowing it", async () => {
-    request.mockRejectedValue(new Error("429"));
+    request.mockRejectedValueOnce(new Error("429"));
     await expect(postClaimCheck({ question: "q", answer: "a", sources: [] })).rejects.toThrow("429");
   });
 });
@@ -97,7 +104,7 @@ describe("getSessionClaimChecks", () => {
   });
 
   it("returns an empty map instead of throwing when the route fails — a missing panel is not an error", async () => {
-    request.mockRejectedValue(new Error("500"));
+    request.mockRejectedValueOnce(new Error("500"));
     await expect(getSessionClaimChecks("s")).resolves.toEqual({});
   });
 });
