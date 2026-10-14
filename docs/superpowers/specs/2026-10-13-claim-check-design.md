@@ -250,8 +250,17 @@ At `finish`, next to `recalledMemoriesMetadata`, a `claimCheckMetadata({ config,
 isGuest, … })` fragment carrying **ids only**:
 
 ```jsonc
-{ "claimCheck": { "enabled": true, "sourceIds": ["…"], "toolCallIds": ["…"] } }
+{ "claimCheck": { "enabled": true, "sources": [
+    { "type": "knowledge_base", "id": "i1", "toolCallId": "call_1" },
+    { "type": "memory",         "id": "memory:m_7" }
+] } }
 ```
+
+**Stage 4 replaced the earlier parallel `sourceIds` / `toolCallIds` arrays with this manifest** — one
+entry per source the client is to send, carrying the `type` that selects the client's handler and the
+`toolCallId` that produced it. The client locates each part by tool-call id rather than by the
+retrieval tool's display name, which removed the one place a rename on this side could silently stop
+the feature. See `2026-10-14-claim-check-stage-4-source-coverage-design.md`.
 
 The client already holds the full tool output — it renders source cards from it — so re-sending
 ~22k tokens of evidence through metadata would be pure waste. The frontend assembles `sources[]`
@@ -281,15 +290,19 @@ emits nothing either (the endpoint 404s). `showToExternalUsers` serves the signe
 visitor and the external role, not an anonymous one.
 
 **A fragment is emitted only when every source the answer could have drawn on is one the check
-will receive.** `sourceIds` can only name knowledge-base item ids, and the frontend assembles
-`sources[]` from the retrieval tool's chunks alone, so any other evidence the model was given this
-turn is invisible to the check. Scoring an answer against a subset of the evidence it actually used
+will receive.** That rule is unchanged and still governs; Stage 4 changed only how much it
+withholds. The manifest now names recalled memories, both document tools, internet search and
+session items alongside knowledge-base chunks, and the client sends their content — so those turns
+get a complete check rather than none. Evidence that remains invisible still suppresses the whole
+fragment. Scoring an answer against a subset of the evidence it actually used
 returns `unsupported` for claims that are in fact grounded, and `score.ts` puts `unsupported` in
 the numerator of the label share — so the panel renders an **alert** for a correct answer. §2.4's
 honesty invariants exist to prevent exactly that. A missing panel is the safe failure; when in
 doubt between emitting and staying silent, the fragment stays absent.
 
-The whole class, all of it suppressing in `finish-metadata.ts`:
+The class as Stage 3 left it — **the first four members are covered as of Stage 4** and no longer
+suppress; the rest still do, in `finish-metadata.ts`, together with any tool output the backend
+cannot read well enough to name:
 
 | Invisible evidence | How it reaches the model | Attached when |
 |---|---|---|
@@ -528,12 +541,14 @@ settle it.
   a renderer that renders the joined answer once. The panel lists every claim with its evidence
   quote, so the feature is complete without this.
 - An `ExuluEval` test-case integration for continuous scoring in the evals UI.
-- **Evidence the fragment cannot represent, as claim-check evidence.** The whole class in §5's
-  table: session-attached items, `read_session_file`, `parse_document`, `view_document_page`,
-  `internet_search`, a document attached to the message, and a recalled memory. Each would need an
-  output-shape (or prompt-block) handler in `finish-metadata.ts` **and** in the frontend's
-  `collectSources` before it could be sent as a source; until then a turn that used any of them is
-  suppressed rather than checked against partial evidence (see §5).
+- **Evidence the fragment cannot represent, as claim-check evidence.** ~~The whole class in §5's
+  table.~~ **Stage 4 delivered five of the seven**: session-attached items, `read_session_file`,
+  `parse_document`, `internet_search` and recalled memories each got the output-shape (or
+  prompt-block) handler this bullet asked for, on both sides, so the client sends what it already
+  holds. Still out of scope, and still suppressing: a document **attached** to the message
+  (extraction happens server-side, so the client never holds the text) and `view_document_page`
+  (the evidence is a rendered image, which a text engine cannot verify against at all) — plus any
+  tool output the backend cannot read well enough to name.
 - **Coverage-aware scoring — the real fix for the above, and the one that would let those turns be
   checked again.** Today a claim whose evidence set could not include a source the answer used is
   scored as if the sources were complete, which is what makes a partial fragment dangerous and
