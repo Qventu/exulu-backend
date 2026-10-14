@@ -182,8 +182,9 @@ A check is stored only when its `POST` request named **both** `session` and `mes
 |---|---|
 | `200` | Returns `{ "checks": {...} }`, possibly `{}` for a session with nothing stored for this caller. |
 | `400` | `:session` is not a well-formed uuid. The database is never queried for a malformed id. |
-| `401` | Authentication failed. |
+| `401` | Authentication failed, or the authenticated principal has no usable numeric id. |
 | `404` | The deployment is not licensed for claim check — same policy as the `POST` endpoint: an unlicensed deployment advertises neither route. |
+| `500` | The lookup failed, or the backend's stored-check reader is not wired up. The route never answers `200 {}` for either case: an empty result would be indistinguishable from "this session has no stored checks", which would hide a broken deployment. |
 
 ## Payload caps and rate limits
 

@@ -35,6 +35,22 @@ function hasNumericUserId(user: { id?: unknown } | undefined): boolean {
   return Boolean(user?.id) && Number.isFinite(Number(user?.id));
 }
 
+/**
+ * The status for a request that failed the gate above.
+ *
+ * `auth.code` describes the authentication ATTEMPT, not this gate: when a
+ * principal came back but its id is unusable, the attempt may well have
+ * "succeeded" (`code: 200`, or a `0` a future branch might leave unset), and
+ * echoing that would answer a 200 — or a nonsensical 0 — with an
+ * "Unauthorized." body. A principal we refuse to key a row by is a 401,
+ * whatever the attempt said. Only a genuine auth failure's own code (403 on a
+ * disabled key, say) is passed through.
+ */
+function unauthorizedStatus(auth: { user?: unknown; code?: number }): number {
+  if (auth.user) return 401;
+  return (auth.code ?? 0) || 401;
+}
+
 /** Payload caps: an answer is prose, evidence is documents. Beyond these, 413. */
 const MAX_ANSWER_CHARS = 200_000;
 const MAX_EVIDENCE_CHARS = 2_000_000;
@@ -217,7 +233,7 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
 
     const auth = await deps.authenticate(req);
     if (!hasNumericUserId(auth.user)) {
-      res.status(auth.code ?? 401).json({ detail: auth.message ?? "Unauthorized." });
+      res.status(unauthorizedStatus(auth)).json({ detail: auth.message ?? "Unauthorized." });
       return;
     }
     const user = auth.user as User;
@@ -471,8 +487,12 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
         }),
         timedOut,
       ]);
-      res.status(200).json(result);
+      // Recorded BEFORE the response is sent: if the client has gone away and
+      // res.json throws, the check was already paid for, and discarding it
+      // then is the one case where persistence matters most — the next load
+      // of that session would re-buy a verdict we already had.
       completedResult = result;
+      res.status(200).json(result);
     } catch (err) {
       if (err instanceof ClaimCheckTimeoutError) {
         console.warn(`[EXULU] claim check exceeded the ${timeoutMs} ms deadline.`);
@@ -499,22 +519,26 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
     // completed check into an error the caller has already paid for — so
     // this runs outside any try/catch that could still touch `res`, in its
     // own try/catch that only logs.
-    if (
-      completedResult &&
-      deps.saveClaimCheck &&
-      body.session &&
-      body.messageId &&
-      UUID_RE.test(body.session)
-    ) {
-      try {
-        await deps.saveClaimCheck({
-          session: body.session,
-          messageId: body.messageId,
-          userId: Number(user.id),
-          result: completedResult,
-        });
-      } catch (err) {
-        console.warn("[EXULU claim-check] could not store the check for this message.", err);
+    if (completedResult && body.session && body.messageId && UUID_RE.test(body.session)) {
+      if (!deps.saveClaimCheck) {
+        // A missing dep is a deployment wiring defect, not "nothing to store".
+        // The GET refuses loudly for exactly this reason; skipping silently
+        // here meant a panel that never survived a reload, with no signal
+        // anywhere that the wiring had been dropped.
+        console.error(
+          "[EXULU claim-check] saveClaimCheck is not wired; this check cannot survive a reload.",
+        );
+      } else {
+        try {
+          await deps.saveClaimCheck({
+            session: body.session,
+            messageId: body.messageId,
+            userId: Number(user.id),
+            result: completedResult,
+          });
+        } catch (err) {
+          console.warn("[EXULU claim-check] could not store the check for this message.", err);
+        }
       }
     }
   });
@@ -538,7 +562,7 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
     }
     const auth = await deps.authenticate(req);
     if (!hasNumericUserId(auth.user)) {
-      res.status(auth.code || 401).json({ detail: auth.message ?? "Unauthorized." });
+      res.status(unauthorizedStatus(auth)).json({ detail: auth.message ?? "Unauthorized." });
       return;
     }
     if (!deps.listClaimChecks) {

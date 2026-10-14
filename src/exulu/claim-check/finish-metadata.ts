@@ -305,6 +305,24 @@ export function claimCheckMetadata({ config, user, isGuest, isLicensed, toolResu
 
 
 /**
+ * Every part type `claimCheckMetadata` reads: the retrieval evidence itself
+ * plus every suppression signal. `recordToolResult` keeps nothing else, so a
+ * twenty-tool turn holds two entries instead of twenty — it used to hold a
+ * reference to EVERY tool's final output (sandbox bash, image generation,
+ * MCP) for the length of the turn, none of which this module can read.
+ *
+ * Derived from the three sets above rather than spelled out again: a type
+ * added to the suppression class is recorded automatically. Getting that
+ * wrong would not merely waste memory — an unrecorded suppression signal is
+ * a FALSE "unsupported" verdict, which is the whole point of C1.
+ */
+export const RECORDED_PART_TYPES = new Set([
+  ...RETRIEVAL_PART_TYPES,
+  SESSION_ITEMS_PART_TYPE,
+  ...INVISIBLE_EVIDENCE_PART_TYPES,
+]);
+
+/**
  * Append one turn's retrieval tool-result stream part onto the accumulator
  * `routes.ts` builds as the SDK's raw stream flows past `messageMetadata` —
  * the only hook with access to tool outputs before the `finish` part needs
@@ -323,7 +341,9 @@ export function recordToolResult(
 ): void {
   if (part.type !== "tool-result" || part.preliminary) return;
   if (typeof part.toolName !== "string" || typeof part.toolCallId !== "string") return;
-  acc.push({ type: `tool-${part.toolName}`, toolCallId: part.toolCallId, output: part.output });
+  const type = `tool-${part.toolName}`;
+  if (!RECORDED_PART_TYPES.has(type)) return;
+  acc.push({ type, toolCallId: part.toolCallId, output: part.output });
 }
 
 /** The subset of a raw stream part this module reads. */

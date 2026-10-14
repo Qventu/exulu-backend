@@ -3,6 +3,7 @@ import {
   claimCheckStreamMetadata,
   recordToolResult,
   INVISIBLE_EVIDENCE_PART_TYPES,
+  RECORDED_PART_TYPES,
   RETRIEVAL_PART_TYPES,
 } from "./finish-metadata";
 import { AGENTIC_RETRIEVAL_TOOL_NAME } from "@EE/agentic-retrieval/pipeline/index";
@@ -545,6 +546,46 @@ describe("recordToolResult", () => {
     recordToolResult(acc, { type: "finish-step" });
     recordToolResult(acc, { type: "text-delta" });
     expect(acc).toEqual([]);
+  });
+
+  // Fix round 2, Minor 5: it recorded EVERY tool's final output by reference
+  // for the whole turn — sandbox bash, image generation, MCP, everything — so
+  // a 20-tool turn held 20 entries the fragment could never read.
+  it("ignores a tool whose output the fragment cannot use", () => {
+    const acc: { type: string; toolCallId: string; output: unknown }[] = [];
+    for (const toolName of ["bash", "image_generation", "writeFile", "Some_MCP_Tool"]) {
+      recordToolResult(acc, { type: "tool-result", toolName, toolCallId: "c1", output: { huge: "…" } });
+    }
+    expect(acc).toEqual([]);
+  });
+
+  it("records every part type the fragment reads, including the suppression signals", () => {
+    // A suppression signal that failed to be recorded would not be a smaller
+    // accumulator, it would be a FALSE "unsupported" verdict — so this is the
+    // half of the filter that matters.
+    const acc: { type: string; toolCallId: string; output: unknown }[] = [];
+    const recorded = [
+      sanitizeToolName(AGENTIC_RETRIEVAL_TOOL_NAME),
+      sanitizeToolName(SESSION_ITEMS_RETRIEVAL_TOOL_NAME),
+      sanitizeToolName(SESSION_FILE_READ_TOOL_NAME),
+      sanitizeToolName(PARSE_DOCUMENT_TOOL_NAME),
+      sanitizeToolName(VIEW_DOCUMENT_PAGE_TOOL_NAME),
+      sanitizeToolName(INTERNET_SEARCH_TOOL_NAME),
+    ];
+    for (const toolName of recorded) {
+      recordToolResult(acc, { type: "tool-result", toolName, toolCallId: "c1", output: { result: "[]" } });
+    }
+    expect(acc.map((e) => e.type)).toEqual(recorded.map((n) => `tool-${n}`));
+  });
+
+  it("keeps the recorded set exactly the union of the types claimCheckMetadata reads", () => {
+    expect([...RECORDED_PART_TYPES].sort()).toEqual(
+      [
+        ...RETRIEVAL_PART_TYPES,
+        `tool-${sanitizeToolName(SESSION_ITEMS_RETRIEVAL_TOOL_NAME)}`,
+        ...INVISIBLE_EVIDENCE_PART_TYPES,
+      ].sort(),
+    );
   });
 });
 

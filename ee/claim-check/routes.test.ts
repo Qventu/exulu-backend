@@ -622,7 +622,33 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
     }
   });
 
+  // Fix round 2, parked item 6: this used to `await` supertest's PROMISE form
+  // while setTimeout was faked. Superagent defers its own callbacks through
+  // setTimeout, so settling that promise depended on a faked timer nobody
+  // advanced — it passed only because of how node happened to schedule the
+  // response, and flaked under load. A known flake in the suite that proves
+  // the 429/413/403 gates on the most expensive endpoint in the product
+  // trains people to re-run it, which is how a real failure gets re-run away.
+  //
+  // The fix removes the dependency instead of hiding it: dispatch with
+  // `.end()` (immediate, callback-delivered), wait on a signal the HANDLER
+  // raises — limiter.release(), which runs in its `finally` immediately after
+  // `clearTimeout(deadline)` — and only then read the timer count. Nothing in
+  // the test waits for a faked timer, so there is nothing left to race.
+  // Request delivery itself needs no timers (it is socket I/O, which fake
+  // timers do not touch); the 504 test above already relies on that.
   it("does not time out a check that finishes in time, and clears its timer", async () => {
+    const inner = claimCheckRateLimiter({ perMinute: 100, perHour: 1000, maxInFlight: 10 });
+    let handlerFinished!: () => void;
+    const released = new Promise<void>((resolve) => (handlerFinished = resolve));
+    const limiter = {
+      ...inner,
+      release: () => {
+        inner.release();
+        handlerFinished();
+      },
+    };
+
     jest.useFakeTimers({
       doNotFake: [
         "Date", "hrtime", "nextTick", "performance", "queueMicrotask",
@@ -631,10 +657,26 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
       ],
     });
     try {
-      const { app } = buildApp();
-      const res = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
-      expect(res.status).toBe(200);
+      const { app } = buildApp({ limiter });
+      const pending = new Promise<{ status: number }>((resolve, reject) => {
+        request(app)
+          .post(CLAIM_CHECK_PATH)
+          .send(BODY)
+          .end((err, r) => (err ? reject(err) : resolve(r)));
+      });
+
+      // The handler has run to completion: its finally block cleared the
+      // deadline and then released the slot, which is what resolves this.
+      await released;
+      // ...so no deadline timer is left behind. (Read while timers are still
+      // faked — getTimerCount only sees the fake clock.)
       expect(jest.getTimerCount()).toBe(0);
+
+      // Back to real timers before reading the response: superagent defers
+      // its own callbacks through setTimeout, which would never fire while
+      // faked.
+      jest.useRealTimers();
+      expect((await pending).status).toBe(200);
     } finally {
       jest.useRealTimers();
     }
@@ -895,6 +937,108 @@ describe("stored-result lookup", () => {
     const { app, runCheck } = buildApp({ findClaimCheck: undefined });
     expect((await request(app).post(CLAIM_CHECK_PATH).send(stored)).status).toBe(200);
     expect(runCheck).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Fix round 2, Minor 2 and Minor 3, and parked item 2.
+describe("persistence edge cases", () => {
+  const SESSION = "11111111-1111-4111-8111-111111111111";
+  const stored = { ...BODY, session: SESSION, messageId: "msg_1" };
+
+  // M2: completedResult used to be set AFTER res.json. If the client has gone
+  // away and the send throws, the check had been paid for and was then
+  // discarded — the one case where persisting matters most.
+  it("persists the result even when sending the response throws", async () => {
+    const saveClaimCheck = jest.fn().mockResolvedValue(undefined);
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { deps } = buildApp({ saveClaimCheck });
+      const app = express();
+      app.use(express.json());
+      // One throwing res.json, as a client that disconnected mid-send looks
+      // to the handler; the handler's own error path may still answer.
+      app.use((_req, res, next) => {
+        const original = res.json.bind(res);
+        let thrown = false;
+        res.json = ((body: unknown) => {
+          if (!thrown) {
+            thrown = true;
+            throw new Error("client has gone away");
+          }
+          return original(body as never);
+        }) as never;
+        next();
+      });
+      registerClaimCheckRoutes(app, deps);
+
+      await request(app).post(CLAIM_CHECK_PATH).send(stored);
+      expect(saveClaimCheck).toHaveBeenCalledTimes(1);
+      expect(saveClaimCheck.mock.calls[0][0].result).toEqual(RESULT);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  // M3: the GET 500s loudly on an unwired dep while this path skipped in
+  // silence, so a dropped wiring showed up only as a panel that never
+  // survived a reload.
+  it("logs an error when saveClaimCheck is missing but a session and message were named", async () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { app } = buildApp({ saveClaimCheck: undefined });
+      expect((await request(app).post(CLAIM_CHECK_PATH).send(stored)).status).toBe(200);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("saveClaimCheck is not wired"));
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("stays silent about the missing dep when no session was named", async () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { app } = buildApp({ saveClaimCheck: undefined });
+      expect((await request(app).post(CLAIM_CHECK_PATH).send(BODY)).status).toBe(200);
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
+// Parked item 2: auth.code describes the authentication ATTEMPT. When a
+// principal comes back whose id cannot key a row, that attempt may have
+// "succeeded" — and echoing its code answered a 200 (or a future branch's 0)
+// with an "Unauthorized." body.
+describe("a principal with an unusable id is always 401", () => {
+  const SESSION = "11111111-1111-4111-8111-111111111111";
+
+  it.each([
+    ["a successful attempt (code 200)", { user: { id: "not-a-number" } as any, code: 200 }],
+    ["an attempt that left the code unset", { user: { id: "not-a-number" } as any }],
+    ["a code of 0", { user: { id: "not-a-number" } as any, code: 0 }],
+  ])("POST answers 401 for %s", async (_label, auth) => {
+    const { app, runCheck } = buildApp({ authenticate: async () => auth });
+    expect((await request(app).post(CLAIM_CHECK_PATH).send(BODY)).status).toBe(401);
+    expect(runCheck).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a successful attempt (code 200)", { user: { id: "not-a-number" } as any, code: 200 }],
+    ["an attempt that left the code unset", { user: { id: "not-a-number" } as any }],
+    ["a code of 0", { user: { id: "not-a-number" } as any, code: 0 }],
+  ])("GET answers 401 for %s", async (_label, auth) => {
+    const listClaimChecks = jest.fn();
+    const { app } = buildApp({ authenticate: async () => auth, listClaimChecks });
+    expect((await request(app).get(`/claims/check/${SESSION}`)).status).toBe(401);
+    expect(listClaimChecks).not.toHaveBeenCalled();
+  });
+
+  it("still passes a genuine auth failure's own code through", async () => {
+    const { app } = buildApp({
+      authenticate: async () => ({ error: true, code: 403, message: "key disabled" }),
+    });
+    expect((await request(app).post(CLAIM_CHECK_PATH).send(BODY)).status).toBe(403);
+    expect((await request(app).get(`/claims/check/${SESSION}`)).status).toBe(403);
   });
 });
 

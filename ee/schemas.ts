@@ -57,6 +57,15 @@ export const feedbackSchema: ExuluTableDefinition = {
  * is kept off the auto-CRUD generator until it is. Same shape as
  * `workflowTriggersSchema` below.
  *
+ * Because of that flag, registering this schema with `createSDL` is a
+ * deliberate NO-OP for the GraphQL surface: `createSDL` skips every table with
+ * `graphql: false` (src/graphql/schemas/index.ts, `if (table.graphql ===
+ * false) continue`), so a printed SDL contains no `claim_check` type at all.
+ * A `grep -c claim_check` over the SDL returning **zero is the expected
+ * result**, not a missing registration — the stage-3 plan asked for a non-zero
+ * count, which was never achievable. The registration exists so the table is
+ * created and migrated by the initdb path like every other core table.
+ *
  * Row uniqueness is (session, message_id, user) — read-scoping is by
  * (session, user), so a unique index on (session, message_id) alone would
  * let two different users racing the same session uuid and message id
