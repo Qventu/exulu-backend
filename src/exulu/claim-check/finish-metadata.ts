@@ -31,12 +31,30 @@ import { VIEW_DOCUMENT_PAGE_TOOL_NAME } from "@SRC/templates/tools/view-document
 import { INTERNET_SEARCH_TOOL_NAME } from "@SRC/templates/tools/perplexity";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 
-/** One source the client must locate (by `toolCallId`, when it has one) and send. */
+/** One source the client must locate and send. */
 export type ClaimCheckManifestEntry = {
   type: ClaimCheckSourceType;
   id: string;
-  /** Absent for a `memory` entry: recalled memories reach the model through
-   * the system prompt, not a tool call, so there is no call to locate it by. */
+  /**
+   * Which tool call this source came from.
+   *
+   * For `document`, `web` and `session_item` this IS the lookup key: the id
+   * is `tool:<toolCallId>`, one entry per call, so the client finds the part
+   * by it.
+   *
+   * For `knowledge_base` it is **provenance, not a lookup key** (fix round 3,
+   * Critical 3). One entry is named per ITEM, deduplicated by item id, so an
+   * item several retrieval calls returned carries only the call that saw it
+   * FIRST — while each call serialises only its own chunks. A client that
+   * read just this call's part would therefore drop every passage the other
+   * calls returned for the same item, and verifying an answer against part of
+   * its evidence scores grounded claims `unsupported`. The client pools an
+   * item's chunks across the turn's parts by `item_id` instead; this field
+   * records where the item was first seen.
+   *
+   * Absent for a `memory` entry: recalled memories reach the model through
+   * the system prompt, not a tool call, so there is no call to locate it by.
+   */
   toolCallId?: string;
 };
 
@@ -218,6 +236,12 @@ function manifestFor(args: {
     if (!isRecord(part) || typeof part.type !== "string" || typeof part.toolCallId !== "string") continue;
 
     if (RETRIEVAL_PART_TYPES.has(part.type)) {
+      // One entry per ITEM, not per call: `add` dedupes by id, so an item two
+      // searches both returned keeps the FIRST call's id. That id is
+      // provenance only — the client pools the item's chunks across every
+      // part of the turn by `item_id`, because each call serialises only its
+      // own chunks and the second call's passages are evidence too (fix
+      // round 3, Critical 3; see ClaimCheckManifestEntry.toolCallId).
       for (const id of chunkItemIdsOf(part.output)) {
         add({ type: "knowledge_base", id, toolCallId: part.toolCallId });
       }
