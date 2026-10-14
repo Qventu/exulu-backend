@@ -9,7 +9,7 @@ import { runSelection } from "./stages/select";
 import { runDisambiguation } from "./stages/disambiguate";
 import { runDecomposition } from "./stages/decompose";
 import { runVerification } from "./stages/verify";
-import { MAX_EVIDENCE_PER_CALL, runClaimCheck, selectGroupEvidence } from "./run";
+import { BISECT_FLOOR, MAX_EVIDENCE_PER_CALL, runClaimCheck, selectGroupEvidence } from "./run";
 import { indexSources, selectEvidence } from "./evidence";
 import { VERBATIM_RATIONALE } from "./verbatim";
 import { CLAIM_CHECK_DEFAULTS, type ClaimCheckOptions } from "./types";
@@ -265,63 +265,94 @@ describe("runClaimCheck — resilience", () => {
   });
 
 
-  it("bisects a failed batch once and only marks the still-failing half not_checked", async () => {
+  // Change B: BATCH.selectDisambiguate rose to 25, so a failed batch now
+  // bisects RECURSIVELY down to BISECT_FLOOR rather than once —
+  // 25 -> 13 + 12 -> 7 + 6 + 6 + 6 — and the sentences lost to a failure are
+  // the smallest still-failing piece, not half the batch. The fixture is 25
+  // sentences (one full batch) because the previous 3-sentence fixture is now
+  // below the floor and is never split at all.
+  it("bisects a failed batch recursively down to the floor and only loses the still-failing piece", async () => {
+    const answer = Array.from({ length: 25 }, (_, i) => `Satz Nummer ${i + 1} ist eindeutig wahr.`).join(" ");
     const seen: number[][] = [];
     (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) => {
       const indexes = windows.map((w: any) => w.sentence.index);
       seen.push(indexes);
-      if (indexes.length > 1) throw new Error("batch too big for the provider today");
-      if (indexes[0] === 2) throw new Error("still failing");
+      // Fails for its SIZE above the floor — the deterministic output-overflow
+      // shape the recursion exists for — and at or below the floor only for
+      // the one piece holding sentence 24.
+      if (indexes.length > BISECT_FLOOR) throw new Error("batch too big for the provider today");
+      if (indexes.includes(24)) throw new Error("still failing");
       return allClear(indexes);
     });
-    (runDecomposition as jest.Mock).mockResolvedValue({ outcomes: [], usage: USAGE });
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `claim ${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
 
     const result = await runClaimCheck({
-      question: "q", answer: ANSWER, sources: SOURCES, model: {} as any, options: options(), locale: "de",
+      question: "q", answer, sources: SOURCES, model: {} as any, options: options(), locale: "de",
     });
 
-    // One full batch, then its halves.
-    expect(seen[0]).toEqual([0, 1, 2]);
-    expect(seen.length).toBeGreaterThan(1);
+    // The whole batch, its halves, then THEIR halves — which are at or below
+    // the floor and are never split again.
+    expect(seen.map((b) => b.length)).toEqual([25, 13, 12, 7, 6, 6, 6]);
+    // Everything outside the single piece that kept failing survived the
+    // batch's collapse. A one-shot bisect loses all 25; no floor at all would
+    // keep splitting and lose only [22, 23, 24].
+    expect(result.sentences.filter((s) => s.state === "not_checked").map((s) => s.index)).toEqual([
+      19, 20, 21, 22, 23, 24,
+    ]);
+    expect(result.sentences.filter((s) => s.state === "checked")).toHaveLength(19);
+    expect(result.sentences[19]!.reason).toBe("selection+disambiguation failed after bisect");
     expect(result.status).toBe("partial");
-    expect(result.sentences.find((s) => s.index === 2)!.state).toBe("not_checked");
     expect(result.notes.join(" ")).toContain("not_checked");
   });
 
-  // Renamed from "aborts a stage above the failure ratio...": with only one
-  // batch (3 sentences, well under BATCH.selectDisambiguate), the breaker's
-  // failures>=2 floor can never trip — a lone failing batch always gets its
-  // bisect-retry instead. This test now actually exercises "the bisected
-  // halves fail too", not the circuit breaker. See the dedicated breaker test
-  // below for that.
-  it("fails every sentence not_checked when a lone batch's bisected halves fail too (not the breaker)", async () => {
+  // With only one batch the breaker's failures>=2 floor can never trip, so a
+  // lone failing batch always gets its bisect — and now gets it twice over,
+  // because the breaker deliberately does not re-run on the retry rounds (an
+  // output overflow is deterministic in batch size, so every sibling failing
+  // is the signal to split further, not to give up). The call count is the
+  // whole point of this test: it pins the recursion, the floor AND that
+  // non-re-running breaker at once.
+  it("recurses a lone failing batch to the floor without the breaker, for 1 + 2 + 4 calls", async () => {
+    const answer = Array.from({ length: 25 }, (_, i) => `Satz Nummer ${i + 1} ist eindeutig wahr.`).join(" ");
     (runSelectAndDisambiguate as jest.Mock).mockRejectedValue(new Error("provider down"));
 
     const result = await runClaimCheck({
-      question: "q", answer: ANSWER, sources: SOURCES, model: {} as any, options: options(), locale: "de",
+      question: "q", answer, sources: SOURCES, model: {} as any, options: options(), locale: "de",
     });
 
-    // 1 initial call (the whole batch) + 2 retries (its bisected halves) — no
-    // abort, since one batch's failure can never meet the failures>=2 floor.
-    expect((runSelectAndDisambiguate as jest.Mock).mock.calls.length).toBe(3);
+    // 7: a one-shot bisect would be 3, a breaker re-run at round 1 would be 3,
+    // and splitting past the floor would be 15.
+    expect((runSelectAndDisambiguate as jest.Mock).mock.calls.length).toBe(7);
     expect(result.status).toBe("partial");
     expect(result.claims).toEqual([]);
     expect(result.sentences.every((s) => s.state === "not_checked")).toBe(true);
+    expect(result.sentences).toHaveLength(25);
     expect(result.notes.some((n) => n.includes("selection+disambiguation"))).toBe(true);
+    expect(result.notes.some((n) => n.includes("aborted"))).toBe(false);
   });
 
-  // Finding 2 (R18): a genuine multi-batch circuit-breaker fixture. 25
-  // sentences batch into [10, 10, 5] for BATCH.selectDisambiguate = 10; the
+  // Finding 2 (R18): a genuine multi-batch circuit-breaker fixture. 60
+  // sentences batch into [25, 25, 10] for BATCH.selectDisambiguate = 25; the
   // mock fails only the two full-size (un-bisected) batches outright — any
-  // bisected retry (always length < 10) would succeed — so disabling the
+  // bisected retry (always length < 25) would succeed — so disabling the
   // breaker changes the outcome: the aborted batches' sentences would recover
   // via their retries instead of staying not_checked, and the call count
   // would rise from 3 to 7. That is the sensitivity check this test relies on.
   it("trips the circuit breaker across multiple batches and never retries the aborted ones", async () => {
-    const answer = Array.from({ length: 25 }, (_, i) => `Satz Nummer ${i + 1} ist eindeutig wahr.`).join(" ");
+    const answer = Array.from({ length: 60 }, (_, i) => `Satz Nummer ${i + 1} ist eindeutig wahr.`).join(" ");
     (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) => {
       const indexes = windows.map((w: any) => w.sentence.index);
-      if (indexes.length === 10 && (indexes[0] === 0 || indexes[0] === 10)) {
+      if (indexes.length === 25 && (indexes[0] === 0 || indexes[0] === 25)) {
         throw new Error("provider down for this batch");
       }
       return allClear(indexes);
@@ -338,7 +369,7 @@ describe("runClaimCheck — resilience", () => {
     expect(result.status).toBe("partial");
     expect(result.notes.some((n) => n.includes("selection+disambiguation") && n.includes("aborted"))).toBe(true);
     expect(result.sentences[0]!.state).toBe("not_checked");
-    expect(result.sentences[15]!.state).toBe("not_checked");
+    expect(result.sentences[30]!.state).toBe("not_checked");
   });
 
   // Review Focus 5
@@ -528,7 +559,7 @@ describe("evidence selection per claim", () => {
       locale: "de",
     });
 
-    // Both claims are in ONE verification group (BATCH.verifySentences = 3).
+    // Both claims are in ONE verification group (BATCH.verifySentences = 8).
     expect((runVerification as jest.Mock).mock.calls).toHaveLength(1);
     const evidence = (runVerification as jest.Mock).mock.calls[0][0].evidence as { sourceId: string }[];
     const ids = evidence.map((e) => e.sourceId);
@@ -992,7 +1023,7 @@ describe("runClaimCheck — paper fidelity and second chance", () => {
   // a provider outage as "the sources don't support this." It must be dropped
   // from the result entirely, and its sentence marked not_checked.
   it("drops claims from a verification group that rejects, instead of reporting them unsupported", async () => {
-    const answer = "Satz eins ist wahr. Satz zwei ist auch wahr. Satz drei ist strittig. Satz vier ist sicher.";
+    const answer = Array.from({ length: 9 }, (_, i) => `Satz Nummer ${i + 1} ist eindeutig wahr.`).join(" ");
     (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
       allClear(windows.map((w: any) => w.sentence.index)),
     );
@@ -1003,10 +1034,10 @@ describe("runClaimCheck — paper fidelity and second chance", () => {
       })),
       usage: USAGE,
     }));
-    // BATCH.verifySentences = 3: sentences 0-2 land in one group (3 claims),
-    // sentence 3 lands alone in a second group. Fail the first, pass the second.
+    // BATCH.verifySentences = 8: sentences 0-7 land in one group (8 claims),
+    // sentence 8 lands alone in a second group. Fail the first, pass the second.
     (runVerification as jest.Mock).mockImplementation(async ({ claims }) => {
-      if (claims.length === 3) throw new Error("provider down for this group");
+      if (claims.length === 8) throw new Error("provider down for this group");
       return {
         outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
         usage: USAGE,
@@ -1018,13 +1049,11 @@ describe("runClaimCheck — paper fidelity and second chance", () => {
     });
 
     expect(result.claims).toHaveLength(1);
-    expect(result.claims[0]!.sentenceIndex).toBe(3);
+    expect(result.claims[0]!.sentenceIndex).toBe(8);
     expect(result.score.claims).toBe(1);
-    expect(result.sentences[0]!.state).toBe("not_checked");
+    expect(result.sentences.slice(0, 8).every((s) => s.state === "not_checked")).toBe(true);
     expect(result.sentences[0]!.reason).toBe("verification failed for this sentence");
-    expect(result.sentences[1]!.state).toBe("not_checked");
-    expect(result.sentences[2]!.state).toBe("not_checked");
-    expect(result.sentences[3]!.state).toBe("checked");
+    expect(result.sentences[8]!.state).toBe("checked");
     expect(result.status).toBe("partial");
     expect(result.notes.some((n) => n.includes("verification"))).toBe(true);
   });
@@ -1310,5 +1339,68 @@ describe("runClaimCheck — verbatim short-circuit", () => {
     // The dropped inferred claim is still a degradation and still says so.
     expect(result.status).toBe("partial");
     expect(result.notes.some((n) => n.includes("verification failed for 1 claim(s)"))).toBe(true);
+  });
+});
+
+// The product-owner objection this work answers: "running hundreds of checks
+// is going to be incredibly expensive and take a long time". These two tests
+// are the measurement — stage invocations counted, not estimated.
+describe("runClaimCheck — call budget", () => {
+  /** 30 sentences, each over the verbatim length floor. */
+  const SENTENCES = Array.from(
+    { length: 30 },
+    (_, i) => `Satz Nummer ${i + 1} beschreibt eine eindeutig überprüfbare Tatsache.`,
+  );
+  const ANSWER_30 = SENTENCES.join(" ");
+
+  const runWith = async (sources: { id: string; content: string }[]) => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `claim ${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+    return runClaimCheck({
+      question: "q", answer: ANSWER_30, sources, model: {} as any,
+      options: options({ reRetrieve: false }), locale: "de",
+    });
+  };
+
+  it("costs 8 stage calls for a 30-sentence answer, down from 19", async () => {
+    const result = await runWith(SOURCES);
+    const counts = {
+      selectDisambiguate: (runSelectAndDisambiguate as jest.Mock).mock.calls.length,
+      decompose: (runDecomposition as jest.Mock).mock.calls.length,
+      verify: (runVerification as jest.Mock).mock.calls.length,
+    };
+
+    // ceil(30/25) + ceil(30/15) + ceil(30/8). At {10, 5, 3} this was 3 + 6 + 10.
+    expect(counts).toEqual({ selectDisambiguate: 2, decompose: 2, verify: 4 });
+    expect(counts.selectDisambiguate + counts.decompose + counts.verify).toBe(8);
+    // What the response reports back agrees with what was spent.
+    expect(result.usage.calls).toBe(8);
+    expect(result.score.claims).toBe(30);
+    expect(result.status).toBe("ok");
+  });
+
+  it("costs 4 when every sentence of that answer is quoted verbatim in a source", async () => {
+    const result = await runWith([{ id: "quelle", content: ANSWER_30 }]);
+
+    expect((runVerification as jest.Mock).mock.calls).toHaveLength(0);
+    expect(result.usage.calls).toBe(4);
+    // Every claim is still verified, still scored, and says how.
+    expect(result.claims).toHaveLength(30);
+    expect(result.claims.every((c) => c.matchedVerbatim && c.verdict === "supported")).toBe(true);
+    expect(result.score).toMatchObject({ claims: 30, supported: 30, unsupportedShare: 0, label: "ok" });
+    expect(result.sentences.every((s) => s.state === "checked")).toBe(true);
+    expect(result.status).toBe("ok");
   });
 });

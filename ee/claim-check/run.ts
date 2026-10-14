@@ -41,7 +41,44 @@ import {
   VERBATIM_RATIONALE,
 } from "./verbatim";
 
-export const BATCH = { selectDisambiguate: 10, decompose: 5, verifySentences: 3 };
+/**
+ * A typical 30-sentence NEWLIFT answer cost 19 provider calls at
+ * {10, 5, 3} — 3 extraction + 6 decomposition + 10 verification — and a
+ * 44,000-character answer is ~568 sentences. These sizes bring that to 8
+ * (2 + 2 + 4); see CLAIM_CHECK_MAX_OUTPUT_TOKENS for the measured output-token
+ * headroom each one leaves, and BISECT_FLOOR for what a failed batch now costs.
+ */
+export const BATCH = { selectDisambiguate: 25, decompose: 15, verifySentences: 8 };
+/**
+ * A failed batch is split in half and each half retried, recursively, until
+ * the pieces are small enough that splitting them again costs more calls than
+ * the sentences it would save. At BATCH.selectDisambiguate = 25 that is
+ * 25 -> 13 + 12 -> 7 + 6 + 6 + 6: a batch that fails for its SIZE (an
+ * output-token overflow is the deterministic case, and the reason bisecting
+ * exists at all) gets two further chances at a size that fits.
+ *
+ * Why a floor rather than splitting down to single sentences: the blast radius
+ * of a failure is the size of the smallest piece that still failed, and the
+ * call cost of reaching size 1 from 25 is 1+2+4+8+16 = 31. Eight sentences of
+ * a 120-sentence cap reported not_checked, with a note, is a degradation the
+ * response states plainly; 31 calls for one unlucky batch is a bill the caller
+ * never agreed to. The floor is what bounds a CONTENT-triggered failure (a
+ * batch that would fail at any size) to at most 7 calls instead.
+ *
+ * The cost of the floor, stated plainly: an ORIGINAL batch at or below it —
+ * the remainder batch of a short answer, and every batch of the 15-sentence
+ * decomposition stage once split once — is not split at all, so its sentences
+ * go straight to not_checked where {10, 5, 3} would have retried two halves.
+ */
+export const BISECT_FLOOR = 8;
+/**
+ * Hard ceiling on bisect ROUNDS, independent of the floor. At the floor above
+ * no batch this engine produces needs more than two rounds (25 -> 13 -> 7), so
+ * it never binds today; it exists so that raising BATCH later cannot turn one
+ * failing batch into an unbounded series of retries without someone revisiting
+ * this number.
+ */
+export const MAX_BISECT_ROUNDS = 3;
 /**
  * Evidence selection is a PER-CLAIM job (spec §2.2): score the passages for
  * one claim and take its best few. Pooling a whole verification group's claim
@@ -71,8 +108,9 @@ type StageState = {
 
 /**
  * Run one batched stage over all batches with bounded concurrency. A rejected
- * batch is split in half and each half retried once, so a single bad call
- * costs 2-3 sentences instead of 10. Above STAGE_FAILURE_ABORT the stage stops
+ * batch is split in half and each half retried, recursively, down to
+ * BISECT_FLOOR — so one bad call costs at most 8 sentences instead of 25, for
+ * at most 7 calls instead of 31. Above STAGE_FAILURE_ABORT the stage stops
  * reporting and the caller degrades to a partial result.
  */
 async function runBatched<R>(
@@ -81,49 +119,61 @@ async function runBatched<R>(
   state: StageState,
   call: (windows: SentenceWindow[]) => Promise<{ result: R; usage: StageUsage }>,
 ): Promise<R[]> {
-  const settled = await mapWithConcurrency(batches, MAX_IN_FLIGHT, async (windows) => call(windows));
   const good: R[] = [];
-  const retryable: SentenceWindow[][] = [];
-  let failures = 0;
+  let pending = batches;
 
-  settled.forEach((outcome, i) => {
-    if (outcome.status === "fulfilled") {
-      good.push(outcome.value.result);
-      state.usage = addUsage(state.usage, outcome.value.usage);
-      return;
-    }
-    failures += 1;
-    const batch = batches[i]!;
-    if (batch.length > 1) {
-      const mid = Math.ceil(batch.length / 2);
-      retryable.push(batch.slice(0, mid), batch.slice(mid));
-    } else {
-      markNotChecked(state, batch, `${label} failed for this sentence`);
-    }
-  });
+  for (let round = 0; pending.length > 0; round += 1) {
+    const settled = await mapWithConcurrency(pending, MAX_IN_FLIGHT, async (windows) => call(windows));
+    const failed: SentenceWindow[][] = [];
 
-  // A single failure is never systemic: it must get its bisect (that is the
-  // point of bisect-once). The breaker exists for a provider failing broadly,
-  // which takes at least two observed failures to establish.
-  if (failures >= 2 && failures / batches.length > STAGE_FAILURE_ABORT) {
-    state.partial = true;
-    state.notes.push(
-      `${label}: aborted after ${failures} of ${batches.length} calls failed; remaining sentences are not_checked`,
-    );
-    for (const batch of retryable) markNotChecked(state, batch, `${label} aborted`);
-    return good;
-  }
-
-  if (retryable.length > 0) {
-    const retried = await mapWithConcurrency(retryable, MAX_IN_FLIGHT, async (windows) => call(windows));
-    retried.forEach((outcome, i) => {
+    settled.forEach((outcome, i) => {
       if (outcome.status === "fulfilled") {
         good.push(outcome.value.result);
         state.usage = addUsage(state.usage, outcome.value.usage);
-      } else {
-        markNotChecked(state, retryable[i]!, `${label} failed after bisect`);
+        return;
       }
+      failed.push(pending[i]!);
     });
+
+    if (failed.length === 0) return good;
+
+    // The breaker judges the stage's FIRST round only, exactly as before.
+    // A single failure is never systemic: it must get its bisect (that is the
+    // point of bisecting at all), and the breaker exists for a provider
+    // failing broadly, which takes at least two observed failures to
+    // establish. It deliberately does not re-run on the retry rounds: the
+    // failure the recursion exists for — an output-token overflow — is
+    // deterministic in batch SIZE, so every sibling of a round failing is the
+    // signal to split further, not the signal to give up. Re-running it here
+    // would cap the depth at one bisect for exactly the case 25 -> 13 -> 7 was
+    // widened for.
+    if (round === 0 && failed.length >= 2 && failed.length / pending.length > STAGE_FAILURE_ABORT) {
+      state.partial = true;
+      state.notes.push(
+        `${label}: aborted after ${failed.length} of ${pending.length} calls failed; remaining sentences are not_checked`,
+      );
+      for (const batch of failed) markNotChecked(state, batch, `${label} aborted`);
+      return good;
+    }
+
+    const next: SentenceWindow[][] = [];
+    for (const batch of failed) {
+      if (batch.length > BISECT_FLOOR && round < MAX_BISECT_ROUNDS) {
+        const mid = Math.ceil(batch.length / 2);
+        next.push(batch.slice(0, mid), batch.slice(mid));
+        continue;
+      }
+      markNotChecked(
+        state,
+        batch,
+        batch.length === 1
+          ? `${label} failed for this sentence`
+          : round === 0
+            ? `${label} failed for this batch of ${batch.length} sentences`
+            : `${label} failed after bisect`,
+      );
+    }
+    pending = next;
   }
 
   return good;

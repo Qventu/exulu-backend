@@ -61,7 +61,7 @@ So a request can make a check cheaper and narrower, never more expensive: asking
 
 A long answer is checked **up to the cap and reports the remainder as skipped** rather than silently costing more: the sentences past `caps.maxSentences` come back `not_checked` with `reason: "cap_exceeded"`, counted in `limits.sentencesSkipped`, with `status: "partial"` and a note. The defaults are deliberately not sized for the longest answers — a 44,000-character answer segments into roughly 570 sentences, around five times the default cap's calls and spend — so a tenant who wants full coverage of answers that long raises `claim_check.caps.maxSentences` on the agent and accepts the cost. The same reasoning gates the two options that multiply the number of provider calls rather than their price — `fidelity: "paper"` (which unmerges every stage and batches one sentence per call) and `completions` above 1 (which votes each of those stages N times). Both are benchmark instruments and both require a super-admin caller; everyone else configures `claim_check.fidelity` and `claim_check.completions` on the agent. `completions` is ignored outside `paper` fidelity, because only `paper` votes. `paper` is the paper's own fidelity: the merged selection+disambiguation call is split back into two stages, each stage runs one sentence per call, and each is repeated `completions` times with majority voting. It costs roughly an order of magnitude more calls than `fast` and exists for benchmarking and for callers who want maximum precision.
 
-**Raising `maxSentences` alone is not enough.** Every sentence costs provider calls, and the request has to finish within the request deadline (60 seconds by default — see the Rate limits table under [Payload caps and rate limits](#payload-caps-and-rate-limits) below) or it is cancelled with `504` — having already spent whatever calls it made before the deadline hit. A 570-sentence answer is roughly 361 provider calls at this feature's default batch sizes, which does not reliably finish in 60 seconds. That outcome — pay for hundreds of calls, get a `504`, no result — is strictly worse than the default cap's own degradation (`status: "partial"` plus `limits.sentencesSkipped`, still a `200`). So size the two together: raising `claim_check.caps.maxSentences` on an agent to cover a longer answer also means raising the operator's `CLAIM_CHECK_TIMEOUT_MS` (self-hosting environment variable, default `60000` ms) enough for that many calls to complete, or the raised cap just moves where the failure happens.
+**Raising `maxSentences` alone is not enough.** Every sentence costs provider calls, and the request has to finish within the request deadline (60 seconds by default — see the Rate limits table under [Payload caps and rate limits](#payload-caps-and-rate-limits) below) or it is cancelled with `504` — having already spent whatever calls it made before the deadline hit. A 570-sentence answer is roughly 133 provider calls at this feature's default batch sizes, which does not reliably finish in 60 seconds. That outcome — pay for hundreds of calls, get a `504`, no result — is strictly worse than the default cap's own degradation (`status: "partial"` plus `limits.sentencesSkipped`, still a `200`). So size the two together: raising `claim_check.caps.maxSentences` on an agent to cover a longer answer also means raising the operator's `CLAIM_CHECK_TIMEOUT_MS` (self-hosting environment variable, default `60000` ms) enough for that many calls to complete, or the raised cap just moves where the failure happens.
 
 ### Model resolution
 
@@ -96,7 +96,7 @@ If none of these resolves to a usable model, the endpoint responds `400` naming 
       "evidence": [ { "sourceId": "s1", "quote": "…" } ],
       "rationale": "…", "rechecked": false, "matchedVerbatim": false }
   ],
-  "usage": { "calls": 18, "inputTokens": 114203, "outputTokens": 24880 },
+  "usage": { "calls": 8, "inputTokens": 114203, "outputTokens": 24880 },
   "timings": { "splitMs": 12, "selectDisambiguateMs": 2140, "decomposeMs": 1980,
                "evidenceMs": 60, "verifyMs": 3310, "totalMs": 7502 },
   "limits": { "truncated": false, "sentencesSkipped": 0 },
@@ -154,7 +154,7 @@ When `agent` is set and `options.reRetrieve` is on, `unsupported` claims get one
 
 Most verdicts are a model's judgement. One is not: when the sentence a claim was extracted from appears **literally** in one of the supplied sources, the source entails the claim by definition — the extraction stages' contract is that a claim is entailed by the text it was decomposed from — so the claim is reported `supported` with `matchedVerbatim: true` and no provider call is made for it. Its `evidence` is the matched source and the sentence text itself, and its `rationale` says in words that this was a text match and not a judgement.
 
-A `matchedVerbatim` claim is a verified claim: it counts in `score.claims` like any other, and its sentence is `checked`. It is never re-retrieved (the second pass only looks at `unsupported` claims). RAG answers quote their sources heavily, so this is where most of the saving on a long answer comes from: a heavily quoted answer makes no verification call at all.
+A `matchedVerbatim` claim is a verified claim: it counts in `score.claims` like any other, and its sentence is `checked`. It is never re-retrieved (the second pass only looks at `unsupported` claims). RAG answers quote their sources heavily, so this is where most of the saving on a long answer comes from — a 30-sentence answer costs 8 provider calls, or 4 when every sentence is quoted.
 
 The match is deliberately strict, because a false positive here would report a claim supported that nobody checked:
 
@@ -180,7 +180,7 @@ The match is deliberately strict, because a false positive here would report a c
 
 ## Payload caps and rate limits
 
-One request can cost on the order of 18 LLM calls over arbitrary caller-supplied text, so these limits are load-bearing, not cosmetic — they apply to every caller and every role, including internal ones.
+One request can cost on the order of 10 LLM calls over arbitrary caller-supplied text, so these limits are load-bearing, not cosmetic — they apply to every caller and every role, including internal ones.
 
 **Payload caps** (`413` when exceeded, before anything is sent to the engine):
 

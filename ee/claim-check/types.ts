@@ -4,8 +4,33 @@
 // function over these types, so a stage can be tested without a provider and
 // without the orchestrator.
 
-/** Raised output cap: the staged prompts reason before answering, and the
- *  shared MICRO_CALL_MAX_OUTPUT_TOKENS (2000) truncates a batch of sentences. */
+/**
+ * Raised output cap: the staged prompts reason before answering, and the
+ * shared MICRO_CALL_MAX_OUTPUT_TOKENS (2000) truncates a batch of sentences.
+ *
+ * Still 8000 at the raised BATCH sizes, measured (o200k_base) against German
+ * maintenance prose rather than estimated. Worst case per stage, with every
+ * optional field returned at full length:
+ *
+ *   selection+disambiguation, 25 sentences, both `rewritten` and `clarified`
+ *     returned in full and a 15-word reason: 2,131 tok at the measured average
+ *     sentence (77 chars), 3,481 at 205 chars, 4,981 at 356 chars.
+ *   decomposition, 15 sentences: 966 tok at 2 claims x 77 chars, 2,601 at
+ *     3 x 205, 4,251 at 5 x 205, and 6,501 in the pathological 5 x 356 shape
+ *     (five claims per sentence, each restating a 356-character sentence in
+ *     full — a 5x expansion of the input).
+ *   verification, 8 sentences: 1,877 tok at 3 claims x 77-char quotes, 2,525
+ *     at 3 x 205, 5,405 at 5 x 356.
+ *
+ * So the binding case is a pathological decomposition batch at 6,501 of 8,000,
+ * leaving 1,499 for a reasoning model's thinking (which counts against this
+ * cap — see MICRO_CALL_MAX_OUTPUT_TOKENS). It is deliberately NOT raised:
+ * 8,000 sits just under the 8,192-token output ceiling of a whole generation of
+ * models that a self-hosted CLAIM_CHECK_DEFAULT_MODEL may well be, where a
+ * higher value fails every call outright, and a truncated batch already
+ * degrades safely — the parse fails, the batch fails, and run.ts's recursive
+ * bisect retries it at 8 and 7 sentences, which fit with room to spare.
+ */
 export const CLAIM_CHECK_MAX_OUTPUT_TOKENS = 8000;
 
 export type ClaimCheckSource = { id: string; name?: string; content: string };
