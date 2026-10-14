@@ -240,12 +240,16 @@ export async function runClaimCheck(args: {
     tStage = Date.now();
     const selectWindows = buildWindows(sentences, 5, 5);
     const laterWindows = new Map(buildWindows(sentences, 5, 0).map((w) => [w.sentence.index, w]));
-    const temperature = options.completions > 1 ? 0.2 : 0;
     // Spec §2.3: paper fidelity "restores one sentence per call". Batching it
     // the same way as the fast path made §8's fast-vs-paper comparison — the
     // thing that is supposed to SET the final batch sizes — unable to answer
     // that question, because both arms batched identically.
     const paper = options.fidelity === "paper";
+    // Only paper votes, so `completions` outside it bought nothing except a
+    // raised temperature (0.2) — strictly less determinism for the same single
+    // call per batch.
+    const completions = paper ? options.completions : 1;
+    const temperature = completions > 1 ? 0.2 : 0;
     const selectBatchSize = paper ? 1 : BATCH.selectDisambiguate;
     const decomposeBatchSize = paper ? 1 : BATCH.decompose;
     const batches = chunk(selectWindows, selectBatchSize);
@@ -255,7 +259,7 @@ export async function runClaimCheck(args: {
 
     if (paper) {
       const selectionRuns: SelectionOutcome[][] = [];
-      for (let run = 0; run < options.completions; run += 1) {
+      for (let run = 0; run < completions; run += 1) {
         const results = await runBatched(batches, "selection", state, async (windows) => {
           const { outcomes, usage } = await runSelection({
             windows, question: args.question, model: args.model, temperature, ...(args.signal ? { signal: args.signal } : {}),
@@ -264,7 +268,7 @@ export async function runClaimCheck(args: {
         });
         selectionRuns.push(results.flat());
       }
-      const selectionVote = vote(selectionRuns, (o) => o.verifiable, options.completions);
+      const selectionVote = vote(selectionRuns, (o) => o.verifiable, completions);
       for (const [index, { passed, sample }] of selectionVote) {
         selection.push({ ...sample, index, verifiable: passed });
       }
@@ -276,7 +280,7 @@ export async function runClaimCheck(args: {
       // batches, and excerptFor substitutes by index across the whole window.
       const texts = new Map(selection.filter((s) => s.rewritten).map((s) => [s.index, s.rewritten!]));
       const disambiguationRuns: DisambiguationOutcome[][] = [];
-      for (let run = 0; run < options.completions; run += 1) {
+      for (let run = 0; run < completions; run += 1) {
         const results = await runBatched(chunk(survivors, selectBatchSize), "disambiguation", state, async (windows) => {
           const { outcomes, usage } = await runDisambiguation({
             windows, question: args.question, sentenceTexts: texts, model: args.model, temperature,
@@ -286,7 +290,7 @@ export async function runClaimCheck(args: {
         });
         disambiguationRuns.push(results.flat());
       }
-      const disambiguationVote = vote(disambiguationRuns, (o) => o.resolvable, options.completions);
+      const disambiguationVote = vote(disambiguationRuns, (o) => o.resolvable, completions);
       for (const [index, { passed, sample }] of disambiguationVote) {
         disambiguation.push({ ...sample, index, resolvable: passed });
       }

@@ -45,6 +45,20 @@ export const CLAIM_CHECK_TIMEOUT_MS = 60_000;
 /** Thrown by the deadline race only, so the catch can tell 504 from 500. */
 class ClaimCheckTimeoutError extends Error {}
 
+/**
+ * A locale the engine can actually segment with. An unusable tag used to reach
+ * `new Intl.Segmenter` inside the engine and throw into its outer catch, so
+ * garbage produced 200 + an empty partial result instead of §4's 400.
+ */
+function localeIsUsable(locale: string): boolean {
+  try {
+    new Intl.Segmenter(locale, { granularity: "sentence" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** requested ?? configured, then floored by both the configured value and the module ceiling. */
 function clampCap(requested: number | undefined, configured: number, ceiling: number): number {
   return Math.min(requested ?? configured, configured, ceiling);
@@ -60,7 +74,10 @@ const requestSchema = z.object({
   session: z.string().optional(),
   messageId: z.string().optional(),
   model: z.string().optional(),
-  locale: z.string().optional(),
+  locale: z
+    .string()
+    .refine(localeIsUsable, { message: "locale is not a usable BCP 47 language tag" })
+    .optional(),
   options: z
     .object({
       fidelity: z.enum(["fast", "paper"]).optional(),
@@ -188,7 +205,16 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
         res.status(scope.code).json({ detail: scope.reason });
         return;
       }
-      agent = await deps.getAgent(body.agent);
+      // A malformed id (not a UUID) makes the lookup throw rather than return
+      // undefined, which used to surface as a 500. "No such agent" is the same
+      // fact either way, so it answers 404.
+      try {
+        agent = await deps.getAgent(body.agent);
+      } catch (err) {
+        console.warn(
+          `[EXULU] claim check: agent lookup for "${body.agent}" failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       if (!agent) {
         res.status(404).json({ detail: `Agent ${body.agent} not found.` });
         return;
@@ -296,6 +322,17 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
         ),
       },
     };
+
+    // A warn above alert makes every label "alert" — a misconfiguration that
+    // would be read as a hallucination finding, so it is refused, not applied.
+    if (options.thresholds.warn > options.thresholds.alert) {
+      res.status(400).json({
+        detail:
+          `thresholds.warn (${options.thresholds.warn}) must not exceed thresholds.alert ` +
+          `(${options.thresholds.alert}); check the request options and the agent's claim_check.thresholds.`,
+      });
+      return;
+    }
 
     const slot = deps.limiter.take(String(user.id));
     if (!slot.ok) {

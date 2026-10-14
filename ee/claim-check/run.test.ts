@@ -239,6 +239,12 @@ describe("runClaimCheck — resilience", () => {
   // to a partial result rather than reject the caller's promise. An invalid
   // Intl.Segmenter locale throws synchronously inside the split stage, before
   // any stage mock is ever reached.
+  //
+  // Finding 14: the HTTP route now rejects an unusable locale with a 400
+  // (routes.test.ts), so this is no longer reachable through the API. It stays
+  // as the engine's own guarantee — runClaimCheck is called directly here, and
+  // every internal caller (the benchmark runner, a future chat path) depends
+  // on it degrading rather than throwing.
   it("degrades to a partial result instead of throwing when the pipeline itself throws", async () => {
     const result = await runClaimCheck({
       question: "q",
@@ -840,6 +846,29 @@ describe("runClaimCheck — paper fidelity and second chance", () => {
     expect(decompositionCalls).toHaveLength(3);
     expect(decompositionCalls.every((c) => c[0].windows.length === 1)).toBe(true);
     expect(result.claims).toHaveLength(3);
+  });
+
+  // Finding 14: completions above 1 in fast fidelity only raised the
+  // temperature to 0.2 — nothing votes in fast mode, so it bought strictly
+  // less determinism for the same single call.
+  it("ignores completions outside paper fidelity, keeping temperature at 0", async () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockResolvedValue({ outcomes: [], usage: USAGE });
+
+    await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources: SOURCES,
+      model: {} as any,
+      options: options({ fidelity: "fast", completions: 3 }),
+      locale: "de",
+    });
+
+    const calls = (runSelectAndDisambiguate as jest.Mock).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0].temperature).toBe(0);
   });
 
   it("keeps the fast path batched: one merged call and one decomposition call for three sentences", async () => {

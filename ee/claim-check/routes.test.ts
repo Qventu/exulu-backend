@@ -391,6 +391,80 @@ describe(`POST ${CLAIM_CHECK_PATH}`, () => {
     expect(externalRateLimitExceeded).not.toHaveBeenCalled();
   });
 
+  // Finding 14: an unusable locale used to reach new Intl.Segmenter inside the
+  // engine and throw into its outer catch, so garbage yielded 200 plus an
+  // empty partial result instead of a 400.
+  it("400s an unusable locale at the edge, without running the engine", async () => {
+    const { app, runCheck } = buildApp();
+    const res = await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, locale: "💥not-a-locale💥" });
+    expect(res.status).toBe(400);
+    expect(String(res.body.detail)).toContain("locale");
+    expect(runCheck).not.toHaveBeenCalled();
+
+    const ok = await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, locale: "de" });
+    expect(ok.status).toBe(200);
+  });
+
+  // Finding 14: warn above alert labels everything "alert", which reads as a
+  // hallucination finding. It is refused, not applied.
+  it("400s when the resolved thresholds have warn above alert", async () => {
+    const { app, runCheck } = buildApp();
+    const res = await request(app)
+      .post(CLAIM_CHECK_PATH)
+      .send({ ...BODY, options: { thresholds: { warn: 0.5, alert: 0.3 } } });
+    expect(res.status).toBe(400);
+    expect(String(res.body.detail)).toContain("thresholds.warn");
+    expect(runCheck).not.toHaveBeenCalled();
+
+    // Equal values are fine: everything at or above alert is "alert".
+    const equal = await request(app)
+      .post(CLAIM_CHECK_PATH)
+      .send({ ...BODY, options: { thresholds: { warn: 0.3, alert: 0.3 } } });
+    expect(equal.status).toBe(200);
+  });
+
+  it("400s when a request warn exceeds the agent's configured alert", async () => {
+    const { app } = buildApp({
+      getAgent: async () =>
+        ({
+          id: "agent-1",
+          model: "agent-model",
+          tools: [
+            {
+              id: "agentic_context_search",
+              config: [
+                {
+                  name: "claim_check",
+                  type: "json",
+                  variable: '{"enabled":true,"showToExternalUsers":true,"thresholds":{"warn":0.1,"alert":0.2}}',
+                },
+              ],
+            },
+          ],
+        }) as any,
+    });
+    const res = await request(app)
+      .post(CLAIM_CHECK_PATH)
+      .send({ ...BODY, agent: "agent-1", options: { thresholds: { warn: 0.4 } } });
+    expect(res.status).toBe(400);
+  });
+
+  // Finding 14: a malformed agent id makes the lookup throw rather than return
+  // undefined, which surfaced as a 500 outside any try/catch.
+  it("404s a malformed agent id instead of 500ing", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const { app, runCheck } = buildApp({
+      getAgent: async () => {
+        throw new Error('invalid input syntax for type uuid: "not-a-uuid"');
+      },
+    });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "not-a-uuid" });
+    expect(res.status).toBe(404);
+    expect(String(res.body.detail)).toContain("not found");
+    expect(runCheck).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
   it("passes a partial engine result through with 200", async () => {
     const { app } = buildApp({
       runCheck: jest.fn().mockResolvedValue({ ...RESULT, status: "partial", notes: ["selection aborted"] }),
