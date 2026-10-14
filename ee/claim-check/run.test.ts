@@ -595,10 +595,17 @@ describe("runClaimCheck — source truncation", () => {
     (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
       allClear(windows.map((w: any) => w.sentence.index)),
     );
-    (runDecomposition as jest.Mock).mockResolvedValue({
-      outcomes: [{ index: 0, claims: [{ text: "c", inferred: false }] }],
+    // Every sentence gets an outcome, so truncation is the ONLY thing that can
+    // make these two results `partial`: a decomposition reporting on one of
+    // three sentences degrades the result by itself, and would have let the
+    // status assertions below pass under the very bug they pin.
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `c${w.sentence.index}`, inferred: false }],
+      })),
       usage: USAGE,
-    });
+    }));
     (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
       outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
       usage: USAGE,
@@ -617,16 +624,28 @@ describe("runClaimCheck — source truncation", () => {
     expect(result.limits.sentencesSkipped).toBe(0);
     expect(result.notes.some((n) => n.includes("truncated at 60000 characters"))).toBe(true);
     expect(result.notes.some((n) => n.includes("35 character(s) of evidence were not searched"))).toBe(true);
+    // R35: part of the evidence went unread, so the share of unsupported
+    // claims is not a number this check measured. Every other
+    // partly-measured outcome reports `partial`, including the zero-evidence
+    // case below, which is the same question of degree.
+    expect(result.status).toBe("partial");
   });
 
   it("leaves limits.truncated false when every source fits", async () => {
     (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
       allClear(windows.map((w: any) => w.sentence.index)),
     );
-    (runDecomposition as jest.Mock).mockResolvedValue({
-      outcomes: [{ index: 0, claims: [{ text: "c", inferred: false }] }],
+    // Every sentence gets an outcome, so truncation is the ONLY thing that can
+    // make these two results `partial`: a decomposition reporting on one of
+    // three sentences degrades the result by itself, and would have let the
+    // status assertions below pass under the very bug they pin.
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `c${w.sentence.index}`, inferred: false }],
+      })),
       usage: USAGE,
-    });
+    }));
     (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
       outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
       usage: USAGE,
@@ -638,6 +657,9 @@ describe("runClaimCheck — source truncation", () => {
 
     expect(result.limits.truncated).toBe(false);
     expect(result.notes.some((n) => n.includes("truncated"))).toBe(false);
+    // The discriminator for the assertion above: truncation is what turns a
+    // check partial here, not the fixture.
+    expect(result.status).toBe("ok");
   });
 });
 

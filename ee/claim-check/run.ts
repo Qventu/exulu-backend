@@ -440,6 +440,14 @@ export async function runClaimCheck(args: {
     const passages = indexed.passages;
     truncation = indexed.truncation;
     if (truncation.sources > 0) {
+      // R35: a check that read three quarters of the evidence is not "ok".
+      // `unsupportedShare` over a partly-read source set is a number the
+      // engine did not measure, and the zero-evidence case below already
+      // reports exactly that degree-of-coverage fact as `partial` — leaving
+      // this one `ok` made `partial` disagree with itself, and a client
+      // branching on `status` (as the docs instruct) read a quarter-blind
+      // check as clean.
+      state.partial = true;
       state.notes.push(
         `${truncation.sources} source(s) were truncated at ${MAX_CHARS_PER_SOURCE} characters; ` +
           `${truncation.droppedChars} character(s) of evidence were not searched, so a claim supported only there reads as unsupported`,
