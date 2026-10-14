@@ -788,6 +788,84 @@ describe("runClaimCheck — source truncation", () => {
     });
     expect(result.notes.find((n) => n.includes("truncated"))).toContain("big");
   });
+
+  it("caps the name list at three names and adds 'and N more' for the rest", async () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `c${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    // Create 5 sources, all truncated
+    const sources = Array.from({ length: 5 }, (_, i) => ({
+      id: `s${i}`,
+      name: `file${i}.pdf`,
+      content: "x".repeat(MAX_CHARS_PER_SOURCE + 100),
+    }));
+
+    const result = await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources,
+      model: {} as any,
+      options: options(),
+      locale: "de",
+    });
+
+    const note = result.notes.find((n) => n.includes("truncated"));
+    // Should show exactly 3 names and "and 2 more"
+    expect(note).toContain('"file0.pdf"');
+    expect(note).toContain('"file1.pdf"');
+    expect(note).toContain('"file2.pdf"');
+    expect(note).toContain("and 2 more");
+    expect(note).not.toContain("file3.pdf");
+    expect(note).not.toContain("file4.pdf");
+  });
+
+  it("quotes source names to disambiguate commas in filenames", async () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `c${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources: [
+        { id: "s1", name: "Report, Final.pdf", content: "x".repeat(MAX_CHARS_PER_SOURCE + 100) },
+        { id: "s2", name: "Draft.pdf", content: "x".repeat(MAX_CHARS_PER_SOURCE + 100) },
+      ],
+      model: {} as any,
+      options: options(),
+      locale: "de",
+    });
+
+    const note = result.notes.find((n) => n.includes("truncated"));
+    // Names should be quoted so commas don't cause misattribution
+    expect(note).toContain('"Report, Final.pdf"');
+    expect(note).toContain('"Draft.pdf"');
+    // Should read as 2 sources, not 3
+    expect(note).toMatch(/2 source\(s\)/);
+  });
 });
 
 describe("runClaimCheck — omitted outcomes", () => {

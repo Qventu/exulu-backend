@@ -99,7 +99,9 @@ export function indexSourcesWithLimits(
       truncation.sources += 1;
       truncation.droppedChars += full.length - content.length;
       // Which document, not just how many: a reader cannot act on a count.
-      truncation.names.push(source.name ?? source.id);
+      // Using || instead of ?? to handle empty string names.
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+      truncation.names.push(source.name || source.id);
     }
     if (!content.trim()) continue;
 

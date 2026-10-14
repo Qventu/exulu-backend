@@ -506,9 +506,22 @@ export async function runClaimCheck(args: {
       // branching on `status` (as the docs instruct) read a quarter-blind
       // check as clean.
       state.partial = true;
+
+      // Format truncated source names: truncate to 80 chars, quote each,
+      // show at most 3, then "and N more" if needed.
+      const formatSourceNames = (names: string[]): string => {
+        const truncatedNames = names.map((name) =>
+          `"${name.length > 80 ? name.slice(0, 80) + "…" : name}"`,
+        );
+        if (truncatedNames.length <= 3) {
+          return truncatedNames.join(", ");
+        }
+        return truncatedNames.slice(0, 3).join(", ") + `, and ${truncatedNames.length - 3} more`;
+      };
+
       state.notes.push(
         `${truncation.sources} source(s) were truncated at ${MAX_CHARS_PER_SOURCE} characters ` +
-          `(${truncation.names.join(", ")}); ` +
+          `(${formatSourceNames(truncation.names)}); ` +
           `${truncation.droppedChars} character(s) of evidence were not searched, so a claim supported only there reads as unsupported`,
       );
     }
