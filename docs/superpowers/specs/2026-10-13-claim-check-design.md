@@ -534,5 +534,14 @@ settle it.
   be incomplete for a claim, its label must be `n/a` with a stated reason — never `warn` or
   `alert`. That is an engine change plus a §2.4 amendment (a fourth honesty rule beside the three
   there), not a chat-surface change, so it is out of scope for the stage-3 branch that found this.
+- **Claim checks on the public guest surface.** The backend emits the trigger fragment for a
+  **signed-in guest-surface visitor** when `claim_check.showToExternalUsers` is on (§5 — only fully
+  anonymous visitors are excluded, because `POST /claims/check` needs a user id), but the frontend's
+  `app/public/agents/[id]/components/use-public-chat-session.ts` hardcodes `claimChecks: {}` and
+  never fires the check, so nothing renders there however the flag is set. Closing it means
+  reproducing F4's trigger, state and rehydrate logic in that controller — a task, not a fix, and
+  the surface where most external users actually are (the app surface, external role) already
+  works. Until then the wizard's switch is labelled "Auch externen Nutzern anzeigen" / "Also show to
+  external users", naming only the half that works, and its hint states the gap.
 - Fixing `suppress_duplicate_passages`' missing wizard entry — noted here because this design
   shares its failure mode, but it is a separate change.
