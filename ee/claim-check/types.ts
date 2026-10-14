@@ -32,6 +32,14 @@ export type SelectionOutcome = {
   /** Rewritten verifiable-only sentence, or null when unchanged. */
   rewritten: string | null;
   reason: string;
+  /**
+   * False when the model returned no outcome for this sentence at all. The
+   * stage still reports verifiable=false (it must never promote a sentence
+   * nobody judged), but "the model skipped this" is NOT the finding
+   * "this sentence asserts nothing checkable", so the orchestrator needs to
+   * tell the two apart without matching on reason strings.
+   */
+  answered: boolean;
 };
 
 export type DisambiguationOutcome = {
@@ -40,6 +48,8 @@ export type DisambiguationOutcome = {
   /** Clarified sentence, or null when no change was needed. */
   clarified: string | null;
   reason: string;
+  /** False when the model returned no outcome for this sentence. See SelectionOutcome.answered. */
+  answered: boolean;
 };
 
 export type DecompositionOutcome = {

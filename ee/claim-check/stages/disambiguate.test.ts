@@ -38,7 +38,33 @@ describe("runDisambiguation", () => {
       resolvable: true,
       clarified: "Die FST-2XT wurde im Schaltschrank getauscht.",
       reason: "'Sie' and 'dort' resolved from context",
+      answered: true,
     });
+  });
+
+  // Finding 4: an unanswered sentence is excluded, as before, but flagged so
+  // the orchestrator does not report the model's silence as a judgement about
+  // the sentence's ambiguity.
+  it("marks a sentence the model omitted as unanswered", async () => {
+    (microCall as jest.Mock).mockResolvedValue({
+      output: { sentences: [{ index: 0, resolvable: true, clarified: null, reason: "clear" }] },
+      text: "",
+      usage: { inputTokens: 10, outputTokens: 10 },
+    });
+    const { outcomes } = await runDisambiguation({
+      windows: windows(),
+      question: "q",
+      sentenceTexts: new Map(),
+      model: {} as any,
+    });
+    expect(outcomes[1]).toEqual({
+      index: 1,
+      resolvable: false,
+      clarified: null,
+      reason: "no disambiguation returned for this sentence",
+      answered: false,
+    });
+    expect(outcomes[0]!.answered).toBe(true);
   });
 
   it("marks a sentence unresolvable when readers would not reach consensus", async () => {

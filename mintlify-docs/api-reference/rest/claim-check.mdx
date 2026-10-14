@@ -117,7 +117,7 @@ If none of these resolves to a usable model, the endpoint responds `400` naming 
 | `checked` | The sentence produced at least one claim that was verified. |
 | `no_verifiable_content` | The sentence carries nothing to check (an introduction, a conclusion, an opinion) or its decomposition found no claim. |
 | `cannot_disambiguate` | The sentence is too ambiguous in context to resolve into a checkable claim. |
-| `not_checked` | The sentence was not evaluated — a cap was hit (`reason: "cap_exceeded"`), or a stage call failed for it. |
+| `not_checked` | The sentence was not evaluated — a cap was hit (`reason: "cap_exceeded"`), a stage call failed for it, or a stage returned no outcome for it at all (the model silently skipped it, or returned no verdict for its claims). The model's silence is never reported as a finding about the sentence: a skipped sentence is `not_checked`, not `no_verifiable_content`, and a claim with no returned verdict is dropped from `claims[]` instead of being counted `unsupported`. Such a result is `status: "partial"` with a note. |
 
 Sentences without verifiable content are reported as **not checked**, never as failures: they are excluded from `score`'s denominator and surfaced with a `reason`, not counted against the answer.
 

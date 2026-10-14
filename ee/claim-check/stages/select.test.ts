@@ -38,9 +38,9 @@ describe("runSelection", () => {
     expect((microCall as jest.Mock)).toHaveBeenCalledTimes(1);
     expect(usage).toEqual({ calls: 1, inputTokens: 900, outputTokens: 120 });
     expect(outcomes).toEqual([
-      { index: 0, verifiable: true, rewritten: null, reason: "fact about a controller" },
-      { index: 1, verifiable: false, rewritten: null, reason: "opinion" },
-      { index: 2, verifiable: true, rewritten: "Sie arbeitet mit 230 Volt.", reason: "mixed" },
+      { index: 0, verifiable: true, rewritten: null, reason: "fact about a controller", answered: true },
+      { index: 1, verifiable: false, rewritten: null, reason: "opinion", answered: true },
+      { index: 2, verifiable: true, rewritten: "Sie arbeitet mit 230 Volt.", reason: "mixed", answered: true },
     ]);
   });
 
@@ -61,7 +61,10 @@ describe("runSelection", () => {
     expect(prompt).toContain("[0]");
   });
 
-  it("treats a sentence the model omitted as unverifiable rather than silently checked", async () => {
+  // Finding 4: still never promoted to verifiable, but flagged `answered: false`
+  // so the orchestrator can report "the model skipped this sentence"
+  // (not_checked) instead of "this sentence asserts nothing checkable".
+  it("marks a sentence the model omitted as unanswered, not as unverifiable content", async () => {
     (microCall as jest.Mock).mockResolvedValue({
       output: { sentences: [{ index: 0, verifiable: true, rewritten: null, reason: "ok" }] },
       text: "",
@@ -69,7 +72,14 @@ describe("runSelection", () => {
     });
     const { outcomes } = await runSelection({ windows: windows(), question: "q", model: {} as any });
     expect(outcomes).toHaveLength(3);
-    expect(outcomes[1]).toEqual({ index: 1, verifiable: false, rewritten: null, reason: "no selection returned for this sentence" });
+    expect(outcomes[1]).toEqual({
+      index: 1,
+      verifiable: false,
+      rewritten: null,
+      reason: "no selection returned for this sentence",
+      answered: false,
+    });
+    expect(outcomes[0]!.answered).toBe(true);
   });
 
   it("ignores an outcome whose index is not in the batch", async () => {

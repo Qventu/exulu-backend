@@ -53,7 +53,13 @@ export async function runSelection(args: {
   const outcomes = targets.map(({ index }) => {
     const hit = returned.get(index);
     if (!hit) {
-      return { index, verifiable: false, rewritten: null, reason: "no selection returned for this sentence" };
+      return {
+        index,
+        verifiable: false,
+        rewritten: null,
+        reason: "no selection returned for this sentence",
+        answered: false,
+      };
     }
     const rewritten = hit.rewritten?.trim() || null;
     return {
@@ -61,6 +67,7 @@ export async function runSelection(args: {
       verifiable: hit.verifiable,
       rewritten,
       reason: hit.reason,
+      answered: true,
     };
   });
 

@@ -57,11 +57,33 @@ describe("runSelectAndDisambiguate", () => {
     expect(disambiguation[0]!.clarified).toBeNull();
   });
 
-  it("treats an omitted sentence as neither verifiable nor resolvable", async () => {
+  // Finding 4: omitted sentences stay excluded AND are flagged `answered: false`,
+  // which is what lets run.ts report them as not_checked rather than as
+  // "this sentence asserts nothing checkable".
+  it("treats an omitted sentence as neither verifiable nor resolvable, and flags it unanswered", async () => {
     (microCall as jest.Mock).mockResolvedValue({ output: { sentences: [] }, text: "", usage: { inputTokens: 1, outputTokens: 1 } });
     const { selection, disambiguation } = await runSelectAndDisambiguate({ windows: windows(), question: "q", model: {} as any });
     expect(selection.every((s) => s.verifiable === false)).toBe(true);
     expect(disambiguation.every((d) => d.resolvable === false)).toBe(true);
+    expect(selection.every((s) => s.answered === false)).toBe(true);
+    expect(disambiguation.every((d) => d.answered === false)).toBe(true);
+  });
+
+  it("flags an answered sentence as answered, whatever the judgement", async () => {
+    (microCall as jest.Mock).mockResolvedValue({
+      output: {
+        sentences: [
+          { index: 0, verifiable: true, rewritten: null, resolvable: true, clarified: null, reason: "fact" },
+          { index: 1, verifiable: false, rewritten: null, resolvable: true, clarified: null, reason: "opinion" },
+          { index: 2, verifiable: true, rewritten: null, resolvable: false, clarified: null, reason: "ambiguous" },
+        ],
+      },
+      text: "",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    const { selection, disambiguation } = await runSelectAndDisambiguate({ windows: windows(), question: "q", model: {} as any });
+    expect(selection.every((s) => s.answered === true)).toBe(true);
+    expect(disambiguation.every((d) => d.answered === true)).toBe(true);
   });
 
   it("passes the raised output cap and the requested temperature", async () => {

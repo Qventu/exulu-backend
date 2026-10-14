@@ -59,8 +59,9 @@ export async function runSelectAndDisambiguate(args: {
   for (const { index } of targets) {
     const hit = returned.get(index);
     if (!hit) {
-      selection.push({ index, verifiable: false, rewritten: null, reason: "no outcome returned for this sentence" });
-      disambiguation.push({ index, resolvable: false, clarified: null, reason: "no outcome returned for this sentence" });
+      const reason = "no outcome returned for this sentence";
+      selection.push({ index, verifiable: false, rewritten: null, reason, answered: false });
+      disambiguation.push({ index, resolvable: false, clarified: null, reason, answered: false });
       continue;
     }
     selection.push({
@@ -68,6 +69,7 @@ export async function runSelectAndDisambiguate(args: {
       verifiable: hit.verifiable,
       rewritten: hit.rewritten?.trim() || null,
       reason: hit.reason,
+      answered: true,
     });
     // A sentence that failed selection must never reach decomposition, whatever
     // the model said about its ambiguity.
@@ -77,6 +79,7 @@ export async function runSelectAndDisambiguate(args: {
       resolvable,
       clarified: (resolvable && hit.clarified?.trim()) || null,
       reason: hit.reason,
+      answered: true,
     });
   }
 

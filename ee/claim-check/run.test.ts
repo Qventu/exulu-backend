@@ -25,8 +25,8 @@ const ANSWER = "Die FST-2XT arbeitet mit 230 Volt. Das ist beeindruckend. Sie si
 
 /** All three sentences verifiable and resolvable. */
 const allClear = (indexes: number[]) => ({
-  selection: indexes.map((index) => ({ index, verifiable: true, rewritten: null, reason: "fact" })),
-  disambiguation: indexes.map((index) => ({ index, resolvable: true, clarified: null, reason: "clear" })),
+  selection: indexes.map((index) => ({ index, verifiable: true, rewritten: null, reason: "fact", answered: true })),
+  disambiguation: indexes.map((index) => ({ index, resolvable: true, clarified: null, reason: "clear", answered: true })),
   usage: USAGE,
 });
 
@@ -462,6 +462,122 @@ describe("runClaimCheck — resilience", () => {
     expect(result.sentences[1]!.reason).toBe("decomposition did not report an outcome");
     expect(result.status).toBe("partial");
     expect(runVerification).not.toHaveBeenCalled();
+  });
+});
+
+// Finding 4: the model's silence is not a finding against the answer. Both
+// places that used to turn an omitted outcome into a verdict about the text.
+describe("runClaimCheck — omitted outcomes", () => {
+  it("drops a claim verification returned no verdict for, instead of scoring it unsupported", async () => {
+    const answer = "Satz eins ist wahr. Satz zwei ist auch wahr.";
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `claim ${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    // The call SUCCEEDS but answers for the first claim only — the likeliest
+    // failure of a long JSON array.
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims
+        .slice(0, 1)
+        .map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q", answer, sources: SOURCES, model: {} as any, options: options(), locale: "de",
+    });
+
+    // c2 is gone entirely rather than standing as an unsupported claim.
+    expect(result.claims.map((c) => c.id)).toEqual(["c1"]);
+    expect(result.score.claims).toBe(1);
+    expect(result.score.unsupported).toBe(0);
+    expect(result.score.label).toBe("ok");
+    expect(result.sentences[0]!.state).toBe("checked");
+    expect(result.sentences[1]!.state).toBe("not_checked");
+    expect(result.sentences[1]!.reason).toBe("verification returned no verdict for this sentence");
+    expect(result.status).toBe("partial");
+    expect(result.notes.some((n) => n.includes("verification returned no verdict"))).toBe(true);
+  });
+
+  it("marks a sentence selection never answered for not_checked, not no_verifiable_content", async () => {
+    const answer = "Satz eins ist wahr. Satz zwei ist auch wahr.";
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) => ({
+      selection: windows.map((w: any) => ({
+        index: w.sentence.index,
+        verifiable: w.sentence.index === 0,
+        rewritten: null,
+        reason: w.sentence.index === 0 ? "fact" : "no outcome returned for this sentence",
+        answered: w.sentence.index === 0,
+      })),
+      disambiguation: windows.map((w: any) => ({
+        index: w.sentence.index,
+        resolvable: w.sentence.index === 0,
+        clarified: null,
+        reason: w.sentence.index === 0 ? "clear" : "no outcome returned for this sentence",
+        answered: w.sentence.index === 0,
+      })),
+      usage: USAGE,
+    }));
+    (runDecomposition as jest.Mock).mockResolvedValue({
+      outcomes: [{ index: 0, claims: [{ text: "c", inferred: false }] }],
+      usage: USAGE,
+    });
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q", answer, sources: SOURCES, model: {} as any, options: options(), locale: "de",
+    });
+
+    expect(result.sentences[1]!.state).toBe("not_checked");
+    expect(result.sentences[1]!.reason).toBe("no outcome returned for this sentence");
+    expect(result.status).toBe("partial");
+    expect(result.notes.some((n) => n.includes("returned no outcome for 1 sentence(s)"))).toBe(true);
+  });
+
+  it("marks a sentence disambiguation never answered for not_checked, not cannot_disambiguate", async () => {
+    const answer = "Satz eins ist wahr. Satz zwei ist auch wahr.";
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) => ({
+      selection: windows.map((w: any) => ({
+        index: w.sentence.index,
+        verifiable: true,
+        rewritten: null,
+        reason: "fact",
+        answered: true,
+      })),
+      disambiguation: windows.map((w: any) => ({
+        index: w.sentence.index,
+        resolvable: w.sentence.index === 0,
+        clarified: null,
+        reason: w.sentence.index === 0 ? "clear" : "no disambiguation returned for this sentence",
+        answered: w.sentence.index === 0,
+      })),
+      usage: USAGE,
+    }));
+    (runDecomposition as jest.Mock).mockResolvedValue({
+      outcomes: [{ index: 0, claims: [{ text: "c", inferred: false }] }],
+      usage: USAGE,
+    });
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q", answer, sources: SOURCES, model: {} as any, options: options(), locale: "de",
+    });
+
+    expect(result.sentences[1]!.state).toBe("not_checked");
+    expect(result.sentences[1]!.reason).toBe("no disambiguation returned for this sentence");
+    expect(result.status).toBe("partial");
   });
 });
 

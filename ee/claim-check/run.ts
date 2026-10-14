@@ -246,12 +246,28 @@ export async function runClaimCheck(args: {
     const selectionByIndex = new Map(selection.map((s) => [s.index, s]));
     const disambiguationByIndex = new Map(disambiguation.map((d) => [d.index, d]));
     const survivingIndexes: number[] = [];
+    // Finding 4: a sentence the model never answered for is NOT the finding
+    // "this sentence asserts nothing checkable" (no_verifiable_content) — that
+    // would tell the user something about their text that nobody judged. The
+    // stages set `answered: false` for exactly this case, so the two are
+    // distinguishable here without matching on reason strings.
+    const unanswered: number[] = [];
     for (const sentence of sentences) {
       const sel = selectionByIndex.get(sentence.index);
       const dis = disambiguationByIndex.get(sentence.index);
       if (!sel) continue; // not_checked was already recorded by runBatched
+      if (sel.answered === false) {
+        state.states.set(sentence.index, { state: "not_checked", reason: sel.reason });
+        unanswered.push(sentence.index);
+        continue;
+      }
       if (!sel.verifiable) {
         state.states.set(sentence.index, { state: "no_verifiable_content", reason: sel.reason });
+        continue;
+      }
+      if (dis && dis.answered === false) {
+        state.states.set(sentence.index, { state: "not_checked", reason: dis.reason });
+        unanswered.push(sentence.index);
         continue;
       }
       if (!dis?.resolvable) {
@@ -263,6 +279,12 @@ export async function runClaimCheck(args: {
       }
       state.states.set(sentence.index, { state: "checked" });
       survivingIndexes.push(sentence.index);
+    }
+    if (unanswered.length > 0) {
+      state.partial = true;
+      state.notes.push(
+        `selection/disambiguation returned no outcome for ${unanswered.length} sentence(s); they are not_checked`,
+      );
     }
 
     // ── Decomposition ────────────────────────────────────────────────────────
@@ -396,6 +418,34 @@ export async function runClaimCheck(args: {
           claim.verdict = verdict.verdict;
           claim.evidence = verdict.evidence;
           claim.rationale = verdict.rationale;
+        }
+
+        // Finding 4: the call succeeded but the model left claims out of its
+        // array. Those claims carry no verdict anybody produced, so they are
+        // dropped like the claims of a failed call — never reported
+        // "unsupported", which would inflate the share with the model's
+        // silence. A sentence whose every claim was dropped was not checked.
+        const answered = new Set(outcome.value.outcomes.map((o) => o.claimId));
+        const missing = group.filter((c) => !answered.has(c.id));
+        if (missing.length === 0) return;
+        state.partial = true;
+        state.notes.push(
+          `verification returned no verdict for ${missing.length} claim(s); they were dropped from the result`,
+        );
+        for (const c of missing) droppedClaimIds.add(c.id);
+        const groupSentences = new Map<number, Claim[]>();
+        for (const c of group) {
+          const list = groupSentences.get(c.sentenceIndex) ?? [];
+          list.push(c);
+          groupSentences.set(c.sentenceIndex, list);
+        }
+        for (const [index, list] of groupSentences) {
+          if (list.every((c) => droppedClaimIds.has(c.id))) {
+            state.states.set(index, {
+              state: "not_checked",
+              reason: "verification returned no verdict for this sentence",
+            });
+          }
         }
       });
 

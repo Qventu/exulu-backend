@@ -51,19 +51,24 @@ export async function runVerification(args: {
   const knownSourceIds = new Set(args.evidence.map((e) => e.sourceId));
   const returned = new Map((output?.claims ?? []).map((c) => [c.claimId, c]));
 
-  const outcomes = args.claims.map(({ id }) => {
+  // Finding 4: a claim the model dropped from a long JSON array is the
+  // likeliest failure of this stage, and reporting it as "unsupported" put the
+  // model's silence into the score as a finding against the ANSWER. No outcome
+  // is returned for it instead; run.ts drops the claim and marks its sentence
+  // not_checked, exactly as it already does for a call that failed outright.
+  const outcomes = args.claims.flatMap(({ id }) => {
     const hit = returned.get(id);
-    if (!hit) {
-      return { claimId: id, verdict: "unsupported" as const, evidence: [], rationale: "no verdict returned for this claim" };
-    }
-    return {
-      claimId: id,
-      verdict: hit.verdict,
-      // A citation to a source that was never shown is not traceable, so it is
-      // dropped; the verdict itself stands with its rationale.
-      evidence: hit.evidence.filter((e) => knownSourceIds.has(e.sourceId)),
-      rationale: hit.rationale,
-    };
+    if (!hit) return [];
+    return [
+      {
+        claimId: id,
+        verdict: hit.verdict,
+        // A citation to a source that was never shown is not traceable, so it is
+        // dropped; the verdict itself stands with its rationale.
+        evidence: hit.evidence.filter((e) => knownSourceIds.has(e.sourceId)),
+        rationale: hit.rationale,
+      },
+    ];
   });
 
   return { outcomes, usage: { calls: 1, ...usage } };

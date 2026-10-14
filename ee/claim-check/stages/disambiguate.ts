@@ -50,13 +50,20 @@ export async function runDisambiguation(args: {
   const outcomes = targets.map(({ index }) => {
     const hit = returned.get(index);
     if (!hit) {
-      return { index, resolvable: false, clarified: null, reason: "no disambiguation returned for this sentence" };
+      return {
+        index,
+        resolvable: false,
+        clarified: null,
+        reason: "no disambiguation returned for this sentence",
+        answered: false,
+      };
     }
     return {
       index,
       resolvable: hit.resolvable,
       clarified: hit.resolvable && hit.clarified && hit.clarified.trim() ? hit.clarified.trim() : null,
       reason: hit.reason,
+      answered: true,
     };
   });
 

@@ -49,20 +49,20 @@ describe("runVerification", () => {
     expect(outcomes[0]!.rationale).toBe("no evidence was available for this claim");
   });
 
-  it("treats an omitted claim as unsupported rather than supported", async () => {
+  // Finding 4: a claim dropped from a long JSON array used to come back
+  // "unsupported" and reach the score, putting the model's silence into the
+  // number as a finding against the answer. No outcome is returned for it now;
+  // the orchestrator drops the claim and marks its sentence not_checked.
+  it("returns NO outcome for a claim the model omitted, rather than calling it unsupported", async () => {
     (microCall as jest.Mock).mockResolvedValue({
       output: { claims: [{ claimId: "c1", verdict: "supported", evidence: [], rationale: "ok" }] },
       text: "",
       usage: { inputTokens: 10, outputTokens: 10 },
     });
     const { outcomes } = await runVerification({ claims: CLAIMS, evidence: EVIDENCE, model: {} as any });
-    expect(outcomes).toHaveLength(3);
-    expect(outcomes[1]).toEqual({
-      claimId: "c2",
-      verdict: "unsupported",
-      evidence: [],
-      rationale: "no verdict returned for this claim",
-    });
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes.map((o) => o.claimId)).toEqual(["c1"]);
+    expect(outcomes.some((o) => o.rationale === "no verdict returned for this claim")).toBe(false);
   });
 
   it("drops evidence citations for source ids that were not in the prompt", async () => {
