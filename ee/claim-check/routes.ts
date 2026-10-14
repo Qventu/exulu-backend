@@ -21,6 +21,20 @@ export const CLAIM_CHECK_SESSION_PATH = "/claims/check/:session";
 /** Rejects anything that is not a v4-shaped uuid before the database sees it. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * `auth.user.id` must not just be truthy, it must coerce to a finite number:
+ * the `claim_checks.user` column is a float, knex keeps a `NaN` binding alive
+ * rather than dropping it, `pg` sends it as the literal string `"NaN"`, and
+ * Postgres evaluates `NaN = NaN` as true — so a future auth path that ever
+ * produced a truthy non-numeric principal id would read and write one shared
+ * bucket instead of erroring. Not reachable today (every auth branch yields a
+ * numeric id); this is a guard against that never happening, not a fix for a
+ * live bug.
+ */
+function hasNumericUserId(user: { id?: unknown } | undefined): boolean {
+  return Boolean(user?.id) && Number.isFinite(Number(user?.id));
+}
+
 /** Payload caps: an answer is prose, evidence is documents. Beyond these, 413. */
 const MAX_ANSWER_CHARS = 200_000;
 const MAX_EVIDENCE_CHARS = 2_000_000;
@@ -192,11 +206,11 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
     }
 
     const auth = await deps.authenticate(req);
-    if (!auth.user?.id) {
+    if (!hasNumericUserId(auth.user)) {
       res.status(auth.code ?? 401).json({ detail: auth.message ?? "Unauthorized." });
       return;
     }
-    const user = auth.user;
+    const user = auth.user as User;
 
     // Spec §4: the external/guest budget applies here as everywhere else, so
     // an external identity does not get a fresh 30/min on the most expensive
@@ -380,6 +394,11 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
     const controller = new AbortController();
     const timeoutMs = resolveClaimCheckTimeoutMs();
     let deadline: ReturnType<typeof setTimeout> | undefined;
+    // Set only on the success path, and read only after the slot is released
+    // below — persistence must never hold the global in-flight budget open,
+    // and the write needs its own deadline, not one that raced a
+    // Promise.race the response already settled.
+    let completedResult: ClaimCheckResult | undefined;
     try {
       const secondChance =
         agent && options.reRetrieve && deps.secondChanceFor
@@ -407,22 +426,7 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
         timedOut,
       ]);
       res.status(200).json(result);
-
-      // Persistence is a convenience, not part of the verdict: a reload losing
-      // the panel is worse than nothing, but a database hiccup must not turn a
-      // completed check into an error the caller has already paid for.
-      if (deps.saveClaimCheck && body.session && body.messageId) {
-        try {
-          await deps.saveClaimCheck({
-            session: body.session,
-            messageId: body.messageId,
-            userId: Number(user.id),
-            result,
-          });
-        } catch (err) {
-          console.warn("[EXULU claim-check] could not store the check for this message.", err);
-        }
-      }
+      completedResult = result;
     } catch (err) {
       if (err instanceof ClaimCheckTimeoutError) {
         console.warn(`[EXULU] claim check exceeded the ${timeoutMs} ms deadline.`);
@@ -438,6 +442,34 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
       // including on the timeout path, where the engine may still be unwinding.
       if (deadline) clearTimeout(deadline);
       deps.limiter.release();
+    }
+
+    // Persistence is a convenience, not part of the verdict, and runs ONLY
+    // after the slot is released and the deadline timer is cleared above: a
+    // database write that hangs must never pin the deployment-wide in-flight
+    // budget that 429s this endpoint for every other caller. The response
+    // was already sent inside the try block; a reload losing the panel is
+    // worse than nothing, but a database hiccup here must not turn a
+    // completed check into an error the caller has already paid for — so
+    // this runs outside any try/catch that could still touch `res`, in its
+    // own try/catch that only logs.
+    if (
+      completedResult &&
+      deps.saveClaimCheck &&
+      body.session &&
+      body.messageId &&
+      UUID_RE.test(body.session)
+    ) {
+      try {
+        await deps.saveClaimCheck({
+          session: body.session,
+          messageId: body.messageId,
+          userId: Number(user.id),
+          result: completedResult,
+        });
+      } catch (err) {
+        console.warn("[EXULU claim-check] could not store the check for this message.", err);
+      }
     }
   });
 
@@ -459,16 +491,20 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
       return;
     }
     const auth = await deps.authenticate(req);
-    if (!auth.user?.id) {
+    if (!hasNumericUserId(auth.user)) {
       res.status(auth.code || 401).json({ detail: auth.message ?? "Unauthorized." });
       return;
     }
     if (!deps.listClaimChecks) {
-      res.status(200).json({ checks: {} });
+      // A missing dep is a deployment wiring defect, not "nothing stored":
+      // answering 200 here would make a future regression that drops the
+      // wiring read as an empty, legitimate result instead of failing loudly.
+      console.error("[EXULU claim-check] listClaimChecks is not wired; refusing to answer as if nothing were stored.");
+      res.status(500).json({ detail: "Could not read stored checks." });
       return;
     }
     try {
-      const checks = await deps.listClaimChecks({ session, userId: Number(auth.user.id) });
+      const checks = await deps.listClaimChecks({ session, userId: Number((auth.user as User).id) });
       res.status(200).json({ checks });
     } catch (err) {
       console.error("[EXULU claim-check] could not read stored checks.", err);

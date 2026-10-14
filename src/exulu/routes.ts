@@ -77,7 +77,10 @@ import { claimCheckRateLimiter } from "@EE/claim-check/rate-limit";
 import { runClaimCheck } from "@EE/claim-check/run";
 import { makeSecondChance } from "@EE/claim-check/second-chance";
 import { pipelineConfigFor } from "@EE/claim-check/agent-config";
-import type { ClaimCheckResult } from "@EE/claim-check/types";
+import {
+  saveClaimCheck as storeClaimCheck,
+  listClaimChecks as listStoredClaimChecks,
+} from "./claim-check/store.ts";
 import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
 import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
 import { transcriptionService } from "./transcription/service.ts";
@@ -5203,28 +5206,19 @@ export const createExpressRoutes = async (
     platformDefaultModel: async () => process.env.CLAIM_CHECK_DEFAULT_MODEL ?? "",
     secondChanceFor: ({ agent, user, model, cap }) =>
       makeSecondChance({ agent, user, role: user?.role?.id, model, contexts: contexts ?? [], cap }),
-    saveClaimCheck: async ({ session, messageId, userId, result }) => {
+    // The SQL bodies live in src/exulu/claim-check/store.ts, not inline here:
+    // a 5,000+ line factory is not a testable seam, and the scoping these two
+    // functions enforce (never a delete, both session AND user in the same
+    // query) is the one guarantee in this feature that has to be verified
+    // against a real query builder, not a jest.fn() at the handler level.
+    // See store.test.ts.
+    saveClaimCheck: async (args) => {
       const { db } = await postgresClient();
-      // Upsert by (session, message_id): a reader who re-runs a check replaces
-      // the row rather than stacking a second panel on the same answer.
-      await db("claim_checks").where({ session, message_id: messageId }).del();
-      await db("claim_checks").insert({
-        session,
-        message_id: messageId,
-        payload: JSON.stringify(result),
-        score_label: result.score.label,
-        user: userId,
-      });
+      await storeClaimCheck(db, args);
     },
-    listClaimChecks: async ({ session, userId }) => {
+    listClaimChecks: async (args) => {
       const { db } = await postgresClient();
-      const rows = await db("claim_checks").where({ session, user: userId }).select("message_id", "payload");
-      const out: Record<string, unknown> = {};
-      for (const row of rows) {
-        out[row.message_id] =
-          typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
-      }
-      return out as Record<string, ClaimCheckResult>;
+      return listStoredClaimChecks(db, args);
     },
   });
 

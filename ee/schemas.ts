@@ -56,6 +56,17 @@ export const feedbackSchema: ExuluTableDefinition = {
  * surface's cross-tenant read scoping is not verified here, so this table
  * is kept off the auto-CRUD generator until it is. Same shape as
  * `workflowTriggersSchema` below.
+ *
+ * Row uniqueness is (session, message_id, user) — read-scoping is by
+ * (session, user), so a unique index on (session, message_id) alone would
+ * let two different users racing the same session uuid and message id
+ * collide on one row. A composite UNIQUE index on (session, message_id,
+ * user) is created in init-exulu-db.ts (the schema's `index` flag is
+ * informational only, same as `memoryUsagesSchema` in core-schema.ts) — it
+ * backs the real upsert in src/exulu/claim-check/store.ts, which is
+ * `onConflict(["session", "message_id", "user"]).merge()`, never a
+ * delete-then-insert: a row belonging to a different user can never
+ * conflict with, and therefore is never touched by, another user's write.
  */
 export const claimChecksSchema: ExuluTableDefinition = {
     type: "claim_checks",

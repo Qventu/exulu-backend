@@ -776,18 +776,30 @@ describe("persistence", () => {
   });
 
   // Review Focus 3
-  it("replaces an existing row for the same message rather than accumulating", async () => {
+  it("calls saveClaimCheck again, with the same key, for a repeated check on the same message", async () => {
     const saveClaimCheck = jest.fn().mockResolvedValue(undefined);
     const { app } = buildApp({ saveClaimCheck });
     const body = { ...BODY, session: "11111111-1111-4111-8111-111111111111", messageId: "msg_1" };
     await request(app).post(CLAIM_CHECK_PATH).send(body);
     await request(app).post(CLAIM_CHECK_PATH).send(body);
     expect(saveClaimCheck).toHaveBeenCalledTimes(2);
-    // The dep contract is upsert-by-(session, message_id): a reader who re-runs
-    // the same check replaces the row rather than stacking a second panel on
-    // the same answer. Both calls carry the same key, and Task B3 step 4's
-    // implementation deletes before inserting.
+    // This only proves the handler calls the dep again with the same
+    // (session, messageId) key on a repeat — it says nothing about whether
+    // the row is actually replaced rather than duplicated. That guarantee is
+    // the dep's own contract (upsert by (session, message_id, user), never a
+    // delete) and is proven against a real query builder in
+    // src/exulu/claim-check/store.test.ts, not here.
     expect(saveClaimCheck.mock.calls[1][0].messageId).toBe("msg_1");
+  });
+
+  it("does not store anything when the named session is not a uuid", async () => {
+    const saveClaimCheck = jest.fn();
+    const { app } = buildApp({ saveClaimCheck });
+    const res = await request(app)
+      .post(CLAIM_CHECK_PATH)
+      .send({ ...BODY, session: "not-a-uuid", messageId: "msg_1" });
+    expect(res.status).toBe(200);
+    expect(saveClaimCheck).not.toHaveBeenCalled();
   });
 });
 
@@ -814,11 +826,16 @@ describe(`GET ${CLAIM_CHECK_SESSION_PATH}`, () => {
   });
 
   // Review Focus 4
-  it("400s on a session id that is not a uuid, without touching the database", async () => {
+  it("400s on a session id that is not a uuid, without touching the database or authenticating", async () => {
     const listClaimChecks = jest.fn();
-    const { app } = buildApp({ listClaimChecks });
+    const authenticate = jest.fn();
+    const { app } = buildApp({ listClaimChecks, authenticate });
     expect((await request(app).get("/claims/check/not-a-uuid")).status).toBe(400);
     expect(listClaimChecks).not.toHaveBeenCalled();
+    // Pins the ordering: the uuid shape is checked before anything that
+    // would touch auth or the database, so a junk path segment never reaches
+    // either.
+    expect(authenticate).not.toHaveBeenCalled();
   });
 
   // Review Focus 4
@@ -837,5 +854,30 @@ describe(`GET ${CLAIM_CHECK_SESSION_PATH}`, () => {
     const res = await request(app).get("/claims/check/11111111-1111-4111-8111-111111111111");
     expect(res.status).toBe(200);
     expect(res.body.checks).toEqual({});
+  });
+
+  it("500s when the stored-check lookup throws", async () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { app } = buildApp({ listClaimChecks: jest.fn().mockRejectedValue(new Error("db down")) });
+      const res = await request(app).get("/claims/check/11111111-1111-4111-8111-111111111111");
+      expect(res.status).toBe(500);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  // A missing dep is a deployment wiring defect, not "nothing stored" — a
+  // silent 200 {checks:{}} here would make a future regression that drops
+  // the wiring read as an empty, legitimate result instead of failing loudly.
+  it("500s when listClaimChecks is not wired, instead of silently answering empty", async () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { app } = buildApp({ listClaimChecks: undefined });
+      const res = await request(app).get("/claims/check/11111111-1111-4111-8111-111111111111");
+      expect(res.status).toBe(500);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
