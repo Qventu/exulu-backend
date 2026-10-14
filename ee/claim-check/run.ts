@@ -23,7 +23,7 @@ import {
   indexSourcesWithLimits,
   MAX_CHARS_PER_SOURCE,
   selectEvidence,
-  type IndexedPassage,
+  type PassageIndex,
   type SourceTruncation,
 } from "./evidence";
 import { runSelectAndDisambiguate } from "./stages/select-disambiguate";
@@ -132,8 +132,8 @@ async function runBatched<R>(
  * claim's second, so the ceiling cuts extra context rather than cutting a
  * claim's only supporting passage.
  */
-export function selectGroupEvidence(claimTexts: string[], passages: IndexedPassage[]): EvidenceSnippet[] {
-  const perClaim = claimTexts.map((text) => selectEvidence([text], passages, EVIDENCE_PER_CLAIM));
+export function selectGroupEvidence(claimTexts: string[], index: PassageIndex): EvidenceSnippet[] {
+  const perClaim = claimTexts.map((text) => selectEvidence([text], index, EVIDENCE_PER_CLAIM));
   const union: EvidenceSnippet[] = [];
   const seen = new Set<string>();
 
@@ -436,6 +436,8 @@ export async function runClaimCheck(args: {
 
     // ── Evidence + Verification ──────────────────────────────────────────────
     tStage = Date.now();
+    // One index per check: the token sets and the document-frequency map are
+    // built here, not inside the 200-odd per-claim selections below.
     const indexed = indexSourcesWithLimits(args.sources);
     const passages = indexed.passages;
     truncation = indexed.truncation;
@@ -472,7 +474,7 @@ export async function runClaimCheck(args: {
       const groups = chunk([...bySentence.values()], BATCH.verifySentences).map((g) => g.flat());
 
       const verified = await mapWithConcurrency(groups, MAX_IN_FLIGHT, async (group) => {
-        const evidence = selectGroupEvidence(group.map((c) => c.text), passages);
+        const evidence = selectGroupEvidence(group.map((c) => c.text), indexed);
         return runVerification({
           claims: group.map((c) => ({ id: c.id, text: c.text })),
           evidence,

@@ -63,14 +63,14 @@ export function makeSecondChance(args: {
 
       if (chunks.length === 0) return [];
 
-      const passages = indexSources(
+      const index = indexSources(
         chunks.map((c: any) => ({
           id: String(c.item_id ?? c.chunk_id),
           name: c.item_name,
           content: String(c.chunk_content ?? ""),
         })),
       );
-      return selectEvidence([claimText], passages, MAX_SNIPPETS_PER_CLAIM);
+      return selectEvidence([claimText], index, MAX_SNIPPETS_PER_CLAIM);
     } catch (err) {
       // A failed second chance must never change a verdict or fail the check.
       console.warn("[EXULU claim-check] second-chance retrieval failed:", err);

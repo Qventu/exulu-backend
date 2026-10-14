@@ -540,10 +540,10 @@ describe("evidence selection per claim", () => {
       id: `s${i}`,
       content: `Begriff${i} Begriff${i} dokumentiert.`,
     }));
-    const passages = indexSources(sources);
+    const index = indexSources(sources);
     const claims = Array.from({ length: 20 }, (_, i) => `Begriff${i} ist dokumentiert.`);
 
-    const union = selectGroupEvidence(claims, passages);
+    const union = selectGroupEvidence(claims, index);
     expect(union).toHaveLength(MAX_EVIDENCE_PER_CALL);
     // Rank-first filling: every one of the first twelve claims contributed its
     // OWN best passage, instead of the first four claims taking three each.
@@ -554,7 +554,7 @@ describe("evidence selection per claim", () => {
   });
 
   it("returns nothing when there are no passages at all", () => {
-    expect(selectGroupEvidence(["irgendein Claim"], [])).toEqual([]);
+    expect(selectGroupEvidence(["irgendein Claim"], indexSources([]))).toEqual([]);
   });
 });
 
