@@ -252,8 +252,8 @@ from what it has. When the agent has the feature off, or the viewer is a guest/e
 `showToExternalUsers` is false, the fragment is absent and no check ever runs.
 
 The accumulate-then-emit pair is **one function**, `claimCheckStreamMetadata`: the chat route hands
-it the turn's context once (the parsed `claim_check` config, the viewer, the pre-inlining messages,
-the recall collector) and then feeds it every raw stream part. It collects each retrieval call's
+it the turn's context once (the parsed `claim_check` config, the viewer, this turn's messages — the
+new one before inlining, plus the already-inlined stored history — and the recall collector) and then feeds it every raw stream part. It collects each retrieval call's
 final tool result — `messageMetadata` is the only hook with access to tool outputs before the
 `finish` part needs them — and returns the fragment on `finish`. One function rather than two
 statements 20 lines apart in a 5,000-line route factory, because this is the feature's switch and
@@ -300,14 +300,30 @@ suite instead of silently turning a suppression off. For the session-items tool 
 empty array** still emits — proven empty is proven harmless — and anything else (a non-empty array,
 an unparseable payload, an offloaded `{ truncated, notice, preview }` object) suppresses: "cannot
 prove it empty" is not "empty". The other tools have no empty shape to prove, so presence of the
-call suppresses. The attachment signal is the **pre-inlining** `file` part on a message of the
-turn, which is the only marker that cannot be mistaken for text the user typed; the post-inlining
-`<file file name = "…">` wrapper is ordinary text and is not used.
+call suppresses.
 
-**The functional cost is deliberate: an agent with memory enabled and a non-empty recall produces
-no claim check at all.** A false "your answer was unfounded" about a correct answer is the worst
-output this system can produce, and that outweighs the panel. The real fix is coverage-aware
-scoring, listed in §10 — not a narrower suppression here.
+**The attachment signal is two markers, because a document's attachment leaves two traces and only
+one survives the turn.** A `file` part on a message of the turn is the first. But a document's
+`file` part never reaches the database: `processFilePartsInMessages` rewrites it into a `text` part,
+`generateStream` returns that post-inlining array as `originalMessages`, the SDK builds onFinish's
+`messages` from it, and the chat route persists exactly those rows. So the stored user message holds
+`<file file name = "wartung.pdf" >…</file>` **as text**, and from turn 2 of that session onwards
+there is no `file` part anywhere in the loaded history while the document's extracted text is still
+in the prompt — the exact failure this section exists to prevent, on every follow-up question after
+an upload. The second marker is therefore that wrapper prefix in a **user** `text` part. It is
+ordinary text, so a user who types it loses claim checking for that conversation; that is the
+intended direction of error. The extraction *failure* markers (`[Error: Could not load file …]`)
+are not matched — the model was handed an error instead of the document, so there is nothing
+invisible to protect against. (Only `file` parts survive for images, which is why they already
+behaved this way.)
+
+**The functional cost is deliberate, and has two parts an operator would not guess.** First: an
+agent with memory enabled and a non-empty recall produces no claim check at all. Second: **one
+upload turns answer-checking off for the rest of that conversation** — the attachment's trace stays
+in the history, so every later turn in that session suppresses too (documents now match the
+behaviour images always had). A false "your answer was unfounded" about a correct answer is the
+worst output this system can produce, and that outweighs the panel. The lift for both is the same
+and it is not a narrower suppression here: coverage-aware scoring, listed in §10.
 
 **An external viewer with `show_sources_to_external_users: false` never gets a fragment either**,
 whatever `claim_check.showToExternalUsers` says: `serializeOutput` strips `item_id` from every

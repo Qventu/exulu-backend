@@ -186,38 +186,72 @@ function sessionItemsContributed(toolResults: unknown): boolean {
 }
 
 /**
- * True when any message of this turn's prompt carries a `file` part.
+ * The exact prefix `processFilePartsInMessages` wraps an extracted document's
+ * text in (src/exulu/generate-stream.ts:140,
+ * `` `<file file name = "${filename}" >\n…` ``). Spelled with its real, odd
+ * spacing on purpose: it is matched, not rendered, and it is produced in that
+ * one place only.
+ */
+const INLINED_DOCUMENT_MARKER = '<file file name = "';
+
+/**
+ * True when this turn's prompt carried an attached file — the attachment half
+ * of the invisible-evidence class.
  *
- * This is the attachment half of the same class. `processFilePartsInMessages`
- * (src/exulu/generate-stream.ts) runs over the WHOLE message array — loaded
- * history plus the new message — and replaces each attached document's
- * `file` part with a `text` part holding the extracted text, inline in the
- * user message. So by the time the model answers, a PDF's contents are
- * indistinguishable from text the user typed, and nothing in the assistant's
- * parts records that a document was read.
+ * Two signals, because a document's attachment leaves two different traces and
+ * only one of them survives a turn:
  *
- * The pre-inlining `file` part is therefore the only signal that cannot be
- * confused with ordinary typed text: it is a structured part type the client
- * emits for an actual upload, where the markers the inlining leaves behind
- * (the `<file file name = "…">` wrapper, or an `[Error extracting text from
- * file …]` string) are plain text any user could type verbatim.
+ *  1. **A `file` part.** `processFilePartsInMessages` replaces a document's
+ *     `file` part with a `text` part holding the extracted text, and leaves an
+ *     IMAGE part as a `file` part. So on the turn of the upload itself both
+ *     kinds are visible here as `file` parts, and an image stays visible for
+ *     the life of the session.
+ *  2. **The inlining wrapper, in a user `text` part.** A document's `file`
+ *     part never reaches the database: generateStream returns the
+ *     POST-inlining array as `originalMessages` (:1096), the SDK composes
+ *     onFinish's `messages` from it, and the chat route persists exactly those
+ *     rows. The stored user message therefore holds
+ *     `<file file name = "wartung.pdf" >…</file>` as TEXT. On every follow-up
+ *     question in that session the loaded history contains no `file` part at
+ *     all, while the document's extracted text is still in the prompt — which
+ *     is C1's exact failure mode (an answer grounded in the user's own PDF,
+ *     scored against the retrieval chunks alone, rendered as an alert).
+ *     Keying on the wrapper is what closes it.
  *
- * Both kinds of `file` part count. An image part survives inlining unchanged
- * and is read by the model directly; a document part becomes inline text.
- * Either way the check never sees it.
+ * The wrapper is ordinary text, so a user who types that prefix into a chat
+ * loses claim checking for that session. That is the deliberate trade: spec
+ * §5's rule is that the fragment stays absent when in doubt, and a lost panel
+ * for a bizarre message beats telling someone their correct answer was
+ * unfounded. Only USER messages are checked for it — it is produced on user
+ * messages alone, and restricting it there keeps an assistant that quotes the
+ * string from counting as evidence it never saw.
  *
- * Reading the whole array rather than only the last message is deliberate: a
- * document attached three turns ago is re-inlined into every later prompt, so
- * it can still ground this turn's answer. The cost is that compaction may
- * have dropped it from the model's view while it is still in the array — that
- * errs towards silence, which is the safe direction.
+ * The extraction FAILURE markers (`[Error: Could not load file …]`,
+ * `[Error extracting text from file …]`) are deliberately not matched: they
+ * mean the model was handed an error instead of the document, so there is no
+ * invisible evidence to protect against.
+ *
+ * Scanning the whole array, not just the last message, is what makes signal 2
+ * work at all: the attachment's trace lives in the HISTORY from turn 2 on.
+ * One upload therefore suppresses claim checks for the rest of that
+ * conversation (as images already did) — see §5.
  */
 export function turnCarriedFileAttachment(messages: unknown): boolean {
   if (!Array.isArray(messages)) return false;
   for (const message of messages) {
     if (!isRecord(message) || !Array.isArray(message.parts)) continue;
+    const fromUser = message.role === "user";
     for (const part of message.parts) {
-      if (isRecord(part) && part.type === "file") return true;
+      if (!isRecord(part)) continue;
+      if (part.type === "file") return true;
+      if (
+        fromUser &&
+        part.type === "text" &&
+        typeof part.text === "string" &&
+        part.text.includes(INLINED_DOCUMENT_MARKER)
+      ) {
+        return true;
+      }
     }
   }
   return false;
@@ -254,12 +288,14 @@ export type ClaimCheckTurnContext = {
    */
   isLicensed: boolean;
   /**
-   * This turn's prompt messages **before** file-part inlining — pass
-   * `[...result.previousMessages, message]` from the chat route.
-   * `result.originalMessages` is the post-inlining view and cannot be used:
-   * by then every attached document is a text part (see
-   * turnCarriedFileAttachment). Explicitly passed rather than read from a
-   * global so this function stays pure.
+   * This turn's messages — pass `[...result.previousMessages, message]` from
+   * the chat route. The new message is pre-inlining (its `file` parts are
+   * intact); the loaded history is whatever was persisted, which for a
+   * document is the already-inlined wrapper TEXT. `turnCarriedFileAttachment`
+   * reads both shapes, and this is why it has to. `result.originalMessages`
+   * is not usable here: it is the post-inlining array for this turn, so the
+   * new message's own `file` part is already gone from it. Explicitly passed
+   * rather than read from a global so this function stays pure.
    */
   messages: unknown;
   /**

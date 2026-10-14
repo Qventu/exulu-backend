@@ -414,10 +414,9 @@ describe("claimCheckMetadata", () => {
       ).toEqual({});
     });
 
-    // generate-stream re-inlines EVERY file part of the loaded history on
-    // every turn (processFilePartsInMessages runs over history + the new
-    // message), so a PDF attached three turns ago is still in this turn's
-    // prompt and can still ground this turn's answer.
+    // A `file` part in the loaded history means an IMAGE attachment: it
+    // survives inlining as a file part and is persisted as one, so it stays
+    // visible for the life of the session.
     it("is ABSENT when an earlier message in the session carried the file part", () => {
       expect(
         claimCheckMetadata({
@@ -444,6 +443,91 @@ describe("claimCheckMetadata", () => {
           recall: undefined,
         }),
       ).toEqual({ claimCheck: { enabled: true, sourceIds: ["i1", "i2"], toolCallIds: ["call_1"] } });
+    });
+
+    // Fix round 2, re-review: a DOCUMENT's file part never reaches the
+    // database. generateStream returns the post-inlining array as
+    // originalMessages, the SDK builds onFinish's `messages` from it, and the
+    // chat route persists those rows — so the stored user message holds the
+    // inlining wrapper as TEXT. On every follow-up question after an upload
+    // the loaded history has no file part at all while the document's text is
+    // still in the prompt, which is C1's exact failure mode. This is the test
+    // that would have caught it.
+    const inlinedDocumentMessage = {
+      id: "m1",
+      role: "user",
+      parts: [
+        {
+          type: "text",
+          text: '<file file name = "wartung.pdf" >\nAlle 12 Monate ist die Steuerung zu prüfen. \n </file>',
+        },
+        { type: "text", text: "Was steht da zur Wartung?" },
+      ],
+    };
+
+    it("is ABSENT when a HISTORY message carries the inlined document wrapper as text", () => {
+      expect(
+        claimCheckMetadata({
+          config: configOf('{"enabled":true}'),
+          user: user(),
+          isGuest: false,
+          isLicensed: true,
+          toolResults: retrievalParts,
+          // Turn 2 of the session: this is exactly what the stored row holds.
+          messages: [inlinedDocumentMessage, { id: "m2", role: "assistant", parts: [{ type: "text", text: "..." }] }, textMessage],
+          recall: undefined,
+        }),
+      ).toEqual({});
+    });
+
+    it("is ABSENT when THIS turn's user message already holds the wrapper", () => {
+      expect(
+        claimCheckMetadata({
+          config: configOf('{"enabled":true}'),
+          user: user(),
+          isGuest: false,
+          isLicensed: true,
+          toolResults: retrievalParts,
+          messages: [inlinedDocumentMessage],
+          recall: undefined,
+        }),
+      ).toEqual({});
+    });
+
+    // The wrapper is produced on user messages only. An assistant that quotes
+    // the string is not evidence the model was given a document — and when it
+    // genuinely was, the user message carrying it suppresses anyway.
+    it("still emits when only an ASSISTANT message mentions the wrapper", () => {
+      const meta = claimCheckMetadata({
+        config: configOf('{"enabled":true}'),
+        user: user(),
+        isGuest: false,
+        isLicensed: true,
+        toolResults: retrievalParts,
+        messages: [
+          textMessage,
+          { id: "m2", role: "assistant", parts: [{ type: "text", text: 'Du schriebst <file file name = "x" >' }] },
+        ],
+        recall: undefined,
+      });
+      expect(meta).toEqual({ claimCheck: { enabled: true, sourceIds: ["i1", "i2"], toolCallIds: ["call_1"] } });
+    });
+
+    // An extraction failure hands the model an error string, not the
+    // document, so there is no invisible evidence to suppress for.
+    it("still emits when the attachment failed to extract (an error marker, not content)", () => {
+      const meta = claimCheckMetadata({
+        config: configOf('{"enabled":true}'),
+        user: user(),
+        isGuest: false,
+        isLicensed: true,
+        toolResults: retrievalParts,
+        messages: [
+          { id: "m1", role: "user", parts: [{ type: "text", text: "[Error: Could not load file wartung.pdf]" }] },
+        ],
+        recall: undefined,
+      });
+      expect(meta).toEqual({ claimCheck: { enabled: true, sourceIds: ["i1", "i2"], toolCallIds: ["call_1"] } });
     });
 
     it("treats a malformed messages argument as no signal rather than throwing", () => {
