@@ -435,11 +435,27 @@ export async function runClaimCheck(args: {
     }
     lap("verifyMs", tStage);
 
+    // Finding 3 (spec §2.4 rule 3): with no usable passage at all, every claim
+    // lands in verification's no-evidence branch and the result would read
+    // "100% unsupported, status ok" — a confident hallucination verdict
+    // produced without a byte of evidence having been read. Only claims that
+    // WERE judged against evidence can carry a score; when a second-chance
+    // retrieval supplied passages for some of them, those still count, and
+    // when nothing was read at all this is scoreClaims([]) → label "n/a".
+    const scorable = passages.length === 0 ? finalClaims.filter((c) => c.rechecked) : finalClaims;
+    const unread = finalClaims.length - scorable.length;
+    if (unread > 0) {
+      state.partial = true;
+      state.notes.push(
+        `no usable evidence was supplied: ${unread} claim(s) are reported unsupported without any source having been read, and are excluded from the score`,
+      );
+    }
+
     timings.totalMs = Date.now() - startedAt;
 
     return {
       status: state.partial ? "partial" : "ok",
-      score: scoreClaims(finalClaims, options.thresholds),
+      score: scoreClaims(scorable, options.thresholds),
       sentences: buildSentenceResults(allSentences, state.states, finalClaims),
       claims: finalClaims,
       usage: state.usage,

@@ -134,6 +134,104 @@ describe("runClaimCheck — fast path", () => {
   });
 });
 
+// Finding 3 (spec §2.4 rule 3): sources: [] (or whitespace-only content) used
+// to produce label "alert", unsupportedShare 1.0, status "ok" and no notes —
+// a 100% hallucination verdict produced without reading a byte.
+describe("runClaimCheck — no usable evidence", () => {
+  const allClaims = () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `claim ${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    // What the real verify stage does with an empty evidence array.
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({
+        claimId: c.id,
+        verdict: "unsupported",
+        evidence: [],
+        rationale: "no evidence was available for this claim",
+      })),
+      usage: USAGE,
+    }));
+  };
+
+  it("reports n/a and partial instead of a 100% unsupported share when no source has any content", async () => {
+    allClaims();
+    const result = await runClaimCheck({
+      question: "q", answer: ANSWER, sources: [], model: {} as any, options: options(), locale: "de",
+    });
+
+    expect(result.score.label).toBe("n/a");
+    expect(result.score.claims).toBe(0);
+    expect(result.score.unsupportedShare).toBe(0);
+    expect(result.status).toBe("partial");
+    // The claims themselves are kept, with their verdicts and rationales.
+    expect(result.claims).toHaveLength(3);
+    expect(result.claims.every((c) => c.verdict === "unsupported")).toBe(true);
+    expect(result.claims[0]!.rationale).toBe("no evidence was available for this claim");
+    expect(result.notes.some((n) => n.includes("no usable evidence was supplied"))).toBe(true);
+  });
+
+  it("treats whitespace-only source content as no evidence at all", async () => {
+    allClaims();
+    const result = await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources: [{ id: "blank", content: "   \n\t " }],
+      model: {} as any,
+      options: options(),
+      locale: "de",
+    });
+
+    expect(result.score.label).toBe("n/a");
+    expect(result.status).toBe("partial");
+    expect(result.notes.some((n) => n.includes("no usable evidence was supplied"))).toBe(true);
+  });
+
+  it("still scores the claims a second-chance retrieval did supply evidence for", async () => {
+    allClaims();
+    let verifyCall = 0;
+    (runVerification as jest.Mock).mockImplementation(async ({ claims, evidence }) => {
+      verifyCall += 1;
+      return {
+        outcomes: claims.map((c: any) => ({
+          claimId: c.id,
+          verdict: evidence.length > 0 ? "supported" : "unsupported",
+          evidence: [],
+          rationale: verifyCall === 1 ? "no evidence was available for this claim" : "found later",
+        })),
+        usage: USAGE,
+      };
+    });
+    const secondChance = jest
+      .fn()
+      .mockResolvedValue([{ sourceId: "deep", text: "Die FST-2XT arbeitet mit 230 Volt.", score: 2 }]);
+
+    const result = await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources: [],
+      model: {} as any,
+      options: options({ caps: { maxReRetrievals: 3 } }),
+      locale: "de",
+      secondChance,
+    });
+
+    // All three claims were re-retrieved and judged against real passages, so
+    // the score is honest again and nothing is excluded.
+    expect(result.claims.every((c) => c.rechecked)).toBe(true);
+    expect(result.score.claims).toBe(3);
+    expect(result.score.label).toBe("ok");
+    expect(result.notes.some((n) => n.includes("no usable evidence was supplied"))).toBe(false);
+  });
+});
+
 describe("runClaimCheck — resilience", () => {
   // Finding 3 (R19): "partial beats failing" is unconditional — an error
   // thrown anywhere in the pipeline (not just a provider call) must degrade
