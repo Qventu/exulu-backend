@@ -256,6 +256,13 @@ even for a signed-in internal visitor, so the surface and the role are ORed. The
 403 applies the same OR — one product rule, two enforcement points. (Stage 3 built the role half
 only and the task review caught it; recorded here because the plan, not the spec, was wrong.)
 
+Two more gates keep the fragment from promising a check that cannot run, because the chat stream
+also serves **fully anonymous** guests: no `user.id` means no fragment, whatever
+`showToExternalUsers` says (`POST /claims/check` needs an id that coerces to a finite number and
+answers 401 without one, and neither storage path can key a row), and an unlicensed deployment
+emits nothing either (the endpoint 404s). `showToExternalUsers` serves the signed-in guest-surface
+visitor and the external role, not an anonymous one.
+
 **A fragment is emitted only when every source the answer could have drawn on is one the check
 will receive.** `sourceIds` can only name knowledge-base item ids, and the frontend assembles
 `sources[]` from the retrieval tool's chunks alone, so any other evidence the model was given this

@@ -46,6 +46,7 @@ describe("claimCheckMetadata", () => {
       agent: agentWith('{"enabled":true}'),
       user: user(),
       isGuest: false,
+      isLicensed: true,
       toolResults: retrievalParts,
     });
     expect(meta).toEqual({
@@ -56,13 +57,13 @@ describe("claimCheckMetadata", () => {
 
   it("is ABSENT when the agent has the check disabled", () => {
     expect(
-      claimCheckMetadata({ agent: agentWith('{"enabled":false}'), user: user(), isGuest: false, toolResults: retrievalParts }),
+      claimCheckMetadata({ agent: agentWith('{"enabled":false}'), user: user(), isGuest: false, isLicensed: true, toolResults: retrievalParts }),
     ).toEqual({});
   });
 
   it("is ABSENT when the agent has no claim_check config at all (default off)", () => {
     expect(
-      claimCheckMetadata({ agent: { id: "a", tools: [] } as any, user: user(), isGuest: false, toolResults: retrievalParts }),
+      claimCheckMetadata({ agent: { id: "a", tools: [] } as any, user: user(), isGuest: false, isLicensed: true, toolResults: retrievalParts }),
     ).toEqual({});
   });
 
@@ -71,7 +72,7 @@ describe("claimCheckMetadata", () => {
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     try {
       expect(
-        claimCheckMetadata({ agent: agentWith("{not json"), user: user(), isGuest: false, toolResults: retrievalParts }),
+        claimCheckMetadata({ agent: agentWith("{not json"), user: user(), isGuest: false, isLicensed: true, toolResults: retrievalParts }),
       ).toEqual({});
     } finally {
       warn.mockRestore();
@@ -82,7 +83,7 @@ describe("claimCheckMetadata", () => {
   it("is ABSENT when the turn made no retrieval call", () => {
     const noRetrieval = [{ type: "step-start" }, { type: "text", text: "Gern!" }];
     expect(
-      claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, toolResults: noRetrieval }),
+      claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: noRetrieval }),
     ).toEqual({});
   });
 
@@ -91,7 +92,7 @@ describe("claimCheckMetadata", () => {
       { type: "tool-Context_Search", toolCallId: "call_1", output: { result: JSON.stringify({ chunks: [] }) } },
     ];
     expect(
-      claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, toolResults: empty }),
+      claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: empty }),
     ).toEqual({});
   });
 
@@ -101,6 +102,7 @@ describe("claimCheckMetadata", () => {
       agent: agentWith('{"enabled":true,"showToExternalUsers":false}'),
       user: user({ role: { id: "r1", name: "external" } }),
       isGuest: false,
+      isLicensed: true,
       toolResults: retrievalParts,
     });
     expect(meta).toEqual({});
@@ -111,6 +113,7 @@ describe("claimCheckMetadata", () => {
       agent: agentWith('{"enabled":true,"showToExternalUsers":true}'),
       user: user({ role: { id: "r1", name: "external" } }),
       isGuest: false,
+      isLicensed: true,
       toolResults: retrievalParts,
     });
     expect(meta).toEqual({
@@ -126,6 +129,7 @@ describe("claimCheckMetadata", () => {
       agent: agentWith('{"enabled":true,"showToExternalUsers":false}'),
       user: user(), // internal: no external role
       isGuest: true, // ...but on the public surface
+      isLicensed: true,
       toolResults: retrievalParts,
     });
     expect(meta).toEqual({});
@@ -136,11 +140,47 @@ describe("claimCheckMetadata", () => {
       agent: agentWith('{"enabled":true,"showToExternalUsers":true}'),
       user: user(),
       isGuest: true,
+      isLicensed: true,
       toolResults: retrievalParts,
     });
     expect(meta).toEqual({
       claimCheck: { enabled: true, sourceIds: ["i1", "i2"], toolCallIds: ["call_1"] },
     });
+  });
+
+  // Fix round 2, Important 1: the chat stream serves fully anonymous guests,
+  // for whom showToExternalUsers was the ONLY gate — turn it on for a public
+  // link and the fragment was emitted, the client posted, and the endpoint
+  // answered 401 (it requires a numeric user id, as does every storage path).
+  // The panel could then only ever fail for this feature's headline external
+  // audience, so the fragment must agree with the endpoint instead.
+  it("is ABSENT for an anonymous guest with no user id, even when showToExternalUsers is true", () => {
+    const meta = claimCheckMetadata({
+      agent: agentWith('{"enabled":true,"showToExternalUsers":true}'),
+      user: undefined,
+      isGuest: true,
+      isLicensed: true,
+      toolResults: retrievalParts,
+      messages: [],
+      recall: undefined,
+    });
+    expect(meta).toEqual({});
+  });
+
+  // The endpoint 404s an unlicensed deployment, so offering the fragment
+  // there can only produce a failing post. Both EE flags flip together
+  // today; this gate is what keeps them from drifting apart silently.
+  it("is ABSENT when the deployment is not licensed for claim check", () => {
+    const meta = claimCheckMetadata({
+      agent: agentWith('{"enabled":true}'),
+      user: user(),
+      isGuest: false,
+      isLicensed: false,
+      toolResults: retrievalParts,
+      messages: [],
+      recall: undefined,
+    });
+    expect(meta).toEqual({});
   });
 
   it("deduplicates source ids across several retrieval calls and keeps first-seen order", () => {
@@ -152,7 +192,7 @@ describe("claimCheckMetadata", () => {
       { type: "tool-Context_Search", toolCallId: "call_1", output: { result: JSON.stringify({ chunks: [{ item_id: "i2" }, { item_id: "i1" }] }) } },
       { type: "tool-Context_Search", toolCallId: "call_2", output: { result: JSON.stringify({ chunks: [{ item_id: "i1" }, { item_id: "i3" }] }) } },
     ];
-    const meta = claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, toolResults: twoCalls }) as any;
+    const meta = claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: twoCalls }) as any;
     expect(meta.claimCheck.sourceIds).toEqual(["i2", "i1", "i3"]);
     expect(meta.claimCheck.toolCallIds).toEqual(["call_1", "call_2"]);
   });
@@ -160,7 +200,7 @@ describe("claimCheckMetadata", () => {
   it("survives a tool output that is not valid JSON without throwing", () => {
     const broken = [{ type: "tool-Context_Search", toolCallId: "call_1", output: { result: "<<not json>>" } }];
     expect(
-      claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, toolResults: broken }),
+      claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: broken }),
     ).toEqual({});
   });
 
@@ -189,7 +229,7 @@ describe("claimCheckMetadata", () => {
         },
       ];
       expect(
-        claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, toolResults: both }),
+        claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both }),
       ).toEqual({});
     });
 
@@ -198,7 +238,7 @@ describe("claimCheckMetadata", () => {
         ...retrievalParts,
         { type: sessionItemsPartType, toolCallId: "call_2", output: { result: JSON.stringify([]) } },
       ];
-      const meta = claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, toolResults: both });
+      const meta = claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both });
       expect(meta).toEqual({
         claimCheck: { enabled: true, sourceIds: ["i1", "i2"], toolCallIds: ["call_1"] },
       });
@@ -210,7 +250,7 @@ describe("claimCheckMetadata", () => {
         { type: sessionItemsPartType, toolCallId: "call_2", output: { result: "<<not json>>" } },
       ];
       expect(
-        claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, toolResults: both }),
+        claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both }),
       ).toEqual({});
     });
   });
@@ -235,7 +275,7 @@ describe("claimCheckMetadata", () => {
         { type: partTypeOf(toolName), toolCallId: "call_2", output: { result: "whatever it returned" } },
       ];
       expect(
-        claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, toolResults: both }),
+        claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both }),
       ).toEqual({});
     });
 
@@ -254,7 +294,7 @@ describe("claimCheckMetadata", () => {
     // built for — agentic retrieval and nothing else — still emits.
     it("still emits for a turn whose only tool was agentic retrieval", () => {
       expect(
-        claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, toolResults: retrievalParts }),
+        claimCheckMetadata({ agent: agentWith('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: retrievalParts }),
       ).toEqual({ claimCheck: { enabled: true, sourceIds: ["i1", "i2"], toolCallIds: ["call_1"] } });
     });
   });
@@ -285,6 +325,7 @@ describe("claimCheckMetadata", () => {
         agent: agentWith('{"enabled":true,"showToExternalUsers":true}'),
         user: user({ role: { id: "r1", name: "external" } }),
         isGuest: true,
+        isLicensed: true,
         toolResults: stripped,
         messages: [],
         recall: undefined,
@@ -310,6 +351,7 @@ describe("claimCheckMetadata", () => {
           agent: agentWith('{"enabled":true}'),
           user: user(),
           isGuest: false,
+          isLicensed: true,
           toolResults: retrievalParts,
           messages: [textMessage, fileMessage],
           recall: undefined,
@@ -327,6 +369,7 @@ describe("claimCheckMetadata", () => {
           agent: agentWith('{"enabled":true}'),
           user: user(),
           isGuest: false,
+          isLicensed: true,
           toolResults: retrievalParts,
           messages: [fileMessage, textMessage],
           recall: undefined,
@@ -340,6 +383,7 @@ describe("claimCheckMetadata", () => {
           agent: agentWith('{"enabled":true}'),
           user: user(),
           isGuest: false,
+          isLicensed: true,
           toolResults: retrievalParts,
           messages: [textMessage],
           recall: undefined,
@@ -353,6 +397,7 @@ describe("claimCheckMetadata", () => {
           agent: agentWith('{"enabled":true}'),
           user: user(),
           isGuest: false,
+          isLicensed: true,
           toolResults: retrievalParts,
           messages: "not an array" as unknown,
           recall: undefined,
@@ -375,6 +420,7 @@ describe("claimCheckMetadata", () => {
           agent: agentWith('{"enabled":true}'),
           user: user(),
           isGuest: false,
+          isLicensed: true,
           toolResults: retrievalParts,
           messages: [],
           recall: recallWith(1),
@@ -388,6 +434,7 @@ describe("claimCheckMetadata", () => {
           agent: agentWith('{"enabled":true}'),
           user: user(),
           isGuest: false,
+          isLicensed: true,
           toolResults: retrievalParts,
           messages: [],
           recall: recallWith(0),
@@ -401,6 +448,7 @@ describe("claimCheckMetadata", () => {
           agent: agentWith('{"enabled":true}'),
           user: user(),
           isGuest: false,
+          isLicensed: true,
           toolResults: retrievalParts,
           messages: [],
           recall: undefined,

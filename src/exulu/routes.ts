@@ -914,6 +914,7 @@ export const createExpressRoutes = async (
                   agent,
                   user,
                   isGuest: treatAsGuest(req, user),
+                  isLicensed: Boolean(checkLicense()["claim-check"]),
                   toolResults: turnToolResults,
                   messages: [...result.previousMessages, ...(message ? [message] : [])],
                   recall: result.recall,

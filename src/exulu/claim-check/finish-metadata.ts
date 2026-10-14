@@ -215,7 +215,7 @@ export function turnCarriedFileAttachment(messages: unknown): boolean {
 }
 
 /** Message metadata fragment merged on the SDK `finish` part (spec §5). */
-export function claimCheckMetadata({ agent, user, isGuest, toolResults, messages, recall }: {
+export function claimCheckMetadata({ agent, user, isGuest, isLicensed, toolResults, messages, recall }: {
   agent: ExuluAgent;
   user?: User;
   /**
@@ -226,6 +226,14 @@ export function claimCheckMetadata({ agent, user, isGuest, toolResults, messages
    * just an anonymous caller.
    */
   isGuest: boolean;
+  /**
+   * `checkLicense()["claim-check"]` — passed in rather than read here so this
+   * function stays pure. Today the EE licence flag that registers the table
+   * and the one the endpoint checks are the same flag, so this can only be
+   * false when the endpoint is 404ing too; the gate exists because the two
+   * surfaces disagreeing is precisely what produced this finding.
+   */
+  isLicensed: boolean;
   toolResults: unknown;
   /**
    * This turn's prompt messages **before** file-part inlining — pass
@@ -244,6 +252,16 @@ export function claimCheckMetadata({ agent, user, isGuest, toolResults, messages
 }): { claimCheck: ClaimCheckTrigger } | Record<string, never> {
   const cfg = pipelineConfigFor(agent).claimCheck;
   if (!cfg.enabled) return {};
+  if (!isLicensed) return {};
+  // An anonymous viewer can never complete a check: POST /claims/check needs
+  // a user id that coerces to a finite number (hasNumericUserId in
+  // ee/claim-check/routes.ts) and answers 401 without one, and neither
+  // storage path can key a row. showToExternalUsers exists to serve guests on
+  // a public link — but a SIGNED-IN guest-surface visitor, who has an id.
+  // Offering the fragment to an anonymous one promises a panel that can only
+  // ever fail. (`hasNumericUserId` is the strict superset of this test; no
+  // auth branch yields a truthy non-numeric id today.)
+  if (!user?.id) return {};
   if ((isGuest || isExternalOrAnonymousUser(user)) && !cfg.showToExternalUsers) return {};
   if (invisibleEvidenceToolRan(toolResults)) return {};
   if (sessionItemsContributed(toolResults)) return {};
