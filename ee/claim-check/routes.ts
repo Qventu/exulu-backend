@@ -174,6 +174,16 @@ export type ClaimCheckRouteDeps = {
   }) => Promise<void>;
   /** Stored checks for a session, keyed by message id, scoped to the caller. */
   listClaimChecks?: (args: { session: string; userId: number }) => Promise<Record<string, ClaimCheckResult>>;
+  /**
+   * The stored check for ONE message, scoped to the caller — consulted before
+   * the engine runs (spec §5.2). Absent means no lookup and no caching, which
+   * is the pre-stage-3 behaviour.
+   */
+  findClaimCheck?: (args: {
+    session: string;
+    messageId: string;
+    userId: number;
+  }) => Promise<ClaimCheckResult | undefined>;
 };
 
 export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps): void {
@@ -306,6 +316,42 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
           "set claim_check.showToExternalUsers to allow it.",
       });
       return;
+    }
+
+    // A verdict already on disk is not bought twice (spec §5.2's result cache,
+    // in this branch's shape). A double-fire, a user-initiated re-check or a
+    // retry after a transport hiccup would otherwise pay ~8 provider calls
+    // again for an answer that is already stored.
+    //
+    // Three properties this must keep:
+    //  - It sits AFTER every gate above, so a stored row can never become a
+    //    way to read a verdict for an agent whose admin turned the check off,
+    //    or an agent the caller may not use.
+    //  - It is scoped by the authenticated caller exactly as the GET is —
+    //    (session, message_id, user) in one query, never a request-supplied
+    //    identity (see src/exulu/claim-check/store.ts).
+    //  - A lookup failure falls THROUGH to running the check. A cache that
+    //    can break the feature it accelerates is worse than no cache.
+    //
+    // §9 keeps the Redis hash-keyed cache deferred: it now only matters for
+    // agent-less API callers who name no session, who have no row to find.
+    if (deps.findClaimCheck && body.session && body.messageId && UUID_RE.test(body.session)) {
+      try {
+        const stored = await deps.findClaimCheck({
+          session: body.session,
+          messageId: body.messageId,
+          userId: Number(user.id),
+        });
+        if (stored) {
+          res.status(200).json(stored);
+          return;
+        }
+      } catch (err) {
+        console.warn(
+          "[EXULU claim-check] could not read the stored check for this message; running the check.",
+          err,
+        );
+      }
     }
 
     const candidates = [

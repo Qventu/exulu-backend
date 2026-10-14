@@ -41,6 +41,28 @@ export async function saveClaimCheck(
     .merge();
 }
 
+/**
+ * The stored check for one message, or undefined.
+ *
+ * This is the cheap half of spec §5.2's result cache, in this branch's shape:
+ * the POST consults it before running anything, so a double-fire, a
+ * user-initiated re-check or a retry after a transport hiccup does not pay
+ * ~8 provider calls again for a verdict already on disk. Scoped by the
+ * authenticated caller the same way listClaimChecks is — the payload holds
+ * another user's answers and source quotes if the scope is ever dropped.
+ */
+export async function findClaimCheck(
+  db: Knex,
+  args: { session: string; messageId: string; userId: number },
+): Promise<ClaimCheckResult | undefined> {
+  const { session, messageId, userId } = args;
+  const row = await db("claim_checks")
+    .where({ session, message_id: messageId, user: userId })
+    .first("payload");
+  if (!row) return undefined;
+  return (typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload) as ClaimCheckResult;
+}
+
 export async function listClaimChecks(
   db: Knex,
   args: { session: string; userId: number },

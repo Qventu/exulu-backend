@@ -80,6 +80,7 @@ import { pipelineConfigFor } from "@EE/claim-check/agent-config";
 import {
   saveClaimCheck as storeClaimCheck,
   listClaimChecks as listStoredClaimChecks,
+  findClaimCheck as findStoredClaimCheck,
 } from "./claim-check/store.ts";
 import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
 import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
@@ -5252,6 +5253,12 @@ export const createExpressRoutes = async (
     listClaimChecks: async (args) => {
       const { db } = await postgresClient();
       return listStoredClaimChecks(db, args);
+    },
+    // The POST's "is this verdict already on disk" lookup. Same module, same
+    // caller-scoping as the two above.
+    findClaimCheck: async (args) => {
+      const { db } = await postgresClient();
+      return findStoredClaimCheck(db, args);
     },
   });
 

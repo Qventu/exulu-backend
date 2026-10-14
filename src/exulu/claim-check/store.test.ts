@@ -8,7 +8,7 @@
 // an upsert whose DELETE half was scoped by (session, message_id) alone,
 // which let a caller destroy another user's stored row by naming their
 // session uuid and message id.
-import { saveClaimCheck, listClaimChecks } from "./store";
+import { saveClaimCheck, listClaimChecks, findClaimCheck } from "./store";
 
 const RESULT = {
   status: "ok" as const,
@@ -39,6 +39,10 @@ function fakeDb(selectRows: any[] = []) {
     select: async (...args: unknown[]) => {
       calls.push({ method: "select", args });
       return selectRows;
+    },
+    first: async (...args: unknown[]) => {
+      calls.push({ method: "first", args });
+      return selectRows[0];
     },
     del: async (...args: unknown[]) => {
       calls.push({ method: "del", args });
@@ -113,5 +117,36 @@ describe("listClaimChecks", () => {
     const { db } = fakeDb([]);
     const checks = await listClaimChecks(db, { session: "s1", userId: 7 });
     expect(checks).toEqual({});
+  });
+});
+
+// Fix round 2, Important 5: the POST consults the stored row before running a
+// check, so a double-fire, a user-initiated re-check or a retry after a
+// transport hiccup does not pay ~8 provider calls for a verdict already on
+// disk. The lookup must be scoped exactly as the list read is.
+describe("findClaimCheck", () => {
+  it("filters on session, message_id AND the caller's user id in the same query", async () => {
+    const { db, calls } = fakeDb([{ payload: JSON.stringify(RESULT) }]);
+    await findClaimCheck(db, { session: "s1", messageId: "msg_1", userId: 7 });
+
+    const whereCall = calls.find((c) => c.method === "where");
+    expect(whereCall?.args[0]).toEqual({ session: "s1", message_id: "msg_1", user: 7 });
+    // A read path, never a write: a cache lookup must not be able to mutate.
+    expect(calls.some((c) => c.method === "del" || c.method === "insert" || c.method === "merge")).toBe(false);
+  });
+
+  it("returns the parsed payload for a stored row", async () => {
+    const { db } = fakeDb([{ payload: JSON.stringify(RESULT) }]);
+    await expect(findClaimCheck(db, { session: "s1", messageId: "msg_1", userId: 7 })).resolves.toEqual(RESULT);
+  });
+
+  it("reads back a payload that arrives already parsed (an object, not a string)", async () => {
+    const { db } = fakeDb([{ payload: RESULT }]);
+    await expect(findClaimCheck(db, { session: "s1", messageId: "msg_1", userId: 7 })).resolves.toEqual(RESULT);
+  });
+
+  it("returns undefined when nothing is stored for this message", async () => {
+    const { db } = fakeDb([]);
+    await expect(findClaimCheck(db, { session: "s1", messageId: "msg_1", userId: 7 })).resolves.toBeUndefined();
   });
 });

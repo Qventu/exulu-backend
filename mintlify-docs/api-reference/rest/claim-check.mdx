@@ -176,7 +176,7 @@ When `agent` is set and `options.reRetrieve` is on, `unsupported` claims get one
 }
 ```
 
-A check is stored only when its `POST` request named **both** `session` and `messageId` — see the Request table above. There is no other way to read this data: the `claim_checks` table has no GraphQL surface, because the stored `payload` holds the answer's sentences and verbatim quotes from the caller's source documents. This route is deliberately the only read path, and it is scoped to the caller on every request: the lookup filters by `session` **and** the authenticated user's id together, in the database query itself, so one user can never read another user's stored checks by guessing a session id.
+A check is stored only when its `POST` request named **both** `session` and `messageId` — see the Request table above. Naming both also makes the `POST` itself cheap on a repeat: it looks the stored check up first (scoped to the calling user, the same way this route is) and returns it unchanged instead of re-running the engine, so a double-fire, a re-check or a retry after a dropped connection costs nothing. A request that names no `session` always runs the check. There is no other way to read this data: the `claim_checks` table has no GraphQL surface, because the stored `payload` holds the answer's sentences and verbatim quotes from the caller's source documents. This route is deliberately the only read path, and it is scoped to the caller on every request: the lookup filters by `session` **and** the authenticated user's id together, in the database query itself, so one user can never read another user's stored checks by guessing a session id.
 
 | Status | When |
 |---|---|

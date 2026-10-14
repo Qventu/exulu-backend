@@ -420,7 +420,14 @@ Three stages, each independently useful, so the plan can stop at any boundary:
    review was right to flag their absence, and both are deliberate deferrals rather than
    oversights:
    - **The Redis result cache (§5.2).** Nothing fires a check repeatedly until the chat surface
-     exists, so its absence costs only a double-fire paying twice.
+     exists, so its absence costs only a double-fire paying twice. **That rationale expired with
+     stage 3, and the cheap half shipped there instead of the Redis hash:** when a POST names both
+     `session` and `messageId`, the stored row is consulted first (caller-scoped, exactly as the
+     GET is) and returned instead of running ~8 provider calls again — so a double-fire, a
+     user-initiated re-check and a retry after a transport hiccup are all free. A lookup failure
+     falls through to running the check; a cache may never break the feature it accelerates.
+     The Redis hash-keyed cache (question, answer, sources, options, model) stays deferred and now
+     matters only for **agent-less API callers who name no session**, who have no row to find.
    - **The frontend `claim_check` plumbing (§3).** `WizardConfig` / `parseWizardConfig` /
      `serializeWizardConfig` do not know the key yet. **Until they do, no agent may hold a
      `claim_check` key** — the next save of the knowledge-search wizard silently deletes it, the

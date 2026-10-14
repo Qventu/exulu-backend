@@ -45,6 +45,9 @@ function buildApp(overrides: Partial<ClaimCheckRouteDeps> = {}) {
     platformDefaultModel: async () => "platform-model",
     saveClaimCheck: jest.fn().mockResolvedValue(undefined),
     listClaimChecks: jest.fn().mockResolvedValue({}),
+    // Nothing stored unless a test says otherwise, so every existing
+    // assertion still exercises the engine path.
+    findClaimCheck: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   };
   const app = express();
@@ -800,6 +803,98 @@ describe("persistence", () => {
       .send({ ...BODY, session: "not-a-uuid", messageId: "msg_1" });
     expect(res.status).toBe(200);
     expect(saveClaimCheck).not.toHaveBeenCalled();
+  });
+});
+
+// Fix round 2, Important 5: §5.2's Redis result cache was deferred from stage
+// 1 because "nothing fires a check repeatedly until the chat surface exists" —
+// a rationale this branch expires. The stored row was never consulted, so a
+// double-fire, a user-initiated re-check or a retry after a transport hiccup
+// paid ~8 provider calls again for a verdict already on disk.
+describe("stored-result lookup", () => {
+  const SESSION = "11111111-1111-4111-8111-111111111111";
+  const stored = { ...BODY, session: SESSION, messageId: "msg_1" };
+
+  it("returns the stored check and never runs the engine", async () => {
+    const findClaimCheck = jest.fn().mockResolvedValue(RESULT);
+    const saveClaimCheck = jest.fn();
+    const { app, runCheck } = buildApp({ findClaimCheck, saveClaimCheck });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send(stored);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(RESULT);
+    expect(runCheck).not.toHaveBeenCalled();
+    // Nothing new to persist, and re-saving would touch updatedAt for no gain.
+    expect(saveClaimCheck).not.toHaveBeenCalled();
+    expect(findClaimCheck.mock.calls[0][0]).toEqual({ session: SESSION, messageId: "msg_1", userId: 7 });
+  });
+
+  it("serves a response byte-identical to the engine's", async () => {
+    const live = await request(buildApp().app).post(CLAIM_CHECK_PATH).send(stored);
+    const cached = await request(buildApp({ findClaimCheck: jest.fn().mockResolvedValue(RESULT) }).app)
+      .post(CLAIM_CHECK_PATH)
+      .send(stored);
+    expect(cached.status).toBe(live.status);
+    expect(cached.body).toEqual(live.body);
+  });
+
+  it("runs the check when nothing is stored for this message", async () => {
+    const { app, runCheck } = buildApp({ findClaimCheck: jest.fn().mockResolvedValue(undefined) });
+    expect((await request(app).post(CLAIM_CHECK_PATH).send(stored)).status).toBe(200);
+    expect(runCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls through to running the check when the lookup fails", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { app, runCheck } = buildApp({
+        findClaimCheck: jest.fn().mockRejectedValue(new Error("db down")),
+      });
+      const res = await request(app).post(CLAIM_CHECK_PATH).send(stored);
+      expect(res.status).toBe(200);
+      expect(res.body.score.label).toBe("ok");
+      expect(runCheck).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not look anything up when the request names no session and message", async () => {
+    const findClaimCheck = jest.fn();
+    const { app, runCheck } = buildApp({ findClaimCheck });
+    expect((await request(app).post(CLAIM_CHECK_PATH).send(BODY)).status).toBe(200);
+    expect(findClaimCheck).not.toHaveBeenCalled();
+    expect(runCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not look anything up for a session id that is not a uuid", async () => {
+    const findClaimCheck = jest.fn();
+    const { app } = buildApp({ findClaimCheck });
+    const res = await request(app)
+      .post(CLAIM_CHECK_PATH)
+      .send({ ...BODY, session: "not-a-uuid", messageId: "msg_1" });
+    expect(res.status).toBe(200);
+    expect(findClaimCheck).not.toHaveBeenCalled();
+  });
+
+  // The lookup sits AFTER every gate: a stored row must not become a way to
+  // read a verdict for an agent whose admin has since turned the check off,
+  // or one the caller may not use.
+  it("still 403s for an agent with the check disabled, stored row or not", async () => {
+    const findClaimCheck = jest.fn().mockResolvedValue(RESULT);
+    const { app } = buildApp({
+      findClaimCheck,
+      getAgent: async () => ({ id: "agent-1", model: "m", tools: [] }) as any,
+    });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send({ ...stored, agent: "agent-1" });
+    expect(res.status).toBe(403);
+    expect(findClaimCheck).not.toHaveBeenCalled();
+  });
+
+  it("is skipped entirely when the dep is not wired", async () => {
+    const { app, runCheck } = buildApp({ findClaimCheck: undefined });
+    expect((await request(app).post(CLAIM_CHECK_PATH).send(stored)).status).toBe(200);
+    expect(runCheck).toHaveBeenCalledTimes(1);
   });
 });
 
