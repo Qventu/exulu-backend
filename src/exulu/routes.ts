@@ -77,6 +77,7 @@ import { claimCheckRateLimiter } from "@EE/claim-check/rate-limit";
 import { runClaimCheck } from "@EE/claim-check/run";
 import { makeSecondChance } from "@EE/claim-check/second-chance";
 import { pipelineConfigFor } from "@EE/claim-check/agent-config";
+import type { ClaimCheckResult } from "@EE/claim-check/types";
 import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
 import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
 import { transcriptionService } from "./transcription/service.ts";
@@ -5202,6 +5203,29 @@ export const createExpressRoutes = async (
     platformDefaultModel: async () => process.env.CLAIM_CHECK_DEFAULT_MODEL ?? "",
     secondChanceFor: ({ agent, user, model, cap }) =>
       makeSecondChance({ agent, user, role: user?.role?.id, model, contexts: contexts ?? [], cap }),
+    saveClaimCheck: async ({ session, messageId, userId, result }) => {
+      const { db } = await postgresClient();
+      // Upsert by (session, message_id): a reader who re-runs a check replaces
+      // the row rather than stacking a second panel on the same answer.
+      await db("claim_checks").where({ session, message_id: messageId }).del();
+      await db("claim_checks").insert({
+        session,
+        message_id: messageId,
+        payload: JSON.stringify(result),
+        score_label: result.score.label,
+        user: userId,
+      });
+    },
+    listClaimChecks: async ({ session, userId }) => {
+      const { db } = await postgresClient();
+      const rows = await db("claim_checks").where({ session, user: userId }).select("message_id", "payload");
+      const out: Record<string, unknown> = {};
+      for (const row of rows) {
+        out[row.message_id] =
+          typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
+      }
+      return out as Record<string, ClaimCheckResult>;
+    },
   });
 
   // Serve bytes. Auth depends on the row's auth_mode.

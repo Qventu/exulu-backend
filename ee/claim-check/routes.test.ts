@@ -4,6 +4,7 @@ import request from "supertest";
 import {
   registerClaimCheckRoutes,
   CLAIM_CHECK_PATH,
+  CLAIM_CHECK_SESSION_PATH,
   CLAIM_CHECK_TIMEOUT_MS,
   resolveClaimCheckTimeoutMs,
   type ClaimCheckRouteDeps,
@@ -42,6 +43,8 @@ function buildApp(overrides: Partial<ClaimCheckRouteDeps> = {}) {
     isExternalUser: () => false,
     externalRateLimitExceeded: () => false,
     platformDefaultModel: async () => "platform-model",
+    saveClaimCheck: jest.fn().mockResolvedValue(undefined),
+    listClaimChecks: jest.fn().mockResolvedValue({}),
     ...overrides,
   };
   const app = express();
@@ -734,5 +737,105 @@ describe("resolveClaimCheckTimeoutMs", () => {
   ])("falls back to the default for a %s value", (_label, raw) => {
     process.env.CLAIM_CHECK_TIMEOUT_MS = raw;
     expect(resolveClaimCheckTimeoutMs()).toBe(CLAIM_CHECK_TIMEOUT_MS);
+  });
+});
+
+describe("persistence", () => {
+  it("stores the result when the request names a session and a message", async () => {
+    const saveClaimCheck = jest.fn().mockResolvedValue(undefined);
+    const { app } = buildApp({ saveClaimCheck });
+    const res = await request(app)
+      .post(CLAIM_CHECK_PATH)
+      .send({ ...BODY, session: "11111111-1111-4111-8111-111111111111", messageId: "msg_1" });
+    expect(res.status).toBe(200);
+    expect(saveClaimCheck).toHaveBeenCalledTimes(1);
+    expect(saveClaimCheck.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ session: "11111111-1111-4111-8111-111111111111", messageId: "msg_1", userId: 7 }),
+    );
+  });
+
+  it("does not store anything when the request names no session", async () => {
+    const saveClaimCheck = jest.fn();
+    const { app } = buildApp({ saveClaimCheck });
+    expect((await request(app).post(CLAIM_CHECK_PATH).send(BODY)).status).toBe(200);
+    expect(saveClaimCheck).not.toHaveBeenCalled();
+  });
+
+  it("still answers 200 when the write fails — a lost panel must not fail the check", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { app } = buildApp({ saveClaimCheck: jest.fn().mockRejectedValue(new Error("db down")) });
+      const res = await request(app)
+        .post(CLAIM_CHECK_PATH)
+        .send({ ...BODY, session: "11111111-1111-4111-8111-111111111111", messageId: "msg_1" });
+      expect(res.status).toBe(200);
+      expect(res.body.score.label).toBe("ok");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  // Review Focus 3
+  it("replaces an existing row for the same message rather than accumulating", async () => {
+    const saveClaimCheck = jest.fn().mockResolvedValue(undefined);
+    const { app } = buildApp({ saveClaimCheck });
+    const body = { ...BODY, session: "11111111-1111-4111-8111-111111111111", messageId: "msg_1" };
+    await request(app).post(CLAIM_CHECK_PATH).send(body);
+    await request(app).post(CLAIM_CHECK_PATH).send(body);
+    expect(saveClaimCheck).toHaveBeenCalledTimes(2);
+    // The dep contract is upsert-by-(session, message_id): a reader who re-runs
+    // the same check replaces the row rather than stacking a second panel on
+    // the same answer. Both calls carry the same key, and Task B3 step 4's
+    // implementation deletes before inserting.
+    expect(saveClaimCheck.mock.calls[1][0].messageId).toBe("msg_1");
+  });
+});
+
+describe(`GET ${CLAIM_CHECK_SESSION_PATH}`, () => {
+  it("returns stored checks keyed by message id", async () => {
+    const listClaimChecks = jest.fn().mockResolvedValue({ msg_1: RESULT });
+    const { app } = buildApp({ listClaimChecks });
+    const res = await request(app).get("/claims/check/11111111-1111-4111-8111-111111111111");
+    expect(res.status).toBe(200);
+    expect(res.body.checks.msg_1.score.label).toBe("ok");
+    expect(listClaimChecks.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ session: "11111111-1111-4111-8111-111111111111", userId: 7 }),
+    );
+  });
+
+  it("404s when the deployment is not licensed", async () => {
+    const { app } = buildApp({ isLicensed: () => false });
+    expect((await request(app).get("/claims/check/11111111-1111-4111-8111-111111111111")).status).toBe(404);
+  });
+
+  it("401s when authentication fails", async () => {
+    const { app } = buildApp({ authenticate: async () => ({ error: true, code: 401, message: "no key" }) });
+    expect((await request(app).get("/claims/check/11111111-1111-4111-8111-111111111111")).status).toBe(401);
+  });
+
+  // Review Focus 4
+  it("400s on a session id that is not a uuid, without touching the database", async () => {
+    const listClaimChecks = jest.fn();
+    const { app } = buildApp({ listClaimChecks });
+    expect((await request(app).get("/claims/check/not-a-uuid")).status).toBe(400);
+    expect(listClaimChecks).not.toHaveBeenCalled();
+  });
+
+  // Review Focus 4
+  it("scopes the lookup to the caller, so another tenant's checks cannot be read", async () => {
+    const listClaimChecks = jest.fn().mockResolvedValue({});
+    const { app } = buildApp({
+      listClaimChecks,
+      authenticate: async () => ({ user: { id: 99, type: "user" } as any }),
+    });
+    await request(app).get("/claims/check/11111111-1111-4111-8111-111111111111");
+    expect(listClaimChecks.mock.calls[0][0].userId).toBe(99);
+  });
+
+  it("returns an empty object for a session with no checks", async () => {
+    const { app } = buildApp({ listClaimChecks: jest.fn().mockResolvedValue({}) });
+    const res = await request(app).get("/claims/check/11111111-1111-4111-8111-111111111111");
+    expect(res.status).toBe(200);
+    expect(res.body.checks).toEqual({});
   });
 });

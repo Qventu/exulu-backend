@@ -16,6 +16,10 @@ import type { ClaimCheckRateLimiter } from "./rate-limit";
 import { pipelineConfigFor } from "./agent-config";
 
 export const CLAIM_CHECK_PATH = "/claims/check";
+export const CLAIM_CHECK_SESSION_PATH = "/claims/check/:session";
+
+/** Rejects anything that is not a v4-shaped uuid before the database sees it. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Payload caps: an answer is prose, evidence is documents. Beyond these, 413. */
 const MAX_ANSWER_CHARS = 200_000;
@@ -147,6 +151,15 @@ export type ClaimCheckRouteDeps = {
   secondChanceFor?: (args: { agent: any; user?: User; model: LanguageModel; cap: number }) =>
     | ((claimText: string) => Promise<any[]>)
     | undefined;
+  /** Upsert one stored check. Absent in tests that do not exercise persistence. */
+  saveClaimCheck?: (args: {
+    session: string;
+    messageId: string;
+    userId: number;
+    result: ClaimCheckResult;
+  }) => Promise<void>;
+  /** Stored checks for a session, keyed by message id, scoped to the caller. */
+  listClaimChecks?: (args: { session: string; userId: number }) => Promise<Record<string, ClaimCheckResult>>;
 };
 
 export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps): void {
@@ -394,6 +407,22 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
         timedOut,
       ]);
       res.status(200).json(result);
+
+      // Persistence is a convenience, not part of the verdict: a reload losing
+      // the panel is worse than nothing, but a database hiccup must not turn a
+      // completed check into an error the caller has already paid for.
+      if (deps.saveClaimCheck && body.session && body.messageId) {
+        try {
+          await deps.saveClaimCheck({
+            session: body.session,
+            messageId: body.messageId,
+            userId: Number(user.id),
+            result,
+          });
+        } catch (err) {
+          console.warn("[EXULU claim-check] could not store the check for this message.", err);
+        }
+      }
     } catch (err) {
       if (err instanceof ClaimCheckTimeoutError) {
         console.warn(`[EXULU] claim check exceeded the ${timeoutMs} ms deadline.`);
@@ -409,6 +438,41 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
       // including on the timeout path, where the engine may still be unwinding.
       if (deadline) clearTimeout(deadline);
       deps.limiter.release();
+    }
+  });
+
+  // GET /claims/check/:session — the only read path to the claim_checks
+  // table (it has no GraphQL surface: see ee/schemas.ts's claimChecksSchema).
+  // The stored payload holds the answer's sentences and verbatim source
+  // quotes, so scoping here is the only thing standing between one user and
+  // another user's stored answers: the query itself filters by session AND
+  // the authenticated caller's id, never by session alone with a JS filter,
+  // and a request-supplied user id is never trusted.
+  app.get(CLAIM_CHECK_SESSION_PATH, async (req: Request, res: Response) => {
+    if (!deps.isLicensed()) {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    const session = req.params.session ?? "";
+    if (!UUID_RE.test(session)) {
+      res.status(400).json({ detail: "session must be a uuid." });
+      return;
+    }
+    const auth = await deps.authenticate(req);
+    if (!auth.user?.id) {
+      res.status(auth.code || 401).json({ detail: auth.message ?? "Unauthorized." });
+      return;
+    }
+    if (!deps.listClaimChecks) {
+      res.status(200).json({ checks: {} });
+      return;
+    }
+    try {
+      const checks = await deps.listClaimChecks({ session, userId: Number(auth.user.id) });
+      res.status(200).json({ checks });
+    } catch (err) {
+      console.error("[EXULU claim-check] could not read stored checks.", err);
+      res.status(500).json({ detail: "Could not read stored checks." });
     }
   });
 }

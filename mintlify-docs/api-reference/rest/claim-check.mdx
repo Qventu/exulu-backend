@@ -25,7 +25,7 @@ Sentences that carry nothing to verify — introductions, conclusions, opinions,
   "answer": "…",                         // required
   "sources": [ { "id": "s1", "name": "handbuch.pdf", "content": "…" } ], // optional, defaults to []
   "agent": "uuid",                       // optional: agent config, model, and second-chance retrieval
-  "session": "uuid", "messageId": "…",   // optional, provenance only
+  "session": "uuid", "messageId": "…",   // optional: provenance, and if both are set the check is stored
   "model": "…",                          // optional, super-admin callers only
   "locale": "de",                        // optional, auto-detected from the answer if omitted
   "options": {
@@ -44,7 +44,7 @@ Sentences that carry nothing to verify — introductions, conclusions, opinions,
 | `answer` | `string` | The answer text to check, as originally produced (markdown as streamed). Required, non-empty. |
 | `sources` | `{ id: string, name?: string, content: string }[]` | The caller's evidence. `id` must be unique within the request and is echoed back in `claims[].evidence[].sourceId`, so a caller can map evidence back to its own records. **Optional** — an omitted `sources` key validates as an empty array (the schema's permissive shape is deliberate), not a validation error. With no evidence to verify against, every claim the engine extracts comes back `unsupported` with "no evidence was available for this claim" — but the **score is reported as `label: "n/a"` and `status: "partial"`** with a note, never as a 100% unsupported share: a verdict reached without reading a single source is not a verdict about the answer. Pass sources if you want anything to resolve as `supported` or `contradicted`. |
 | `agent` | `string` | Optional agent UUID. When set, the caller's API key must be scoped to it and the caller must have read access; the agent's `claim_check` configuration and second-chance retrieval become available. The agent must have claim check **enabled** (`claim_check.enabled`), otherwise the request is refused with `403` — the feature costs money, so it is opt-in per agent. An external or guest identity additionally needs `claim_check.showToExternalUsers` on that agent. Agent-less calls (the standalone API product) are unaffected by both flags. |
-| `session`, `messageId` | `string` | Optional provenance fields; not used for access control. |
+| `session`, `messageId` | `string` | Optional provenance fields; not used for access control. When **both** are set, the result is also stored (upserted by the pair, so re-running the same check on the same message replaces the earlier row rather than accumulating) and can be read back later with `GET /claims/check/:session` below. Storage is a best-effort convenience: a database failure is logged and never changes the response status — a check that succeeded is never turned into an error because its panel could not be saved. |
 | `model` | `string` | Optional model override. **Accepted only from a super-admin caller** — see Model resolution below. A non-admin caller who sets this field gets `403`, not a silently-ignored parameter. |
 | `locale` | `string` | Optional. Defaults to a locale detected from the answer text. Must be a language tag the runtime can segment with (`de`, `en`, `fr`, …); anything else is a `400`, not a silently degraded check. |
 | `options` | object | Optional per-call overrides. Omitted keys fall back to the agent's `claim_check` configuration, then to the engine defaults (`fidelity: "fast"`, `completions: 1`, `reRetrieve: true`, `thresholds: { warn: 0.1, alert: 0.3 }`, `caps: { maxSentences: 120, maxClaims: 200, maxReRetrievals: 10 }`). `options.caps` **clamp the configured value, they never raise it** — see Option limits below. `options.fidelity: "paper"` and `options.completions` above 1 are **super-admin only** (`403` otherwise). |
@@ -163,6 +163,27 @@ When `agent` is set and `options.reRetrieve` is on, `unsupported` claims get one
 | `429` | The caller's claim-check budget, the shared external/guest budget (external identities only), or the server's global in-flight budget is exhausted. |
 | `500` | The engine failed in a way it could not degrade past (this should be rare — see `status: "partial"` above for the normal degradation path). |
 | `504` | The check did not finish within the request deadline (60 seconds by default; self-hosted deployments can raise it with `CLAIM_CHECK_TIMEOUT_MS`) and was cancelled. The provider calls are aborted and the server's in-flight slot is released, so a hung provider cannot drain the endpoint's capacity — but the calls made before cancellation were still spent. Retry with fewer sources, a shorter answer, or tighter `options.caps`; if the request legitimately needs a higher `claim_check.caps.maxSentences`, raise `CLAIM_CHECK_TIMEOUT_MS` to match or every extra sentence just spends calls on its way to the same `504`. |
+
+## Reading stored checks
+
+`GET /claims/check/:session` returns every check that was stored for that session by a previous `POST /claims/check` call, keyed by `messageId`:
+
+```jsonc
+{
+  "checks": {
+    "msg_1": { "status": "ok", "score": { "...": "..." }, "...": "..." }
+  }
+}
+```
+
+A check is stored only when its `POST` request named **both** `session` and `messageId` — see the Request table above. There is no other way to read this data: the `claim_checks` table has no GraphQL surface, because the stored `payload` holds the answer's sentences and verbatim quotes from the caller's source documents. This route is deliberately the only read path, and it is scoped to the caller on every request: the lookup filters by `session` **and** the authenticated user's id together, in the database query itself, so one user can never read another user's stored checks by guessing a session id.
+
+| Status | When |
+|---|---|
+| `200` | Returns `{ "checks": {...} }`, possibly `{}` for a session with nothing stored for this caller. |
+| `400` | `:session` is not a well-formed uuid. The database is never queried for a malformed id. |
+| `401` | Authentication failed. |
+| `404` | The deployment is not licensed for claim check — same policy as the `POST` endpoint: an unlicensed deployment advertises neither route. |
 
 ## Payload caps and rate limits
 
