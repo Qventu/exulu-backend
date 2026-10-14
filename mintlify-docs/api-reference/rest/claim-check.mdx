@@ -94,7 +94,7 @@ If none of these resolves to a usable model, the endpoint responds `400` naming 
     { "id": "c1", "sentenceIndex": 0, "text": "Die FST-2XT arbeitet mit 230 Volt.",
       "inferred": false, "verdict": "contradicted",
       "evidence": [ { "sourceId": "s1", "quote": "…" } ],
-      "rationale": "…", "rechecked": false, "matchedVerbatim": false }
+      "rationale": "…", "rechecked": false }
   ],
   "usage": { "calls": 8, "inputTokens": 114203, "outputTokens": 24880 },
   "timings": { "splitMs": 12, "selectDisambiguateMs": 2140, "decomposeMs": 1980,
@@ -149,28 +149,6 @@ Each claim gets exactly one of three verdicts:
 `contradicted` and `unsupported` are reported as separate counts deliberately: "the sources disagree with the answer" and "the sources are silent on this" are different problems with different fixes. The score's `unsupportedShare` is `(contradicted + unsupported) / claims`, which drives `score.label` against `options.thresholds` (`ok` below `warn`, `warn` up to `alert`, `alert` at or above). An answer with no checkable claims at all reports `score.label: "n/a"`.
 
 When `agent` is set and `options.reRetrieve` is on, `unsupported` claims get one additional targeted retrieval each (capped by `options.caps.maxReRetrievals`) and may flip to `supported` with `rechecked: true` — the evidence existed in the knowledge base, the answer just wasn't shown it. Callers who bring their own `sources` without an `agent` do not get this second pass; their `sources` array is the only evidence that is ever consulted.
-
-### `matchedVerbatim`
-
-Most verdicts are a model's judgement. One is not: when the sentence a claim was extracted from appears **as a whole sentence of** one of the supplied sources, that source asserts the sentence, and the extraction stages' contract is that a claim is entailed by the text it was decomposed from — so the claim is reported `supported` with `matchedVerbatim: true` and no provider call is made for it. Its `evidence` is the matched source and the sentence text, and its `rationale` says in words that this was a text match and not a judgement.
-
-The `quote` on a `matchedVerbatim` claim is the **answer's** text, not the source's. The two are equal only up to whitespace and letter case, which the match normalises away — so a UI that tries to locate that quote character-for-character inside the cited document may find nothing. Highlight it in the answer, and treat `sourceId` as a document reference rather than an offset.
-
-A `matchedVerbatim` claim is a verified claim: it counts in `score.claims` like any other, and its sentence is `checked`. It is never re-retrieved (the second pass only looks at `unsupported` claims). RAG answers quote their sources heavily, so this is where most of the saving on a long answer comes from — a 30-sentence answer costs 8 provider calls, or 4 when every sentence is quoted.
-
-The match is deliberately strict, because a false positive here would report a claim supported that nobody checked:
-
-- the sentence must appear as a **contiguous substring**, never as an overlapping set of words — so a reversed word order ("die Abschaltung löst den Schalter aus" against "der Schalter löst die Abschaltung aus"), a negation, or a changed number does not match, and falls through to the model;
-- that substring must be a **whole sentence of the source**: it has to begin at the start of the source or just after a sentence terminator (`.`, `!` or `?`) and a space, and end at the end of the source or at a terminator. Containment alone is not enough, because answers are bullet-heavy and a list item carries no full stop of its own — so `"Der Aufzug darf nach der Wartung wieder in Betrieb genommen werden"` sits happily inside `"… genommen werden, wenn der TÜV zugestimmt hat."`, with the safety condition stripped off. A sentence that is only the opening clause of a longer source sentence, or that the source introduces after a comma or a colon, falls through to the model;
-- only whitespace runs and letter case are normalised away. **Punctuation is not**, so a differently punctuated sentence falls through too;
-- a sentence shorter than 40 normalised characters never matches, however literally it appears — a short sentence can land inside any document by coincidence;
-- the source's own text is searched, up to the same 60,000-character per-source limit the evidence index reads, so a sentence found only in a truncated tail is not reported as supported by text the check never searched;
-- a claim with `inferred: true`, or any claim carrying a bracketed insert, is always sent to the model: such a claim deliberately asserts more than its sentence does (the bracketed context comes from the question or from elsewhere in the answer), and that extra part is exactly what the matched source never saw.
-
-Two limits of the rule, stated because they are the reason the rules above are as strict as they are:
-
-- **A source can state a sentence in order to deny it.** The sentence boundary catches the common framings — a hedge (`"Viele Monteure glauben, X. Das trifft nicht zu."`), a supersession (`"Früher galt: X. … nicht mehr der Fall."`), a lead-in (`"Falsch: X."`) — because in each of them the sentence does not begin a source sentence. It does **not** catch a frame that arrives in the *following* sentence: a source that writes `"X. Das trifft nicht zu."` asserts X as a whole sentence, and X is short-circuited. A model reading the surrounding passage would see the refutation. If your sources contain myth-busting or changelog-style prose, read `matchedVerbatim` as "this source contains this sentence", not as "this source is standing behind it".
-- **For a non-inferred claim, the short-circuit trusts decomposition absolutely.** Nothing re-checks that the claim really is entailed by the sentence it was extracted from; that is the stage's contract, and the short-circuit is exactly the case where no model re-reads it. Every rule above exists because that trust is only as good as the text the match is anchored to.
 
 ## Status codes
 
