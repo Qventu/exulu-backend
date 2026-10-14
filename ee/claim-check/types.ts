@@ -84,6 +84,14 @@ export type Claim = {
   rationale: string;
   /** True when a second-chance retrieval supplied the evidence. */
   rechecked: boolean;
+  /**
+   * True when this verdict came from an exact text match rather than a model
+   * judgement: the text this claim was decomposed from appears verbatim in the
+   * cited source, which therefore entails it (see ./verbatim). Such a claim is
+   * always `supported`, is counted in the score like any other verified claim,
+   * and cost no provider call. False for every model-judged claim.
+   */
+  matchedVerbatim: boolean;
 };
 
 export type SentenceState =

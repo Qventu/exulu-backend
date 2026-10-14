@@ -34,6 +34,12 @@ import { runVerification } from "./stages/verify";
 import { scoreClaims, buildSentenceResults } from "./score";
 import { addUsage, EMPTY_USAGE, type StageUsage } from "./stages/usage";
 import { mapWithConcurrency } from "./concurrency";
+import {
+  buildVerbatimIndex,
+  canShortCircuitClaim,
+  findVerbatimSource,
+  VERBATIM_RATIONALE,
+} from "./verbatim";
 
 export const BATCH = { selectDisambiguate: 10, decompose: 5, verifySentences: 3 };
 /**
@@ -356,10 +362,15 @@ export async function runClaimCheck(args: {
     // ── Decomposition ────────────────────────────────────────────────────────
     tStage = Date.now();
     const claims: Claim[] = [];
+    // Correction 1: built from every surviving sentence, globally — same
+    // reasoning as the `texts` map above.
+    //
+    // Hoisted out of the block below because the verbatim short-circuit needs
+    // it: the text a claim is entailed by is the text DECOMPOSITION was handed,
+    // which is this map's value when there was a clarification or a rewrite and
+    // the original sentence otherwise.
+    const decomposeTexts = new Map<number, string>();
     if (survivingIndexes.length > 0) {
-      // Correction 1: built from every surviving sentence, globally — same
-      // reasoning as the `texts` map above.
-      const decomposeTexts = new Map<number, string>();
       for (const index of survivingIndexes) {
         const clarified = disambiguationByIndex.get(index)?.clarified;
         const rewritten = selectionByIndex.get(index)?.rewritten;
@@ -395,6 +406,7 @@ export async function runClaimCheck(args: {
             evidence: [],
             rationale: "",
             rechecked: false,
+            matchedVerbatim: false,
           });
           pushedForThisOutcome += 1;
         }
@@ -441,6 +453,9 @@ export async function runClaimCheck(args: {
     const indexed = indexSourcesWithLimits(args.sources);
     const passages = indexed.passages;
     truncation = indexed.truncation;
+    // One normalised haystack per source, built here with the passage index so
+    // both read the same first MAX_CHARS_PER_SOURCE characters of each source.
+    const verbatimIndex = buildVerbatimIndex(args.sources);
     if (truncation.sources > 0) {
       // R35: a check that read three quarters of the evidence is not "ok".
       // `unsupportedShare` over a partly-read source set is a number the
@@ -465,8 +480,47 @@ export async function runClaimCheck(args: {
     // not_checked instead.
     let finalClaims: Claim[] = claims;
     if (claims.length > 0) {
-      const bySentence = new Map<number, Claim[]>();
+      // ── Verbatim short-circuit ───────────────────────────────────────────
+      // A sentence that appears LITERALLY in one of the supplied sources needs
+      // no model call: the extraction stages' contract is that a claim is
+      // entailed by the text it was decomposed from, so a source containing
+      // that text entails the claim. Verification is the biggest consumer of
+      // calls in a check, so excluding these claims from the groups below is
+      // the entire saving — the verdict itself is not cheaper, it is free.
+      //
+      // Matched once per SENTENCE rather than once per claim: all of a
+      // sentence's claims share the one text, and a 200-source payload is
+      // scanned once per sentence instead of once per claim.
+      const verbatimBySentence = new Map<number, { sourceId: string; quote: string }>();
+      for (const index of new Set(claims.map((c) => c.sentenceIndex))) {
+        const quote = decomposeTexts.get(index) ?? laterWindows.get(index)?.sentence.text;
+        if (!quote) continue;
+        const sourceId = findVerbatimSource(quote, verbatimIndex);
+        if (sourceId) verbatimBySentence.set(index, { sourceId, quote });
+      }
+
+      const toVerify: Claim[] = [];
+      // Sentences carrying at least one claim this engine verified without a
+      // model. Used below so a failed verification call cannot mark such a
+      // sentence not_checked while one of its claims stands verified in the
+      // result — a sentence can now be split across the two paths, which only
+      // happens because canShortCircuitClaim holds inferred claims back.
+      const verifiedWithoutModel = new Set<number>();
       for (const claim of claims) {
+        const hit = canShortCircuitClaim(claim) ? verbatimBySentence.get(claim.sentenceIndex) : undefined;
+        if (!hit) {
+          toVerify.push(claim);
+          continue;
+        }
+        claim.verdict = "supported";
+        claim.matchedVerbatim = true;
+        claim.evidence = [{ sourceId: hit.sourceId, quote: hit.quote }];
+        claim.rationale = VERBATIM_RATIONALE;
+        verifiedWithoutModel.add(claim.sentenceIndex);
+      }
+
+      const bySentence = new Map<number, Claim[]>();
+      for (const claim of toVerify) {
         const list = bySentence.get(claim.sentenceIndex) ?? [];
         list.push(claim);
         bySentence.set(claim.sentenceIndex, list);
@@ -484,7 +538,10 @@ export async function runClaimCheck(args: {
       });
 
       const droppedClaimIds = new Set<string>();
-      const byId = new Map(claims.map((c) => [c.id, c]));
+      // Only the claims that were actually sent: a model echoing a
+      // short-circuited claim's id back cannot overwrite a verdict this engine
+      // established without it.
+      const byId = new Map(toVerify.map((c) => [c.id, c]));
       verified.forEach((outcome, i) => {
         const group = groups[i]!;
         if (outcome.status !== "fulfilled") {
@@ -493,6 +550,7 @@ export async function runClaimCheck(args: {
           const sentenceIndexes = new Set(group.map((c) => c.sentenceIndex));
           for (const c of group) droppedClaimIds.add(c.id);
           for (const index of sentenceIndexes) {
+            if (verifiedWithoutModel.has(index)) continue;
             state.states.set(index, { state: "not_checked", reason: "verification failed for this sentence" });
           }
           return;
@@ -526,6 +584,7 @@ export async function runClaimCheck(args: {
           groupSentences.set(c.sentenceIndex, list);
         }
         for (const [index, list] of groupSentences) {
+          if (verifiedWithoutModel.has(index)) continue;
           if (list.every((c) => droppedClaimIds.has(c.id))) {
             state.states.set(index, {
               state: "not_checked",
@@ -579,6 +638,13 @@ export async function runClaimCheck(args: {
     // WERE judged against evidence can carry a score; when a second-chance
     // retrieval supplied passages for some of them, those still count, and
     // when nothing was read at all this is scoreClaims([]) → label "n/a".
+    //
+    // A verbatim-matched claim needs no exception here: both indexes skip a
+    // source on the same test — `content.slice(0, MAX_CHARS_PER_SOURCE)` with
+    // nothing but whitespace left in it — so `passages.length === 0` implies an
+    // empty verbatim index, and `matchedVerbatim` can never be true in this
+    // branch. A short-circuited claim IS verified, so if those two tests ever
+    // diverge it belongs in the score and this filter has to say so.
     const scorable = passages.length === 0 ? finalClaims.filter((c) => c.rechecked) : finalClaims;
     const unread = finalClaims.length - scorable.length;
     if (unread > 0) {

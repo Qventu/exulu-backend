@@ -94,7 +94,7 @@ If none of these resolves to a usable model, the endpoint responds `400` naming 
     { "id": "c1", "sentenceIndex": 0, "text": "Die FST-2XT arbeitet mit 230 Volt.",
       "inferred": false, "verdict": "contradicted",
       "evidence": [ { "sourceId": "s1", "quote": "…" } ],
-      "rationale": "…", "rechecked": false }
+      "rationale": "…", "rechecked": false, "matchedVerbatim": false }
   ],
   "usage": { "calls": 18, "inputTokens": 114203, "outputTokens": 24880 },
   "timings": { "splitMs": 12, "selectDisambiguateMs": 2140, "decomposeMs": 1980,
@@ -149,6 +149,20 @@ Each claim gets exactly one of three verdicts:
 `contradicted` and `unsupported` are reported as separate counts deliberately: "the sources disagree with the answer" and "the sources are silent on this" are different problems with different fixes. The score's `unsupportedShare` is `(contradicted + unsupported) / claims`, which drives `score.label` against `options.thresholds` (`ok` below `warn`, `warn` up to `alert`, `alert` at or above). An answer with no checkable claims at all reports `score.label: "n/a"`.
 
 When `agent` is set and `options.reRetrieve` is on, `unsupported` claims get one additional targeted retrieval each (capped by `options.caps.maxReRetrievals`) and may flip to `supported` with `rechecked: true` — the evidence existed in the knowledge base, the answer just wasn't shown it. Callers who bring their own `sources` without an `agent` do not get this second pass; their `sources` array is the only evidence that is ever consulted.
+
+### `matchedVerbatim`
+
+Most verdicts are a model's judgement. One is not: when the sentence a claim was extracted from appears **literally** in one of the supplied sources, the source entails the claim by definition — the extraction stages' contract is that a claim is entailed by the text it was decomposed from — so the claim is reported `supported` with `matchedVerbatim: true` and no provider call is made for it. Its `evidence` is the matched source and the sentence text itself, and its `rationale` says in words that this was a text match and not a judgement.
+
+A `matchedVerbatim` claim is a verified claim: it counts in `score.claims` like any other, and its sentence is `checked`. It is never re-retrieved (the second pass only looks at `unsupported` claims). RAG answers quote their sources heavily, so this is where most of the saving on a long answer comes from: a heavily quoted answer makes no verification call at all.
+
+The match is deliberately strict, because a false positive here would report a claim supported that nobody checked:
+
+- the sentence must appear as a **contiguous substring**, never as an overlapping set of words — so a reversed word order ("die Abschaltung löst den Schalter aus" against "der Schalter löst die Abschaltung aus"), a negation, or a changed number does not match, and falls through to the model;
+- only whitespace runs and letter case are normalised away. **Punctuation is not**, so a sentence that is merely the opening half of a longer sentence in the source does not match either;
+- a sentence shorter than 40 normalised characters never matches, however literally it appears — a short sentence can land inside any document by coincidence;
+- the source's own text is searched, up to the same 60,000-character per-source limit the evidence index reads, so a sentence found only in a truncated tail is not reported as supported by text the check never searched;
+- a claim with `inferred: true`, or any claim carrying a bracketed insert, is always sent to the model: such a claim deliberately asserts more than its sentence does (the bracketed context comes from the question or from elsewhere in the answer), and that extra part is exactly what the matched source never saw.
 
 ## Status codes
 
