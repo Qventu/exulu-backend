@@ -377,7 +377,13 @@ import type { ClaimCheckResult, ClaimCheckSource, ScoreLabel } from "@/lib/api/c
 export type ClaimCheckTrigger = { enabled: true; sourceIds: string[]; toolCallIds: string[] };
 
 /** The retrieval tool is renamed per agent; these are the shapes it ships as. */
-const RETRIEVAL_PART_TYPES = new Set(["tool-Context_Search", "tool-Knowledge_context_search"]);
+// The assistant message's retrieval part type. The backend derives this key as
+// `tool-${sanitizeToolName(AGENTIC_RETRIEVAL_TOOL_NAME)}` from the one literal
+// "Context Search" in ee/agentic-retrieval/pipeline/index.ts; separate repos
+// cannot share that constant, so this is the one place the name is duplicated.
+// Keep the test below that pins the literal, so a rename shows up as a failing
+// test here rather than as panels that silently stop appearing.
+const RETRIEVAL_PART_TYPES = new Set(["tool-Context_Search"]);
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
