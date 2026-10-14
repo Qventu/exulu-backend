@@ -348,12 +348,25 @@ Results to `docs/superpowers/evals/2026-10-13-claim-check-baseline.md`.
 Three stages, each independently useful, so the plan can stop at any boundary:
 
 1. **Engine + endpoint.** `ee/claim-check/` with all stages, `POST /claims/check`, the
-   `claim_check` config option in both repos, license gate, limiter, cache. Verifiable through the
-   API alone, with no UI.
+   `claim_check` config option on the backend tool, license gate and limiter. Verifiable through
+   the API alone, with no UI.
+
+   Two items originally listed in this stage moved to stage 3 during execution; the whole-branch
+   review was right to flag their absence, and both are deliberate deferrals rather than
+   oversights:
+   - **The Redis result cache (§5.2).** Nothing fires a check repeatedly until the chat surface
+     exists, so its absence costs only a double-fire paying twice.
+   - **The frontend `claim_check` plumbing (§3).** `WizardConfig` / `parseWizardConfig` /
+     `serializeWizardConfig` do not know the key yet. **Until they do, no agent may hold a
+     `claim_check` key** — the next save of the knowledge-search wizard silently deletes it, the
+     same failure that killed `tuning.engine: "v2"` in NEWLIFT production. The option is
+     `enabled: false` by default and there is no UI to set it, so nothing can be configured
+     before stage 3 lands the plumbing alongside the verification step.
 2. **Benchmark + tuning.** Fixture extraction, the 30-fixture run, triage, `fast` vs `paper`
    comparison, final batch sizes and thresholds, eval write-up.
 3. **Chat surface.** `claimCheckMetadata`, the panel and sentence highlighting, the wizard
-   verification step, the `claim_checks` table and its load path.
+   verification step **plus the `claim_check` serialisation plumbing moved from stage 1**, the
+   Redis result cache (§5.2), the `claim_checks` table and its load path.
 
 Stage 2 before stage 3 deliberately: the panel should not ship with thresholds nobody measured.
 
