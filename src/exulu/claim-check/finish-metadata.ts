@@ -119,6 +119,28 @@ function chunkItemIdsOf(output: unknown): string[] {
 }
 
 /**
+ * True when a session-items call's output is a cleanly-parsed, non-empty
+ * array — the only shape that proves the client can build at least one
+ * source from it. The client emits one source PER ITEM in this array, so an
+ * empty array is proven-zero-sources, exactly as an empty `chunks` is for
+ * retrieval; everything that is not cleanly a non-empty array (not a string,
+ * unparseable, or parses to something other than an array — an offloaded
+ * `{ truncated, notice, preview }` placeholder included) is fail-safe
+ * excluded rather than assumed to contain something.
+ */
+function sessionItemsFoundAny(output: unknown): boolean {
+  const raw = isRecord(output) ? output.result : undefined;
+  if (typeof raw !== "string") return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  return Array.isArray(parsed) && parsed.length > 0;
+}
+
+/**
  * The manifest the client fills in. One entry per source it must send, each
  * naming the handler (`type`) and where to find it (`toolCallId`). The client
  * locates parts BY TOOL CALL ID — no tool display name appears on the frontend
@@ -126,14 +148,17 @@ function chunkItemIdsOf(output: unknown): string[] {
  *
  * Never throws, and never names a source this function cannot vouch for:
  * a retrieval chunk with its source reference stripped, a document call that
- * errored or returned no content, or a memory this viewer may not see all
- * contribute nothing. Naming an entry the client cannot in fact recover is
- * worse than omitting it — the client's own completeness guard refuses the
- * WHOLE check on a count mismatch (spec §4).
+ * errored or returned no content, a session-items call that found nothing (or
+ * whose output cannot be read at all), or a memory this viewer may not see or
+ * whose information is blank all contribute nothing. Naming an entry the
+ * client cannot in fact recover is worse than omitting it — the client's own
+ * completeness guard counts MANIFEST ENTRIES, not final sources, and refuses
+ * the WHOLE check the moment any one named entry produces nothing (spec §4;
+ * F3's guard).
  */
 function manifestFor(args: {
   toolResults: unknown;
-  recalledMemories: { id: string }[] | undefined;
+  recalledMemories: { id: string; information?: string }[] | undefined;
 }): ClaimCheckManifestEntry[] {
   const out: ClaimCheckManifestEntry[] = [];
   const seen = new Set<string>();
@@ -144,7 +169,16 @@ function manifestFor(args: {
   };
 
   for (const memory of args.recalledMemories ?? []) {
-    if (typeof memory?.id === "string" && memory.id) add({ type: "memory", id: `memory:${memory.id}` });
+    if (typeof memory?.id !== "string" || !memory.id) continue;
+    // `information` can legitimately be "" (a row with neither information nor
+    // description — recall-collector.ts). The client omits a memory whose
+    // information is blank, so naming it anyway would be an entry the client
+    // cannot fulfil — and F3's guard treats ANY unfulfillable entry as reason
+    // to refuse the WHOLE check, not just that source. `information` is read
+    // here purely as an inclusion test; it never appears on the entry itself
+    // — the fragment stays ids-only.
+    if (typeof memory.information !== "string" || !memory.information.trim()) continue;
+    add({ type: "memory", id: `memory:${memory.id}` });
   }
 
   for (const part of Array.isArray(args.toolResults) ? args.toolResults : []) {
@@ -173,7 +207,16 @@ function manifestFor(args: {
     }
 
     if (part.type === SESSION_ITEMS_PART_TYPE) {
-      add({ type: "session_item", id: `tool:${part.toolCallId}`, toolCallId: part.toolCallId });
+      // The client builds one source PER ITEM in this array, so a cleanly-
+      // parsed EMPTY array means zero sources for this entry — the same
+      // "an entry the client cannot fulfil silences the whole check" problem
+      // the memory and document handlers guard against. A payload that is
+      // not a string, does not parse, or does not parse to an array is
+      // fail-safe-excluded the same way (this is `sessionItemsContributed`'s
+      // old test, inverted from a suppression gate into an inclusion gate).
+      if (sessionItemsFoundAny(part.output)) {
+        add({ type: "session_item", id: `tool:${part.toolCallId}`, toolCallId: part.toolCallId });
+      }
       continue;
     }
   }
@@ -313,8 +356,15 @@ export type ClaimCheckTurnContext = {
    * "may this viewer see it" rule, and re-deriving it here is how the two
    * drift apart (a guest turn then names memory sources the client cannot
    * produce, and the client's completeness guard refuses the whole check).
+   *
+   * Carries `information` too — not for the fragment (which stays ids-only;
+   * `manifestFor` reads it purely to decide whether to name the entry at
+   * all, and it never reaches the produced entry) but because a row can
+   * legitimately have blank information (recall-collector.ts), which the
+   * client then has nothing to render for and omits — the same "entry the
+   * client cannot fulfil" problem a failed document call has.
    */
-  recalledMemories?: { id: string }[];
+  recalledMemories?: { id: string; information?: string }[];
   /**
    * True when the turn's recall actually found something (`recall.list().length > 0`),
    * independent of whether this viewer may see it. Needed to tell "recall

@@ -237,14 +237,20 @@ describe("claimCheckMetadata", () => {
   // whenever it contributed anything (its output has no `chunks`, so its
   // evidence was invisible to the old sourceIds/toolCallIds shape). Now its
   // output is content the client already rendered and can resend by tool
-  // call id, so it becomes a `session_item` manifest entry instead — added
-  // unconditionally, because (unlike a document call) there is no "this
-  // output is not usable evidence" shape to check for: whatever the tool
-  // returned is exactly what the client already has.
+  // call id, so it becomes a `session_item` manifest entry instead — but
+  // only when the output is a cleanly-parsed, NON-EMPTY array. The client
+  // builds one source per item, so an empty array means zero sources for
+  // that entry, and F3's completeness guard counts MANIFEST ENTRIES: any one
+  // named entry that produces nothing refuses the WHOLE check, not just that
+  // source. This is the document handler's empty-content check, inverted
+  // from "ran, so suppress" into "ran, so only include when it clearly
+  // found something" — and it is fail-safe the same way: anything that is
+  // not a string, does not parse, or parses to a non-array is excluded too
+  // (review round 1, finding 1).
   describe("session-items retrieval ran alongside agentic retrieval", () => {
     const sessionItemsPartType = partTypeOf(SESSION_ITEMS_RETRIEVAL_TOOL_NAME);
 
-    it("names the session-items call as a session_item entry alongside the knowledge_base entries", () => {
+    it("names the session-items call as a session_item entry when it found at least one item", () => {
       const both = [
         ...retrievalParts,
         {
@@ -262,12 +268,20 @@ describe("claimCheckMetadata", () => {
       });
     });
 
-    // Unlike a document or retrieval part, a session-items entry is named
-    // regardless of its output's shape — an empty array, an offloaded
-    // placeholder, or anything unparseable all still name the entry, because
-    // the client's handler re-reads whatever that tool call actually
-    // produced rather than trusting content shipped through this metadata.
-    it("still names a session_item entry when the session-items output was offloaded (truncated/notice/preview)", () => {
+    it("does not name a session_item entry when the session-items tool found nothing (empty array)", () => {
+      const both = [
+        ...retrievalParts,
+        { type: sessionItemsPartType, toolCallId: "call_2", output: { result: JSON.stringify([]) } },
+      ];
+      const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any) as any;
+      expect(meta.claimCheck.sources.some((s: any) => s.type === "session_item")).toBe(false);
+      expect(meta.claimCheck.sources.length).toBeGreaterThan(0); // the kb sources still count
+    });
+
+    // The largest results — an offloaded placeholder with no `result` key at
+    // all — are precisely the ones most likely to have grounded the answer,
+    // and precisely the ones that cannot be read here at all.
+    it("does not name a session_item entry when the session-items output was offloaded (truncated/notice/preview)", () => {
       const both = [
         ...retrievalParts,
         {
@@ -277,7 +291,16 @@ describe("claimCheckMetadata", () => {
         },
       ];
       const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both, messages: [] } as any) as any;
-      expect(meta.claimCheck.sources).toContainEqual({ type: "session_item", id: "tool:call_2", toolCallId: "call_2" });
+      expect(meta.claimCheck.sources.some((s: any) => s.type === "session_item")).toBe(false);
+    });
+
+    it("does not name a session_item entry when the output cannot be parsed", () => {
+      const both = [
+        ...retrievalParts,
+        { type: sessionItemsPartType, toolCallId: "call_2", output: { result: "<<not json>>" } },
+      ];
+      const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any) as any;
+      expect(meta.claimCheck.sources.some((s: any) => s.type === "session_item")).toBe(false);
     });
   });
 
@@ -359,10 +382,9 @@ describe("claimCheckMetadata", () => {
       expect(out.claimCheck.sources.some((s: any) => s.id === "tool:call_4")).toBe(false);
     });
 
-    // internet_search → a web entry. Unlike a document call, the web handler
-    // names the call unconditionally (no content/error check) — matching
-    // session-items' handler, and for the same reason: the client re-reads
-    // whatever that tool call produced rather than trusting this metadata.
+    // internet_search → a web entry, named unconditionally (no content/error
+    // check), as specified. Unlike session-items (fixed in review round 1)
+    // this was not flagged as a gap — left as-is here, not re-litigated.
     it("names an internet-search call as a web entry", () => {
       const out = claimCheckMetadata({
         config: configOf('{"enabled":true}'),
@@ -577,7 +599,12 @@ describe("claimCheckMetadata", () => {
   // `recalledMemories`, the same list the memories panel already renders, as
   // long as this viewer is allowed to see that list at all.
   describe("a memory was recalled this turn", () => {
-    it("names a recalled memory as a memory entry with no tool call", () => {
+    // Review round 1, finding 3: pinned with toEqual on the full array (memory
+    // entries first — manifestFor's own order), not a toContainEqual that
+    // would pass even if the knowledge_base half silently vanished — this is
+    // exactly spec §8's "a memory turn with retrieval produces a complete
+    // check... a fragment carrying both kinds".
+    it("names a recalled memory as a memory entry with no tool call, alongside the knowledge_base entries", () => {
       const out = claimCheckMetadata({
         config: configOf('{"enabled":true}'),
         user: user(),
@@ -588,7 +615,44 @@ describe("claimCheckMetadata", () => {
         recallHadItems: true,
         recalledMemories: [{ id: "m_7", title: "Sprache", information: "Der Kunde bevorzugt Deutsch." }],
       } as any) as any;
-      expect(out.claimCheck.sources).toContainEqual({ type: "memory", id: "memory:m_7" });
+      expect(out.claimCheck.sources).toEqual([{ type: "memory", id: "memory:m_7" }, ...retrievalSources]);
+    });
+
+    // Review round 1, finding 2 (promoted from Minor): RecalledMemory.information
+    // can legitimately be "" (a row with neither information nor description —
+    // recall-collector.ts:71), and the client omits a memory whose information
+    // is blank. Naming it anyway is an entry the client cannot fulfil, and
+    // F3's guard refuses the WHOLE check over any one such entry — not a
+    // degraded source, a silent total loss of checking on that turn.
+    it("does not name a memory entry whose information is blank", () => {
+      const out = claimCheckMetadata({
+        config: configOf('{"enabled":true}'),
+        user: user(),
+        isGuest: false,
+        isLicensed: true,
+        toolResults: retrievalParts,
+        messages: [],
+        recallHadItems: true,
+        recalledMemories: [{ id: "m_8", information: "" }, { id: "m_9", information: "   " }],
+      } as any) as any;
+      expect(out.claimCheck.sources.some((s: any) => s.type === "memory")).toBe(false);
+      expect(out.claimCheck.sources.length).toBeGreaterThan(0); // the kb sources still count
+    });
+
+    // information is read purely as an inclusion test and must never reach
+    // the produced entry itself — the fragment stays ids-only.
+    it("never puts memory information on the entry it names", () => {
+      const out = claimCheckMetadata({
+        config: configOf('{"enabled":true}'),
+        user: user(),
+        isGuest: false,
+        isLicensed: true,
+        toolResults: retrievalParts,
+        messages: [],
+        recallHadItems: true,
+        recalledMemories: [{ id: "m_7", information: "Der Kunde bevorzugt Deutsch." }],
+      } as any) as any;
+      expect(JSON.stringify(out)).not.toContain("Deutsch");
     });
 
     // Stage 4 spec §5 and §8's own testing bullet: "A guest turn whose memory
@@ -834,7 +898,7 @@ describe("claimCheckStreamMetadata", () => {
         return recallHadItems;
       },
       get recalledMemories() {
-        return recallHadItems ? [{ id: "m_1" }] : undefined;
+        return recallHadItems ? [{ id: "m_1", information: "Der Kunde bevorzugt Deutsch." }] : undefined;
       },
     };
     const onPart = claimCheckStreamMetadata(ctx as any);
