@@ -46,6 +46,11 @@ export function verifyUserPrompt(args: {
     ),
     "",
     "CLAIMS:",
-    ...args.claims.map((c) => `(${c.id}) ${c.text}`),
+    // Claim text is model-produced FROM document text, so it carries the same
+    // adversary that justified inlineQuoted on sourceName above — and this
+    // list is the highest-salience position in the prompt: a claim carrying
+    // "\n\n" would otherwise write its own paragraph at the end of the user
+    // message, right where an instruction reads as freshest.
+    ...args.claims.map((c) => `(${c.id}) ${inlineQuoted(c.text)}`),
   ].join("\n");
 }

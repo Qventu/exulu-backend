@@ -44,7 +44,10 @@ export function disambiguateUserPrompt(args: {
 }): string {
   return [
     "QUESTION:",
-    args.question,
+    // Genuinely caller-owned today, but stops being so the moment the chat
+    // flow is plumbed in (an end user's — possibly a guest's — question), so
+    // it is fenced like every other caller-supplied block here.
+    fenced("QUESTION", args.question),
     "",
     "EXCERPT:",
     fenced("EXCERPT", args.excerpt),
