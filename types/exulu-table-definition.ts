@@ -82,7 +82,7 @@ export type ExuluTableDefinition = {
       | "oauth_tokens"
       | "shared_artifacts"
       | "otp_send_attempts"
-      | "claim checks";
+      | "claim_checks";
       singular:
       | "skill"
       | "context_preset"
@@ -121,7 +121,7 @@ export type ExuluTableDefinition = {
       | "oauth_token"
       | "shared_artifact"
       | "otp_send_attempt"
-      | "claim check";
+      | "claim_check";
     };
     processor?: ExuluContextProcessor;
     fields: ExuluContextFieldDefinition[];

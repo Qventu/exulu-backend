@@ -44,13 +44,25 @@ export const feedbackSchema: ExuluTableDefinition = {
  * `payload` holds the endpoint's whole response, so the chat can re-render a
  * panel after a reload without re-spending ~8 provider calls. `score_label` is
  * duplicated out of it only so a list view can colour a row without parsing
- * every payload.
+ * every payload — that list view still needs either a scoped route or a
+ * verified RBAC story before it can be built; `graphql: false` below is not
+ * an oversight blocking it.
+ *
+ * `graphql: false`: nothing consumes a GraphQL claim-checks API today — the
+ * frontend reads these rows through the REST route the next task adds,
+ * scoped to the calling user. `payload` holds the whole check result,
+ * including the answer's sentences and verbatim quotes from source
+ * documents — customer content — and the generated pagination/`ById`
+ * surface's cross-tenant read scoping is not verified here, so this table
+ * is kept off the auto-CRUD generator until it is. Same shape as
+ * `workflowTriggersSchema` below.
  */
 export const claimChecksSchema: ExuluTableDefinition = {
     type: "claim_checks",
+    graphql: false,
     name: {
-        plural: "claim checks",
-        singular: "claim check",
+        plural: "claim_checks",
+        singular: "claim_check",
     },
     fields: [
         {
