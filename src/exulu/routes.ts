@@ -71,6 +71,9 @@ import { transcriptionClient } from "./transcription/client.ts";
 import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts";
 import { registerTranscriptExportRoute } from "./transcription/export-route.ts";
 import { registerViewerIdentityRoutes } from "./viewer-identity-routes.ts";
+import { registerClaimCheckRoutes } from "@EE/claim-check/routes";
+import { claimCheckRateLimiter } from "@EE/claim-check/rate-limit";
+import { runClaimCheck } from "@EE/claim-check/run";
 import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
 import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
 import { transcriptionService } from "./transcription/service.ts";
@@ -201,6 +204,11 @@ const {
   statisticsSchema,
   transcriptionJobsSchema,
 } = coreSchemas.get();
+
+// One limiter per process, not per request — it tracks in-flight calls and
+// per-user windows across the whole server, so it must outlive any single
+// request handler closure.
+const claimCheckLimiter = claimCheckRateLimiter();
 
 export const createExpressRoutes = async (
   app: Express,
@@ -5146,6 +5154,23 @@ export const createExpressRoutes = async (
     getDb: async () => (await postgresClient()).db,
     RBACResolver,
     checkRecordAccess,
+  });
+
+  // POST /claims/check lives in ee/claim-check/routes.ts so its full HTTP
+  // contract (licensing, payload caps, rate limiting, model fallback) is
+  // unit-testable with supertest and no Postgres. See routes.test.ts.
+  registerClaimCheckRoutes(app, {
+    authenticate: (req) => requestValidators.authenticate(req),
+    checkApiKeyScope,
+    checkRecordAccess,
+    getAgent: (id) => exuluApp.get().agent(id),
+    resolveModel: ({ modelId, user }) => resolveModel({ modelId, user }),
+    runCheck: runClaimCheck,
+    isLicensed: () => Boolean(checkLicense()["claim-check"]),
+    limiter: claimCheckLimiter,
+    // Platform default model for callers with no agent; empty until an
+    // operator sets it.
+    platformDefaultModel: async () => process.env.CLAIM_CHECK_DEFAULT_MODEL ?? "",
   });
 
   // Serve bytes. Auth depends on the row's auth_mode.

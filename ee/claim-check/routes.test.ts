@@ -1,0 +1,186 @@
+// ee/claim-check/routes.test.ts
+import express from "express";
+import request from "supertest";
+import { registerClaimCheckRoutes, CLAIM_CHECK_PATH, type ClaimCheckRouteDeps } from "./routes";
+import { claimCheckRateLimiter } from "./rate-limit";
+
+const RESULT = {
+  status: "ok" as const,
+  score: { claims: 2, supported: 2, contradicted: 0, unsupported: 0, unsupportedShare: 0, label: "ok" as const },
+  sentences: [],
+  claims: [],
+  usage: { calls: 3, inputTokens: 10, outputTokens: 2 },
+  timings: { totalMs: 5 },
+  limits: { truncated: false, sentencesSkipped: 0 },
+  notes: [],
+};
+
+const BODY = {
+  question: "Womit arbeitet die FST-2XT?",
+  answer: "Die FST-2XT arbeitet mit 230 Volt.",
+  sources: [{ id: "s1", content: "Die FST-2XT arbeitet mit 230 Volt." }],
+};
+
+function buildApp(overrides: Partial<ClaimCheckRouteDeps> = {}) {
+  const runCheck = jest.fn().mockResolvedValue(RESULT);
+  const deps: ClaimCheckRouteDeps = {
+    authenticate: async () => ({ user: { id: 7, type: "user" } as any }),
+    checkApiKeyScope: () => ({ allowed: true, code: 200, reason: "" }),
+    checkRecordAccess: async () => true,
+    getAgent: async () => ({ id: "agent-1", model: "agent-model", tools: [] }) as any,
+    resolveModel: async ({ modelId }: any) => ({ languageModel: { modelId } }) as any,
+    runCheck,
+    isLicensed: () => true,
+    limiter: claimCheckRateLimiter({ perMinute: 100, perHour: 1000, maxInFlight: 10 }),
+    platformDefaultModel: async () => "platform-model",
+    ...overrides,
+  };
+  const app = express();
+  app.use(express.json({ limit: "20mb" }));
+  registerClaimCheckRoutes(app, deps);
+  return { app, deps, runCheck: deps.runCheck as jest.Mock };
+}
+
+describe(`POST ${CLAIM_CHECK_PATH}`, () => {
+  it("returns the engine's result for a valid request", async () => {
+    const { app, runCheck } = buildApp();
+    const res = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
+    expect(res.status).toBe(200);
+    expect(res.body.score.label).toBe("ok");
+    expect(runCheck).toHaveBeenCalledTimes(1);
+    expect(runCheck.mock.calls[0][0].question).toBe(BODY.question);
+  });
+
+  it("404s when the deployment is not licensed, without running anything", async () => {
+    const { app, runCheck } = buildApp({ isLicensed: () => false });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
+    expect(res.status).toBe(404);
+    expect(runCheck).not.toHaveBeenCalled();
+  });
+
+  it("401s when authentication fails", async () => {
+    const { app } = buildApp({
+      authenticate: async () => ({ error: true, code: 401, message: "no key" }),
+    });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
+    expect(res.status).toBe(401);
+  });
+
+  it("400s on a missing question, a missing answer and a non-array sources field", async () => {
+    const { app } = buildApp();
+    expect((await request(app).post(CLAIM_CHECK_PATH).send({ answer: "a", sources: [] })).status).toBe(400);
+    expect((await request(app).post(CLAIM_CHECK_PATH).send({ question: "q", sources: [] })).status).toBe(400);
+    expect((await request(app).post(CLAIM_CHECK_PATH).send({ question: "q", answer: "a", sources: "nope" })).status).toBe(400);
+  });
+
+  it("413s when the answer or the evidence exceeds the payload caps", async () => {
+    const { app, runCheck } = buildApp();
+    const huge = "a".repeat(200_001);
+    const tooLongAnswer = await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, answer: huge });
+    expect(tooLongAnswer.status).toBe(413);
+
+    const tooMuchEvidence = await request(app)
+      .post(CLAIM_CHECK_PATH)
+      .send({ ...BODY, sources: [{ id: "s1", content: "b".repeat(2_000_001) }] });
+    expect(tooMuchEvidence.status).toBe(413);
+    expect(runCheck).not.toHaveBeenCalled();
+  });
+
+  it("429s when the limiter refuses, and releases the slot after a completed check", async () => {
+    const limiter = claimCheckRateLimiter({ perMinute: 1, perHour: 10, maxInFlight: 10 });
+    const { app } = buildApp({ limiter });
+    expect((await request(app).post(CLAIM_CHECK_PATH).send(BODY)).status).toBe(200);
+    const second = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
+    expect(second.status).toBe(429);
+  });
+
+  it("resolves the request model WITHOUT rbacBypass", async () => {
+    const resolveModel = jest.fn(async ({ modelId }: any) => ({ languageModel: { modelId } }) as any);
+    const { app } = buildApp({ resolveModel });
+    await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, model: "caller-choice" });
+    expect(resolveModel).toHaveBeenCalledWith(expect.objectContaining({ modelId: "caller-choice" }));
+    expect(resolveModel.mock.calls[0][0].rbacBypass).toBeUndefined();
+  });
+
+  it("falls back through claim_check.model, utility_model and the agent model", async () => {
+    const resolveModel = jest.fn(async ({ modelId }: any) => ({ languageModel: { modelId } }) as any);
+    const agentWith = (config: Record<string, string>) => ({
+      id: "agent-1",
+      model: "agent-model",
+      tools: [
+        {
+          id: "agentic_context_search",
+          config: Object.entries(config).map(([name, variable]) => ({ name, variable, type: "json" })),
+        },
+      ],
+    });
+
+    const withClaimModel = buildApp({
+      resolveModel,
+      getAgent: async () => agentWith({ claim_check: '{"enabled":true,"model":"claim-model"}' }) as any,
+    });
+    await request(withClaimModel.app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
+    expect(resolveModel.mock.calls[0][0].modelId).toBe("claim-model");
+
+    resolveModel.mockClear();
+    const withUtilityModel = buildApp({
+      resolveModel,
+      getAgent: async () =>
+        agentWith({ claim_check: '{"enabled":true}', utility_model: "utility-model" }) as any,
+    });
+    await request(withUtilityModel.app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
+    expect(resolveModel.mock.calls[0][0].modelId).toBe("utility-model");
+
+    resolveModel.mockClear();
+    const withAgentModel = buildApp({ resolveModel, getAgent: async () => agentWith({}) as any });
+    await request(withAgentModel.app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
+    expect(resolveModel.mock.calls[0][0].modelId).toBe("agent-model");
+  });
+
+  it("400s naming the missing configuration when no model resolves at all", async () => {
+    const { app, runCheck } = buildApp({
+      getAgent: async () => undefined,
+      platformDefaultModel: async () => "",
+    });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
+    expect(res.status).toBe(400);
+    expect(String(res.body.detail)).toContain("claim_check.default_model");
+    expect(runCheck).not.toHaveBeenCalled();
+  });
+
+  it("403s when the API key is not scoped to the named agent", async () => {
+    const { app, runCheck } = buildApp({
+      checkApiKeyScope: () => ({ allowed: false, code: 403, reason: "key is scoped to another agent" }),
+    });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
+    expect(res.status).toBe(403);
+    expect(runCheck).not.toHaveBeenCalled();
+  });
+
+  it("403s when the caller cannot read the named agent", async () => {
+    const { app } = buildApp({ checkRecordAccess: async () => false });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send({ ...BODY, agent: "agent-1" });
+    expect(res.status).toBe(403);
+  });
+
+  it("passes a partial engine result through with 200", async () => {
+    const { app } = buildApp({
+      runCheck: jest.fn().mockResolvedValue({ ...RESULT, status: "partial", notes: ["selection aborted"] }),
+    });
+    const res = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("partial");
+    expect(res.body.notes).toEqual(["selection aborted"]);
+  });
+
+  it("500s and releases the limiter slot when the engine throws", async () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const limiter = claimCheckRateLimiter({ perMinute: 2, perHour: 10, maxInFlight: 1 });
+    const { app } = buildApp({ limiter, runCheck: jest.fn().mockRejectedValue(new Error("engine exploded")) });
+    expect((await request(app).post(CLAIM_CHECK_PATH).send(BODY)).status).toBe(500);
+    // The slot was released, so the next request is not blocked by maxInFlight.
+    const second = await request(app).post(CLAIM_CHECK_PATH).send(BODY);
+    expect(second.status).toBe(500);
+    errorSpy.mockRestore();
+  });
+});
