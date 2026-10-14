@@ -3,7 +3,7 @@
 // vocabulary is ours (spec §2.4) and the distinction between "the sources say
 // otherwise" and "the sources are silent" is the whole point of it.
 
-import { fenced, UNTRUSTED_TEXT_RULE } from "./shared";
+import { fenced, inlineQuoted, UNTRUSTED_TEXT_RULE } from "./shared";
 
 export const VERIFY_SYSTEM = `You are a strict fact-checker.
 
@@ -36,8 +36,12 @@ export function verifyUserPrompt(args: {
   return [
     "EVIDENCE:",
     ...args.evidence.map(
+      // The id and the name cannot live inside the fence — the model is asked
+      // to cite the id back — and both are caller-supplied, so they go through
+      // inlineQuoted: no forged marker, and no line of their own.
       (e, i) =>
-        `[${i + 1}] (sourceId: ${e.sourceId}${e.sourceName ? `, source: ${e.sourceName}` : ""})\n` +
+        `[${i + 1}] (sourceId: ${inlineQuoted(e.sourceId)}` +
+        `${e.sourceName ? `, source: ${inlineQuoted(e.sourceName)}` : ""})\n` +
         fenced(`EVIDENCE ${i + 1}`, e.text),
     ),
     "",
