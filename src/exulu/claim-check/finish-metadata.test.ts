@@ -525,18 +525,98 @@ describe("claimCheckMetadata", () => {
       ).toEqual({});
     });
 
-    // internet_search → a web entry, named unconditionally (no content/error
-    // check), as specified. Unlike session-items (fixed in review round 1)
-    // this was not flagged as a gap — left as-is here, not re-litigated.
-    it("names an internet-search call as a web entry", () => {
+    // internet_search → a web entry. Fix round 3, Important 7: this used to
+    // be the ONE arm with no inclusion test at all, so two shapes the
+    // backend records and the client cannot parse named an entry the client
+    // could never fulfil, refusing the whole turn's check with no error and
+    // nothing logged. It is gated like the others now, and its unreadable
+    // shapes route into the third outcome (Critical 4).
+    const webPart = (output: unknown) => ({ type: partTypeOf(INTERNET_SEARCH_TOOL_NAME), toolCallId: "call_9", output });
+    const webEntry = { type: "web", id: "tool:call_9", toolCallId: "call_9" };
+
+    it("names an internet-search call as a web entry when it carries the answer body", () => {
       const out = claimCheckMetadata({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
         isLicensed: true,
-        toolResults: [...retrievalParts, { type: partTypeOf(INTERNET_SEARCH_TOOL_NAME), toolCallId: "call_9", output: { result: JSON.stringify({ content: "…", citations: [] }) } }],
+        toolResults: [...retrievalParts, webPart({ result: JSON.stringify({ content: "Die Anlage läuft mit 230 Volt.", citations: [] }) })],
       } as any) as any;
-      expect(out.claimCheck.sources).toContainEqual({ type: "web", id: "tool:call_9", toolCallId: "call_9" });
+      expect(out.claimCheck.sources).toContainEqual(webEntry);
+    });
+
+    it("names it when the body is empty but a cited page carries text", () => {
+      const out = claimCheckMetadata({
+        config: configOf('{"enabled":true}'),
+        user: user(),
+        isGuest: false,
+        isLicensed: true,
+        toolResults: [
+          ...retrievalParts,
+          webPart({ result: JSON.stringify({ content: "", search_results: [{ url: "https://x", title: "X", snippet: "230 Volt." }] }) }),
+        ],
+      } as any) as any;
+      expect(out.claimCheck.sources).toContainEqual(webEntry);
+    });
+
+    // Provably nothing: the payload parsed, and it holds no text the client
+    // could send — so the model got no web evidence either and the turn's
+    // other sources are the whole of the answer's evidence.
+    it("does not name a web entry when the payload holds no text at all", () => {
+      const out = claimCheckMetadata({
+        config: configOf('{"enabled":true}'),
+        user: user(),
+        isGuest: false,
+        isLicensed: true,
+        toolResults: [...retrievalParts, webPart({ result: JSON.stringify({ content: "   ", citations: [], search_results: [] }) })],
+      } as any) as any;
+      expect(out.claimCheck.sources.some((src: any) => src.type === "web")).toBe(false);
+      expect(out.claimCheck.sources.length).toBeGreaterThan(0); // the kb sources still count
+    });
+
+    // The shape `internet_search` returns after three rate-limited attempts:
+    // `{ result: "Max retries exceeded …" }` — a `result` string that is not
+    // JSON. The client's `JSON.parse` throws and it recovers nothing.
+    it("SUPPRESSES THE WHOLE FRAGMENT when the search exhausted its retries", () => {
+      expect(
+        claimCheckMetadata({
+          config: configOf('{"enabled":true}'),
+          user: user(),
+          isGuest: false,
+          isLicensed: true,
+          toolResults: [...retrievalParts, webPart({ result: "Max retries exceeded for perplexity research for query." })],
+        } as any),
+      ).toEqual({});
+    });
+
+    // internet_search is NOT in OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS, so a long
+    // search result really is replaced by this placeholder — whose
+    // 4,000-char preview the model read.
+    it("SUPPRESSES THE WHOLE FRAGMENT when the search output was offloaded", () => {
+      expect(
+        claimCheckMetadata({
+          config: configOf('{"enabled":true}'),
+          user: user(),
+          isGuest: false,
+          isLicensed: true,
+          toolResults: [
+            ...retrievalParts,
+            webPart({ truncated: true, notice: "stored as tool-output-internet_search-ab12.txt", preview: "230 Volt. …" }),
+          ],
+        } as any),
+      ).toEqual({});
+    });
+
+    it("SUPPRESSES THE WHOLE FRAGMENT when the payload parses to something that is not a record", () => {
+      expect(
+        claimCheckMetadata({
+          config: configOf('{"enabled":true}'),
+          user: user(),
+          isGuest: false,
+          isLicensed: true,
+          toolResults: [...retrievalParts, webPart({ result: JSON.stringify(["230 Volt."]) })],
+        } as any),
+      ).toEqual({});
     });
   });
 

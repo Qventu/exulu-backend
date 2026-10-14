@@ -251,6 +251,46 @@ function documentReadability(output: unknown): Readability {
 }
 
 /**
+ * An `internet_search` call's output, classified.
+ *
+ * Perplexity answers `{ result: JSON.stringify({ content, citations,
+ * search_results }) }`, where `content` is the prose answer the assistant
+ * paraphrased and each `search_results[i]` carries a `title`/`snippet`.
+ * `readable` mirrors the client's `webSources` arm: it sends the body as its
+ * own source whenever `content` has text, and one source per cited page that
+ * has text — so the entry is nameable when either exists, and only then.
+ *
+ * `unreadable` is the whole point of gating this arm at all (fix round 3,
+ * Important 7: it was the one arm with no inclusion test). Two shapes the
+ * backend really records and the client cannot parse:
+ *
+ *  - `{ result: "Max retries exceeded for perplexity research for query." }`
+ *    — a `result` string that is not JSON, returned after three
+ *    rate-limited attempts;
+ *  - an offloaded payload, because `internet_search` is **not** in
+ *    `OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS`.
+ *
+ * Both used to name an entry the client could never fulfil, which refuses
+ * the whole turn's check silently; they now withhold the fragment, which is
+ * the same user-visible outcome reached honestly and with the manifest
+ * telling the truth.
+ */
+function webReadability(output: unknown): Readability {
+  const parsed = parsedToolPayload(output);
+  // `isRecord` admits an array (typeof [] === "object"), and an array is not
+  // a shape this tool emits — the client's own arm recovers nothing from one.
+  if (!isRecord(parsed) || Array.isArray(parsed)) return "unreadable";
+  if (typeof parsed.content === "string" && parsed.content.trim()) return "readable";
+  const results = Array.isArray(parsed.search_results) ? parsed.search_results : [];
+  const cited = results.some(
+    (result) =>
+      isRecord(result) &&
+      [result.title, result.snippet].some((field) => typeof field === "string" && field.trim()),
+  );
+  return cited ? "readable" : "nothing";
+}
+
+/**
  * The manifest the client fills in. One entry per source it must send, each
  * naming the handler (`type`) and where to find it (`toolCallId`). The client
  * locates parts BY TOOL CALL ID — no tool display name appears on the frontend
@@ -324,7 +364,11 @@ function manifestFor(args: {
     }
 
     if (part.type === WEB_PART_TYPE) {
-      add({ type: "web", id: `tool:${part.toolCallId}`, toolCallId: part.toolCallId });
+      const readability = webReadability(part.output);
+      if (readability === "unreadable") return null;
+      if (readability === "readable") {
+        add({ type: "web", id: `tool:${part.toolCallId}`, toolCallId: part.toolCallId });
+      }
       continue;
     }
 
