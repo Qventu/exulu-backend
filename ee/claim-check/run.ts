@@ -275,7 +275,7 @@ export async function runClaimCheck(args: {
   // Finding 5: evidence past MAX_CHARS_PER_SOURCE is never searched, so what
   // was dropped has to reach `limits` and `notes` on every return path,
   // including the catch below.
-  let truncation: SourceTruncation = { sources: 0, droppedChars: 0 };
+  let truncation: SourceTruncation = { sources: 0, droppedChars: 0, names: [] };
 
   try {
     const locale = args.locale ?? localeFromText(args.answer);
@@ -507,7 +507,8 @@ export async function runClaimCheck(args: {
       // check as clean.
       state.partial = true;
       state.notes.push(
-        `${truncation.sources} source(s) were truncated at ${MAX_CHARS_PER_SOURCE} characters; ` +
+        `${truncation.sources} source(s) were truncated at ${MAX_CHARS_PER_SOURCE} characters ` +
+          `(${truncation.names.join(", ")}); ` +
           `${truncation.droppedChars} character(s) of evidence were not searched, so a claim supported only there reads as unsupported`,
       );
     }

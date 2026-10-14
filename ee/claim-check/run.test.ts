@@ -10,7 +10,7 @@ import { runDisambiguation } from "./stages/disambiguate";
 import { runDecomposition } from "./stages/decompose";
 import { runVerification } from "./stages/verify";
 import { BISECT_FLOOR, MAX_EVIDENCE_PER_CALL, runClaimCheck, selectGroupEvidence } from "./run";
-import { indexSources, selectEvidence } from "./evidence";
+import { indexSources, selectEvidence, MAX_CHARS_PER_SOURCE } from "./evidence";
 import { CLAIM_CHECK_DEFAULTS, type ClaimCheckOptions } from "./types";
 
 const USAGE = { calls: 1, inputTokens: 100, outputTokens: 10 };
@@ -726,6 +726,67 @@ describe("runClaimCheck — source truncation", () => {
     // The discriminator for the assertion above: truncation is what turns a
     // check partial here, not the fixture.
     expect(result.status).toBe("ok");
+  });
+
+  it("names the truncated source in the note it already emits", async () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `c${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources: [
+        { id: "big", name: "handbuch.pdf", content: "x".repeat(MAX_CHARS_PER_SOURCE + 100) },
+        { id: "small", content: "fits" },
+      ],
+      model: {} as any,
+      options: options(),
+      locale: "de",
+    });
+    expect(result.status).toBe("partial");                     // unchanged behaviour
+    expect(result.limits.truncated).toBe(true);                // unchanged behaviour
+    const note = result.notes.find((n) => n.includes("truncated"));
+    expect(note).toContain("handbuch.pdf");
+    expect(note).not.toContain("small");                       // an uncut source is not named
+  });
+
+  it("falls back to the id when a truncated source has no name", async () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `c${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources: [{ id: "big", content: "x".repeat(MAX_CHARS_PER_SOURCE + 100) }],
+      model: {} as any,
+      options: options(),
+      locale: "de",
+    });
+    expect(result.notes.find((n) => n.includes("truncated"))).toContain("big");
   });
 });
 

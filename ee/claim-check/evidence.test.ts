@@ -43,18 +43,18 @@ describe("indexSources", () => {
       ],
       { passageChars: 400, overlapChars: 50, maxCharsPerSource: 1000 },
     );
-    expect(truncation).toEqual({ sources: 2, droppedChars: 1500 + 2000 });
+    expect(truncation).toEqual({ sources: 2, droppedChars: 1500 + 2000, names: ["big", "bigger"] });
     expect(passages.every((p) => p.text.length <= 400)).toBe(true);
   });
 
   it("reports no truncation when every source fits", () => {
-    expect(indexSourcesWithLimits(SOURCES).truncation).toEqual({ sources: 0, droppedChars: 0 });
+    expect(indexSourcesWithLimits(SOURCES).truncation).toEqual({ sources: 0, droppedChars: 0, names: [] });
   });
 
   it("defaults the per-source limit to the documented 60,000 characters", () => {
     expect(MAX_CHARS_PER_SOURCE).toBe(60_000);
     const { truncation } = indexSourcesWithLimits([{ id: "huge", content: "x".repeat(60_010) }]);
-    expect(truncation).toEqual({ sources: 1, droppedChars: 10 });
+    expect(truncation).toEqual({ sources: 1, droppedChars: 10, names: ["huge"] });
   });
 
   // Review Focus 3
