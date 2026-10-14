@@ -119,25 +119,58 @@ function chunkItemIdsOf(output: unknown): string[] {
 }
 
 /**
- * True when a session-items call's output is a cleanly-parsed, non-empty
- * array — the only shape that proves the client can build at least one
- * source from it. The client emits one source PER ITEM in this array, so an
- * empty array is proven-zero-sources, exactly as an empty `chunks` is for
- * retrieval; everything that is not cleanly a non-empty array (not a string,
- * unparseable, or parses to something other than an array — an offloaded
- * `{ truncated, notice, preview }` placeholder included) is fail-safe
- * excluded rather than assumed to contain something.
+ * True when the client can provably build at least one source from a
+ * session-items call's output — **the client's own predicate, mirrored**
+ * (frontend `sessionItemSources` in `claim-check-data.ts`), not a second
+ * guess at the shape.
+ *
+ * The measured shape: `{ result: JSON.stringify(results.flat()) }` where
+ * `results` holds one `context.search(...)` response PER CONTEXT referenced
+ * in the session — `{ …, context: { name, id }, chunks:
+ * VectorSearchChunkResult[] }` — or, for a context with no embedder, that
+ * context's bare error STRING (the tool's own catch branch). So the chunks
+ * nest one level deeper than agentic retrieval's output, and
+ * `parsed.length > 0` means "a context was searched", not "an item was
+ * found".
+ *
+ * Getting that wrong is not a degraded source: the two commonest outcomes —
+ * `[{ context, chunks: [] }]` (searched, matched nothing, which is the
+ * common case on a session with pinned items) and an embedder-less context —
+ * would name an entry the client provably cannot fulfil, and the client's
+ * completeness guard refuses the WHOLE manifest over any one such entry,
+ * knowledge-base half included, with no error and nothing logged.
  */
-function sessionItemsFoundAny(output: unknown): boolean {
-  const raw = isRecord(output) ? output.result : undefined;
-  if (typeof raw !== "string") return false;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return false;
+function sessionItemsFoundAny(parsed: unknown): boolean {
+  if (!Array.isArray(parsed)) return false;
+  for (const element of parsed) {
+    // A bare string is the embedder-not-configured message, not evidence —
+    // skipped here exactly as the client skips every non-object element.
+    if (!isRecord(element) || !Array.isArray(element.chunks)) continue;
+    for (const row of element.chunks) {
+      if (!isRecord(row) || typeof row.item_id !== "string") continue;
+      const text = typeof row.chunk_content === "string" ? row.chunk_content : "";
+      if (text.trim()) return true;
+    }
   }
-  return Array.isArray(parsed) && parsed.length > 0;
+  return false;
+}
+
+/**
+ * A tool output's `{ result: <JSON string> }` payload, parsed — or
+ * `UNREADABLE` when there is no string `result` (an offloaded
+ * `{ truncated, notice, preview }` placeholder has none) or it does not
+ * parse. The distinction matters: see `Readability` below.
+ */
+const UNREADABLE = Symbol("claim-check:unreadable-tool-output");
+
+function parsedToolPayload(output: unknown): unknown {
+  const raw = isRecord(output) ? output.result : undefined;
+  if (typeof raw !== "string") return UNREADABLE;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return UNREADABLE;
+  }
 }
 
 /**
@@ -207,14 +240,12 @@ function manifestFor(args: {
     }
 
     if (part.type === SESSION_ITEMS_PART_TYPE) {
-      // The client builds one source PER ITEM in this array, so a cleanly-
-      // parsed EMPTY array means zero sources for this entry — the same
-      // "an entry the client cannot fulfil silences the whole check" problem
-      // the memory and document handlers guard against. A payload that is
-      // not a string, does not parse, or does not parse to an array is
-      // fail-safe-excluded the same way (this is `sessionItemsContributed`'s
-      // old test, inverted from a suppression gate into an inclusion gate).
-      if (sessionItemsFoundAny(part.output)) {
+      // The client builds one source per ITEM found across the searched
+      // contexts, so "a context was searched" is not "an item was found" —
+      // naming an entry the client cannot fulfil silences the whole check,
+      // the same problem the memory and document handlers guard against. The
+      // predicate is the client's own arm, mirrored; see its docblock.
+      if (sessionItemsFoundAny(parsedToolPayload(part.output))) {
         add({ type: "session_item", id: `tool:${part.toolCallId}`, toolCallId: part.toolCallId });
       }
       continue;

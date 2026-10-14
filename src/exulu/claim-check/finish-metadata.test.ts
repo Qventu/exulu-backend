@@ -234,30 +234,48 @@ describe("claimCheckMetadata", () => {
   });
 
   // Stage 4: session-items search used to suppress the whole fragment
-  // whenever it contributed anything (its output has no `chunks`, so its
-  // evidence was invisible to the old sourceIds/toolCallIds shape). Now its
-  // output is content the client already rendered and can resend by tool
-  // call id, so it becomes a `session_item` manifest entry instead — but
-  // only when the output is a cleanly-parsed, NON-EMPTY array. The client
-  // builds one source per item, so an empty array means zero sources for
-  // that entry, and F3's completeness guard counts MANIFEST ENTRIES: any one
-  // named entry that produces nothing refuses the WHOLE check, not just that
-  // source. This is the document handler's empty-content check, inverted
-  // from "ran, so suppress" into "ran, so only include when it clearly
-  // found something" — and it is fail-safe the same way: anything that is
-  // not a string, does not parse, or parses to a non-array is excluded too
-  // (review round 1, finding 1).
+  // whenever it contributed anything (its output nests its chunks one level
+  // deeper than agentic retrieval's, so its evidence was invisible to the old
+  // sourceIds/toolCallIds shape). Now its output is content the client
+  // already rendered and can resend by tool call id, so it becomes a
+  // `session_item` manifest entry instead — but only when the client can
+  // provably build a source from it.
+  //
+  // Fix round 3, Critical 2: the gate used to be `Array.isArray(parsed) &&
+  // parsed.length > 0`, written against a GUESSED flat item shape. The real
+  // array holds one element PER CONTEXT SEARCHED — each a whole
+  // `context.search` response with its chunks nested under `.chunks`, or a
+  // bare embedder-not-configured STRING — so `length > 0` meant "a context
+  // was searched", not "an item was found". The two commonest outcomes
+  // (`[{ context, chunks: [] }]` on a session with pinned items, and a
+  // context with no embedder) therefore named an entry the client provably
+  // cannot fulfil, and F3's guard refuses the WHOLE manifest — KB half
+  // included — with no error and nothing logged.
+  //
+  // The gate now mirrors the client's own arm literally (frontend
+  // `sessionItemSources`): at least one element that is a record whose
+  // `chunks` is an array holding an entry with a string `item_id` and
+  // non-blank `chunk_content`. The fixtures below are the measured shapes,
+  // the same ones the frontend's session-item tests encode.
   describe("session-items retrieval ran alongside agentic retrieval", () => {
     const sessionItemsPartType = partTypeOf(SESSION_ITEMS_RETRIEVAL_TOOL_NAME);
 
-    it("names the session-items call as a session_item entry when it found at least one item", () => {
+    /** One `context.search` response per context searched — the measured shape. */
+    const sessionItemsPart = (result: unknown) => ({
+      type: sessionItemsPartType,
+      toolCallId: "call_2",
+      output: { result: JSON.stringify(result) },
+    });
+
+    it("names the session-items call as a session_item entry when a context's chunks hold a usable item", () => {
       const both = [
         ...retrievalParts,
-        {
-          type: sessionItemsPartType,
-          toolCallId: "call_2",
-          output: { result: JSON.stringify([{ id: "s1", content: "..." }]) },
-        },
+        sessionItemsPart([
+          {
+            context: { name: "Handbücher", id: "ctx_1" },
+            chunks: [{ item_id: "i9", item_name: "wartung.pdf", chunk_content: "230 Volt." }],
+          },
+        ]),
       ];
       const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any);
       expect(meta).toEqual({
@@ -268,14 +286,53 @@ describe("claimCheckMetadata", () => {
       });
     });
 
-    it("does not name a session_item entry when the session-items tool found nothing (empty array)", () => {
+    it("does not name a session_item entry when the search ran and matched nothing — the common case on a session with pinned items", () => {
       const both = [
         ...retrievalParts,
-        { type: sessionItemsPartType, toolCallId: "call_2", output: { result: JSON.stringify([]) } },
+        sessionItemsPart([{ context: { name: "Handbücher", id: "ctx_1" }, chunks: [] }]),
       ];
       const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any) as any;
       expect(meta.claimCheck.sources.some((s: any) => s.type === "session_item")).toBe(false);
       expect(meta.claimCheck.sources.length).toBeGreaterThan(0); // the kb sources still count
+    });
+
+    // A context with no embedder contributes its bare error message instead
+    // of a response object (the tool's own catch branch). The client skips
+    // every non-object element, so naming the entry would refuse the whole
+    // check for a product that HAS embedder-less contexts.
+    it("does not name a session_item entry for a context with no embedder configured", () => {
+      const both = [
+        ...retrievalParts,
+        sessionItemsPart(["Embedder not configured for context ctx_2."]),
+      ];
+      const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any) as any;
+      expect(meta.claimCheck.sources.some((s: any) => s.type === "session_item")).toBe(false);
+      expect(meta.claimCheck.sources.length).toBeGreaterThan(0);
+    });
+
+    it("does not name a session_item entry when every chunk's text is blank, the way the client drops it", () => {
+      const both = [
+        ...retrievalParts,
+        sessionItemsPart([
+          { context: { id: "ctx_1" }, chunks: [{ item_id: "i9", item_name: "leer.pdf", chunk_content: "   " }] },
+        ]),
+      ];
+      const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any) as any;
+      expect(meta.claimCheck.sources.some((s: any) => s.type === "session_item")).toBe(false);
+      expect(meta.claimCheck.sources.length).toBeGreaterThan(0);
+    });
+
+    it("names the entry when one of several searched contexts found something", () => {
+      const both = [
+        ...retrievalParts,
+        sessionItemsPart([
+          "Embedder not configured for context ctx_2.",
+          { context: { id: "ctx_1" }, chunks: [] },
+          { context: { id: "ctx_3" }, chunks: [{ item_id: "i9", item_name: "w.pdf", chunk_content: "230 Volt." }] },
+        ]),
+      ];
+      const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any) as any;
+      expect(meta.claimCheck.sources).toContainEqual({ type: "session_item", id: "tool:call_2", toolCallId: "call_2" });
     });
 
     // The largest results — an offloaded placeholder with no `result` key at
