@@ -184,6 +184,7 @@ const getExuluVersionNumber = async () => {
 const {
   agentsSchema,
   feedbackSchema,
+  claimChecksSchema,
   projectsSchema,
   jobResultsSchema,
   testCasesSchema,
@@ -284,6 +285,7 @@ export const createExpressRoutes = async (
       rolesSchema(),
       agentsSchema(),
       feedbackSchema(),
+      claimChecksSchema(),
       projectsSchema(),
       jobResultsSchema(),
       promptLibrarySchema(),

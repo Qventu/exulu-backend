@@ -1,6 +1,7 @@
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import {
   feedbackSchema,
+  claimChecksSchema,
   rolesSchema,
   teamsSchema,
   statisticsSchema,
@@ -1125,7 +1126,11 @@ export const coreSchemas = {
     if (license["agent-feedback"]) {
       schemas.feedbackSchema = (): ExuluTableDefinition => addCoreFields(feedbackSchema)
     }
-    
+
+    if (license["claim-check"]) {
+      schemas.claimChecksSchema = (): ExuluTableDefinition => addCoreFields(claimChecksSchema)
+    }
+
     if (license["rbac"]) {
       schemas.rolesSchema = (): ExuluTableDefinition => addCoreFields(rolesSchema)
       schemas.teamsSchema = (): ExuluTableDefinition => addCoreFields(teamsSchema)

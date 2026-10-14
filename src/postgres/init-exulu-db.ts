@@ -14,6 +14,7 @@ import { hydrateContextEmbedders } from "@SRC/exulu/hydrate-embedders";
 const {
   agentsSchema,
   feedbackSchema,
+  claimChecksSchema,
   testCasesSchema,
   evalSetsSchema,
   evalRunsSchema,
@@ -147,6 +148,7 @@ const up = async function (knex: Knex) {
     rbacSchema(),
     agentsSchema(),
     feedbackSchema(),
+    claimChecksSchema(),
     variablesSchema(),
     skillsSchema(),
     workflowTemplatesSchema(),

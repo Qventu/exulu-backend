@@ -38,6 +38,45 @@ export const feedbackSchema: ExuluTableDefinition = {
     ]
 }
 
+/**
+ * One stored claim check per assistant message (spec §5.2).
+ *
+ * `payload` holds the endpoint's whole response, so the chat can re-render a
+ * panel after a reload without re-spending ~8 provider calls. `score_label` is
+ * duplicated out of it only so a list view can colour a row without parsing
+ * every payload.
+ */
+export const claimChecksSchema: ExuluTableDefinition = {
+    type: "claim_checks",
+    name: {
+        plural: "claim checks",
+        singular: "claim check",
+    },
+    fields: [
+        {
+            name: "session",
+            type: "uuid",
+        },
+        {
+            name: "message_id",
+            type: "text",
+        },
+        {
+            name: "payload",
+            type: "json",
+        },
+        {
+            name: "score_label",
+            type: "enum",
+            enumValues: ["ok", "warn", "alert", "n/a"],
+        },
+        {
+            name: "user",
+            type: "number",
+        },
+    ],
+}
+
 export const rolesSchema: ExuluTableDefinition = {
     type: "roles",
     name: {

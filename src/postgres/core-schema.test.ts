@@ -146,3 +146,38 @@ describe("context_map_topics", () => {
     expect(schema.fields.find((f) => f.name === "context")?.index).toBe(true);
   });
 });
+
+describe("claim_checks table", () => {
+  // No `buildSchemas` helper exists here — coreSchemas.get() reads the
+  // licence straight off EXULU_ENTERPRISE_LICENSE (see ee/entitlements.ts),
+  // so the gating behaviour is exercised by toggling that env var around the
+  // call, then restoring it.
+  const originalLicense = process.env.EXULU_ENTERPRISE_LICENSE;
+
+  afterEach(() => {
+    if (originalLicense === undefined) {
+      delete process.env.EXULU_ENTERPRISE_LICENSE;
+    } else {
+      process.env.EXULU_ENTERPRISE_LICENSE = originalLicense;
+    }
+  });
+
+  it("is registered only when the claim-check licence is present", () => {
+    process.env.EXULU_ENTERPRISE_LICENSE = "EXULU_EE_test";
+    const withLicence = coreSchemas.get();
+    expect(typeof withLicence.claimChecksSchema).toBe("function");
+
+    delete process.env.EXULU_ENTERPRISE_LICENSE;
+    const withoutLicence = coreSchemas.get();
+    expect(withoutLicence.claimChecksSchema).toBeUndefined();
+  });
+
+  it("carries the fields the chat reads back", () => {
+    process.env.EXULU_ENTERPRISE_LICENSE = "EXULU_EE_test";
+    const table = coreSchemas.get().claimChecksSchema!();
+    const names = table.fields.map((f) => f.name);
+    expect(names).toEqual(expect.arrayContaining(["session", "message_id", "payload", "score_label"]));
+    expect(table.fields.find((f) => f.name === "payload")?.type).toBe("json");
+    expect(table.fields.find((f) => f.name === "session")?.type).toBe("uuid");
+  });
+});
