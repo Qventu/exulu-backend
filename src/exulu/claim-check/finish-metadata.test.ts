@@ -847,7 +847,7 @@ describe("claimCheckMetadata", () => {
     // is blank. Naming it anyway is an entry the client cannot fulfil, and
     // F3's guard refuses the WHOLE check over any one such entry — not a
     // degraded source, a silent total loss of checking on that turn.
-    it("does not name a memory entry whose information is blank", () => {
+    it("does not name a memory entry whose title AND information are both blank", () => {
       const out = claimCheckMetadata({
         config: configOf('{"enabled":true}'),
         user: user(),
@@ -856,10 +856,44 @@ describe("claimCheckMetadata", () => {
         toolResults: retrievalParts,
         messages: [],
         recallHadItems: true,
-        recalledMemories: [{ id: "m_8", information: "" }, { id: "m_9", information: "   " }],
+        recalledMemories: [{ id: "m_8", title: "", information: "" }, { id: "m_9", title: "   ", information: "   " }],
       } as any) as any;
       expect(out.claimCheck.sources.some((s: any) => s.type === "memory")).toBe(false);
       expect(out.claimCheck.sources.length).toBeGreaterThan(0); // the kb sources still count
+    });
+
+    // Fix round 3, Important 5: the prompt block the model read is
+    // `- {item_name: "<title>", item_id: …} <information> (saved by …)`
+    // (buildMemoryPromptBlock), so with blank `information` the TITLE is
+    // still real evidence in the system prompt — and a hand-created memory
+    // row with only a name is an ordinary shape. The client falls back to
+    // the title as the content, so the entry IS fulfillable.
+    it("names a memory whose information is blank but whose title is not", () => {
+      const out = claimCheckMetadata({
+        config: configOf('{"enabled":true}'),
+        user: user(),
+        isGuest: false,
+        isLicensed: true,
+        toolResults: retrievalParts,
+        messages: [],
+        recallHadItems: true,
+        recalledMemories: [{ id: "m_8", title: "Kunde bevorzugt Deutsch", information: "" }],
+      } as any) as any;
+      expect(out.claimCheck.sources).toContainEqual({ type: "memory", id: "memory:m_8" });
+    });
+
+    it("never puts a memory title on the entry it names either", () => {
+      const out = claimCheckMetadata({
+        config: configOf('{"enabled":true}'),
+        user: user(),
+        isGuest: false,
+        isLicensed: true,
+        toolResults: retrievalParts,
+        messages: [],
+        recallHadItems: true,
+        recalledMemories: [{ id: "m_8", title: "Kunde bevorzugt Deutsch", information: "" }],
+      } as any) as any;
+      expect(JSON.stringify(out)).not.toContain("bevorzugt");
     });
 
     // information is read purely as an inclusion test and must never reach

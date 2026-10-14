@@ -299,8 +299,8 @@ function webReadability(output: unknown): Readability {
  * Never throws, and never names a source this function cannot vouch for:
  * a retrieval chunk with its source reference stripped, a document call that
  * errored or returned no content, a session-items call that found nothing, or
- * a memory this viewer may not see or whose information is blank all
- * contribute nothing. Naming an entry the client cannot in fact
+ * a memory this viewer may not see or whose title and information are both
+ * blank all contribute nothing. Naming an entry the client cannot in fact
  * recover is worse than omitting it — the client's own completeness guard
  * counts MANIFEST ENTRIES, not final sources, and refuses the WHOLE check the
  * moment any one named entry produces nothing (spec §4; F3's guard).
@@ -315,7 +315,7 @@ function webReadability(output: unknown): Readability {
  */
 function manifestFor(args: {
   toolResults: unknown;
-  recalledMemories: { id: string; information?: string }[] | undefined;
+  recalledMemories: { id: string; information?: string; title?: string }[] | undefined;
 }): ClaimCheckManifestEntry[] | null {
   const out: ClaimCheckManifestEntry[] = [];
   const seen = new Set<string>();
@@ -328,13 +328,24 @@ function manifestFor(args: {
   for (const memory of args.recalledMemories ?? []) {
     if (typeof memory?.id !== "string" || !memory.id) continue;
     // `information` can legitimately be "" (a row with neither information nor
-    // description — recall-collector.ts). The client omits a memory whose
-    // information is blank, so naming it anyway would be an entry the client
-    // cannot fulfil — and F3's guard treats ANY unfulfillable entry as reason
-    // to refuse the WHOLE check, not just that source. `information` is read
-    // here purely as an inclusion test; it never appears on the entry itself
-    // — the fragment stays ids-only.
-    if (typeof memory.information !== "string" || !memory.information.trim()) continue;
+    // description — recall-collector.ts), but that does NOT make the memory
+    // invisible to the check: the prompt block the model read is
+    // `- {item_name: "<title>", item_id: …} <information> (saved by …)`
+    // (buildMemoryPromptBlock), so with blank information the TITLE is still
+    // real evidence in the system prompt — and a hand-created row with only a
+    // name is an ordinary shape. The client falls back to the title as the
+    // content, so such an entry IS fulfillable; dropping it instead
+    // discarded evidence the model was shown (fix round 3, Important 5).
+    //
+    // Both blank is the one unfulfillable case, and naming it would have the
+    // client recover nothing — F3's guard treats ANY unfulfillable entry as
+    // reason to refuse the WHOLE check, not just that source.
+    //
+    // Both fields are read here purely as an inclusion test; neither ever
+    // appears on the entry itself — the fragment stays ids-only.
+    const information = typeof memory.information === "string" ? memory.information : "";
+    const title = typeof memory.title === "string" ? memory.title : "";
+    if (!information.trim() && !title.trim()) continue;
     add({ type: "memory", id: `memory:${memory.id}` });
   }
 
@@ -524,14 +535,18 @@ export type ClaimCheckTurnContext = {
    * drift apart (a guest turn then names memory sources the client cannot
    * produce, and the client's completeness guard refuses the whole check).
    *
-   * Carries `information` too — not for the fragment (which stays ids-only;
-   * `manifestFor` reads it purely to decide whether to name the entry at
-   * all, and it never reaches the produced entry) but because a row can
-   * legitimately have blank information (recall-collector.ts), which the
-   * client then has nothing to render for and omits — the same "entry the
-   * client cannot fulfil" problem a failed document call has.
+   * Carries `information` and `title` too — not for the fragment (which
+   * stays ids-only; `manifestFor` reads them purely to decide whether to
+   * name the entry at all, and neither ever reaches the produced entry) but
+   * because a row can legitimately have blank information
+   * (recall-collector.ts). Both are needed: the prompt block the model read
+   * is `- {item_name: "<title>", item_id: …} <information> (saved by …)`, so
+   * a title-only row is still evidence and the client falls back to the
+   * title as the content. Only a row with BOTH blank is one the client has
+   * nothing to render for and omits — the same "entry the client cannot
+   * fulfil" problem a failed document call has.
    */
-  recalledMemories?: { id: string; information?: string }[];
+  recalledMemories?: { id: string; information?: string; title?: string }[];
   /**
    * True when the turn's recall actually found something (`recall.list().length > 0`),
    * independent of whether this viewer may see it. Needed to tell "recall
