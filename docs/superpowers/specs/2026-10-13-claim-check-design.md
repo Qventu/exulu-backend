@@ -134,7 +134,8 @@ their own sources skip this entirely.
 
 ## 3. Config schema
 
-A 15th option on the `agentic_context_search` tool, `claim_check`, type `json`:
+A further option on the `agentic_context_search` tool, `claim_check`, type `json` — the tool's
+16th, next to `suppress_duplicate_passages`:
 
 ```jsonc
 {
@@ -155,9 +156,15 @@ feature costs money and changes the UI, so it is opt-in per agent.
 **The frontend half is not optional.** `serializeWizardConfig` emits a fixed list of entries, so
 any key the knowledge-search wizard does not know is silently deleted the next time an admin saves
 that wizard. `claim_check` must be added to `WizardConfig`, `parseWizardConfig` and
-`serializeWizardConfig` (14 entries → 15, and the test asserting the count) in the same change as
-the backend option. This is the failure that killed `tuning.engine: "v2"` in NEWLIFT production,
-and `suppress_duplicate_passages` is currently in the same state.
+`serializeWizardConfig` (15 entries → 16, and the tests asserting the count) in the same change as
+the backend option. This is the failure that killed `tuning.engine: "v2"` in NEWLIFT production.
+
+`suppress_duplicate_passages` was in the same state and is now declared too (16 entries). It was
+originally deferred as a separate change, but this design is what made the verification step the
+only way to enable claim check: every admin turning the feature on would have wiped that key in
+the same save, reverting an explicit `false` to default-on. It has no wizard control, like
+`claim_check`'s own `completions` and `caps` — declared and round-tripped so an operator who set
+it through the API does not lose it.
 
 Model resolution order, first hit wins:
 
@@ -543,5 +550,3 @@ settle it.
   the surface where most external users actually are (the app surface, external role) already
   works. Until then the wizard's switch is labelled "Auch externen Nutzern anzeigen" / "Also show to
   external users", naming only the half that works, and its hint states the gap.
-- Fixing `suppress_duplicate_passages`' missing wizard entry — noted here because this design
-  shares its failure mode, but it is a separate change.
