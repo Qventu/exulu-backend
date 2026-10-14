@@ -193,7 +193,12 @@ const requestSchema = z.object({
     .optional(),
 });
 
-type RequestSource = { content: string; name?: string; type?: ClaimCheckSourceType; id?: string };
+/**
+ * One source as the request carries it — derived from the schema three lines
+ * above rather than hand-spelled, so loosening a field there cannot leave
+ * this type claiming the old shape.
+ */
+type RequestSource = z.infer<typeof requestSchema>["sources"][number];
 
 /**
  * One id per source, because `evidence[].sourceId` has to resolve to exactly

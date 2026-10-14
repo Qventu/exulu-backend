@@ -866,6 +866,40 @@ describe("runClaimCheck — source truncation", () => {
     // Should read as 2 sources, not 3
     expect(note).toMatch(/2 source\(s\)/);
   });
+
+  // Fix round 3, minor: the cap and the quoting are in place, but a
+  // caller-supplied name is arbitrary text — a newline in one made a
+  // single-line note read as two, and the note is shown to a reader.
+  it("collapses whitespace in a caller-supplied name so one note stays one line", async () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `c${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources: [{ id: "s1", name: "Wartung\n2026\tQ3.pdf", content: "x".repeat(MAX_CHARS_PER_SOURCE + 100) }],
+      model: {} as any,
+      options: options(),
+      locale: "de",
+    });
+
+    const note = result.notes.find((n) => n.includes("truncated"))!;
+    expect(note).toContain('"Wartung 2026 Q3.pdf"');
+    expect(note).not.toContain("\n");
+    expect(note).not.toContain("\t");
+  });
 });
 
 describe("runClaimCheck — omitted outcomes", () => {
