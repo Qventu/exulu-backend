@@ -341,6 +341,41 @@ describe("runClaimCheck — resilience", () => {
     expect(result.notes.some((n) => n.includes("aborted"))).toBe(false);
   });
 
+  // The floor must bound the recursion's DEPTH, not refuse the first retry.
+  // Applying it to the original batch as well took the brief's lone-batch
+  // guarantee away below 8 sentences: a failing batch of 2-8 got ZERO retries
+  // (1 call) and lost every sentence, where {10, 5, 3} bisected and recovered
+  // half. Each row here is one batch that fails whole and succeeds in halves.
+  it.each([2, 3, 8])("bisects a lone failing batch of %i sentences at round 0, below the floor", async (n) => {
+    expect(n).toBeLessThanOrEqual(BISECT_FLOOR);
+    const answer = Array.from({ length: n }, (_, i) => `Satz Nummer ${i + 1} ist eindeutig wahr.`).join(" ");
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) => {
+      if (windows.length === n) throw new Error("batch too big for the provider today");
+      return allClear(windows.map((w: any) => w.sentence.index));
+    });
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `claim ${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q", answer, sources: SOURCES, model: {} as any, options: options(), locale: "de",
+    });
+
+    // The whole batch, then its two halves. Applying the floor at round 0
+    // makes this 1 call and loses every sentence.
+    expect((runSelectAndDisambiguate as jest.Mock).mock.calls.length).toBe(3);
+    expect(result.sentences.every((s) => s.state === "checked")).toBe(true);
+    expect(result.status).toBe("ok");
+  });
+
   // Finding 2 (R18): a genuine multi-batch circuit-breaker fixture. 60
   // sentences batch into [25, 25, 10] for BATCH.selectDisambiguate = 25; the
   // mock fails only the two full-size (un-bisected) batches outright — any
@@ -1158,6 +1193,54 @@ describe("runClaimCheck — verbatim short-circuit", () => {
     expect(sentToModel).toEqual(["c1"]);
   });
 
+  // R47, end to end. split.ts emits a markdown list item as its own sentence
+  // with the marker stripped, and list items "rarely end in a period" — so the
+  // needle carries no terminator and used to match the opening clause of a
+  // longer source sentence that went on to condition it. This is the exact
+  // payload the review reproduced; before R47 it came back supported,
+  // matchedVerbatim true, status "ok", notes [], zero model calls.
+  it("does NOT short-circuit an unterminated bullet that the source only opens a sentence with", async () => {
+    const bullet = "Der Aufzug darf nach der Wartung wieder in Betrieb genommen werden";
+    const { result, sentToModel } = await probe(`- ${bullet}\n- Die Prüfplakette wird dann erneuert.`, [
+      {
+        id: "s1",
+        content: `${bullet}, wenn der TÜV zugestimmt hat. Ohne diese Zustimmung bleibt der Aufzug stillgelegt.`,
+      },
+    ]);
+
+    // The bullet really is a sentence of the answer, and really is contained
+    // in the source — only the sentence boundary refuses it.
+    expect(result.sentences[0]!.claimIds).toEqual(["c1"]);
+    expect(result.claims[0]!.matchedVerbatim).toBe(false);
+    expect(result.claims[0]!.verdict).toBe("unsupported");
+    expect(sentToModel).toContain("c1");
+  });
+
+  // The answer's final sentence often has no terminator either, for the same
+  // reason and with the same consequence.
+  it("does NOT short-circuit an unterminated final sentence the source continues past", async () => {
+    const tail = "Die Steuerung arbeitet mit 230 Volt im Schaltschrank links";
+    const { result, sentToModel } = await probe(`Zur Anlage. ${tail}`, [
+      { id: "s1", content: `${tail} und wurde 2019 durch ein Nachfolgemodell ersetzt.` }
+    ]);
+
+    expect(result.claims.every((c) => !c.matchedVerbatim)).toBe(true);
+    expect(sentToModel.length).toBe(result.claims.length);
+  });
+
+  // …and the shape that must survive R47, or the rule has eaten the feature:
+  // the answer bullets a sentence the source writes as terminated prose.
+  it("DOES short-circuit an unterminated bullet the source states as a whole sentence", async () => {
+    const bullet = "Der Aufzug darf nach der Wartung wieder in Betrieb genommen werden";
+    const { result, sentToModel } = await probe(`- ${bullet}`, [
+      { id: "s1", content: `Hinweis zur Abnahme. ${bullet}. Danach folgt Kapitel 4.` },
+    ]);
+
+    expect(result.claims[0]).toMatchObject({ matchedVerbatim: true, verdict: "supported" });
+    expect(result.claims[0]!.evidence).toEqual([{ sourceId: "s1", quote: bullet }]);
+    expect(sentToModel).toEqual([]);
+  });
+
   it("still short-circuits across whitespace-run and case differences", async () => {
     const { result, sentToModel } = await probe("DIE STEUERUNG FST-2XT  arbeitet   mit 230 VOLT im Schaltschrank LINKS.");
 
@@ -1172,7 +1255,7 @@ describe("runClaimCheck — verbatim short-circuit", () => {
   // elsewhere in the answer) is not what the source carries.
   it("does NOT short-circuit a verbatim sentence whose claims came from a clarified rewrite", async () => {
     const quoted = "Sie arbeitet mit 230 Volt im Schaltschrank links.";
-    const source = [{ id: "s1", content: `Zur FST-2XT: ${quoted} Danach folgt Kapitel 4.` }];
+    const source = [{ id: "s1", content: `Zur FST-2XT. ${quoted} Danach folgt Kapitel 4.` }];
     (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) => ({
       selection: windows.map((w: any) => ({
         index: w.sentence.index, verifiable: true, rewritten: null, reason: "fact", answered: true,
@@ -1230,7 +1313,7 @@ describe("runClaimCheck — verbatim short-circuit", () => {
     const result = await runClaimCheck({
       question: "q",
       answer: "Sie arbeitet mit 230 Volt im Schaltschrank links.",
-      sources: [{ id: "s1", content: `Zur Steuerung: ${clarified} Danach folgt Kapitel 4.` }],
+      sources: [{ id: "s1", content: `Zur Steuerung. ${clarified} Danach folgt Kapitel 4.` }],
       model: {} as any,
       options: options({ reRetrieve: false }),
       locale: "de",
@@ -1389,6 +1472,58 @@ describe("runClaimCheck — call budget", () => {
     expect(result.usage.calls).toBe(8);
     expect(result.score.claims).toBe(30);
     expect(result.status).toBe("ok");
+  });
+
+  // R47 changes the hit rate, so both halves of the change are measured. A
+  // bullet-shaped answer is the real NEWLIFT shape, and a bullet carries no
+  // terminator of its own.
+  const BULLETS = Array.from(
+    { length: 30 },
+    (_, i) => `Punkt ${i + 1} beschreibt eine eindeutig überprüfbare Tatsache der Anlage`,
+  );
+  const BULLET_ANSWER = BULLETS.map((b) => `- ${b}`).join("\n");
+
+  const runBullets = async (sources: { id: string; content: string }[]) => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `claim ${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+    return runClaimCheck({
+      question: "q", answer: BULLET_ANSWER, sources, model: {} as any,
+      options: options({ reRetrieve: false }), locale: "de",
+    });
+  };
+
+  it("still costs 4 for 30 unterminated bullets the sources STATE as whole sentences", async () => {
+    const result = await runBullets([{ id: "prosa", content: `${BULLETS.join(". ")}.` }]);
+
+    expect(result.claims).toHaveLength(30);
+    expect(result.claims.every((c) => c.matchedVerbatim)).toBe(true);
+    expect((runVerification as jest.Mock).mock.calls).toHaveLength(0);
+    expect(result.usage.calls).toBe(4);
+  });
+
+  it("costs the full 8 for the same bullets when the sources only CONTAIN them", async () => {
+    const result = await runBullets([
+      { id: "prosa", content: BULLETS.map((b) => `${b}, sofern die Freigabe vorliegt.`).join(" ") },
+    ]);
+
+    expect(result.claims).toHaveLength(30);
+    // Every bullet is still a substring of the source — R47 is the only thing
+    // refusing it, and the condition it refuses on is the one that matters.
+    expect(result.claims.every((c) => !c.matchedVerbatim)).toBe(true);
+    expect((runVerification as jest.Mock).mock.calls).toHaveLength(4);
+    expect(result.usage.calls).toBe(8);
   });
 
   it("costs 4 when every sentence of that answer is quoted verbatim in a source", async () => {

@@ -20,6 +20,29 @@
 //    what preserves meaning. It also makes negations and numbers PROTECTIVE
 //    rather than dangerous: a sentence carrying "nicht" or "240" that the
 //    source does not carry simply fails the test and goes to the model.
+//  - A WHOLE SENTENCE of the source, not merely a substring of it (R47).
+//    Contiguity alone was defended by the claim that `splitIntoSentences`
+//    keeps terminal punctuation, so a sentence could only match where the
+//    source also ended a sentence. It does not: split.ts emits every markdown
+//    list item as its own sentence with the marker stripped, and notes in its
+//    own comment that list items "rarely end in a period". A German
+//    maintenance answer is bullet-heavy, so the usual needle has NO
+//    terminator — and matched the opening clause of a longer source sentence
+//    that went on to condition or withdraw it:
+//
+//      bullet: "Der Aufzug darf nach der Wartung wieder in Betrieb genommen
+//               werden"
+//      source: "Der Aufzug darf nach der Wartung wieder in Betrieb genommen
+//               werden, wenn der TÜV zugestimmt hat."
+//
+//    A safety condition silently dropped and reported `supported` with no
+//    model call. The same shape covers a source that quotes a sentence in
+//    order to refute it ("Viele Monteure glauben, X. Das trifft nicht zu."),
+//    one that presents it as superseded ("Früher galt: X. … nicht mehr der
+//    Fall."), and a colon-terminated lead-in ("Falsch: X."). Requiring the
+//    match to BE a sentence of the source is exactly what the entailment
+//    argument licenses and nothing more, and it costs nothing in the common
+//    case, because a genuinely quoted sentence is a whole source sentence.
 //  - The SENTENCE, not the claim. Claims are decontextualised rewrites with
 //    bracketed inserts, so they almost never match verbatim; whole sentences
 //    are quoted constantly. Specifically the sentence text DECOMPOSITION was
@@ -34,6 +57,16 @@
 //    reason to fall through to the model.
 //  - A LENGTH FLOOR. A short sentence ("Ja.", "Siehe oben.") can appear inside
 //    any document by chance, so short sentences always go to the model.
+//
+// COST: the scan is synchronous and scales as sentences x source content — up
+// to 120 sentences against 200 sources of 60,000 characters at the payload cap.
+// Measured at that cap: 79 ms to build the index, then 260 ms to scan it for
+// 120 sentences that are not in it (the worst realistic case, since a miss
+// reads every source end to end). That blocks the event loop the process also
+// owes to chat streaming for every other user, it is not free, and the docs
+// invite operators to raise `caps.maxSentences` past 120 — which scales it
+// linearly. The pathological case is bounded separately; see
+// MAX_SENTENCE_CANDIDATES.
 import { MAX_CHARS_PER_SOURCE } from "./evidence";
 import type { ClaimCheckSource } from "./types";
 
@@ -49,8 +82,8 @@ export const VERBATIM_MIN_CHARS = 40;
  * and `Claim.matchedVerbatim` carries the same fact as a machine-readable flag.
  */
 export const VERBATIM_RATIONALE =
-  "The sentence this claim was extracted from appears verbatim in this source, which therefore " +
-  "entails the claim; matched by exact text comparison, not judged by a model.";
+  "The sentence this claim was extracted from appears verbatim as a sentence of this source, which " +
+  "therefore entails the claim; matched by exact text comparison, not judged by a model.";
 
 /**
  * Collapse whitespace runs to a single space and case-fold. JavaScript's `\s`
@@ -86,9 +119,79 @@ export function buildVerbatimIndex(
 }
 
 /**
+ * What ends a sentence in a source document. Deliberately only these three.
+ *
+ * `…` is excluded on purpose: an ellipsis announces that the sentence
+ * continues, which is the one direction this test must never be generous in.
+ * `;` and `:` are excluded because they join clauses rather than ending a
+ * claim — and `:` in particular is how a source introduces a sentence it is
+ * about to deny ("Früher galt: …", "Falsch: …").
+ */
+const SENTENCE_TERMINATORS = ".!?";
+
+const isTerminator = (ch: string | undefined): boolean => ch !== undefined && SENTENCE_TERMINATORS.includes(ch);
+
+/**
+ * How many occurrences of one sentence to examine inside one source before
+ * giving up on it.
+ *
+ * Plain `includes` stopped at the FIRST occurrence; the boundary test has to
+ * keep looking, because a source can quote a sentence mid-clause and then
+ * assert it properly. Measured at the payload cap, a source whose text repeats
+ * the sentence 612 times and never at a sentence boundary turned a 0.26 s scan
+ * into 1.6 s of synchronous event-loop blocking — the same league as the
+ * per-claim evidence-selection bug that PassageIndex exists to fix, in a
+ * process that also owes chat streaming to every other user. A real document
+ * states a given sentence once or twice; 32 is far past anything legitimate.
+ *
+ * Giving up errs toward a model call — the safe direction — so the cap can
+ * never turn a non-match into a match.
+ */
+const MAX_SENTENCE_CANDIDATES = 32;
+
+/**
+ * Does `haystack` contain `needle` as a WHOLE SENTENCE of its own (R47)?
+ *
+ * Both strings are already normalised, so every whitespace run is a single
+ * space. Every occurrence is tested, not just the first — a source may quote a
+ * sentence mid-clause once and assert it properly later — up to
+ * MAX_SENTENCE_CANDIDATES of them.
+ */
+function containsWholeSentence(haystack: string, needle: string): boolean {
+  const needleIsTerminated = isTerminator(needle[needle.length - 1]);
+
+  for (let from = 0, examined = 0; examined < MAX_SENTENCE_CANDIDATES; examined += 1) {
+    const start = haystack.indexOf(needle, from);
+    if (start === -1) return false;
+    from = start + 1;
+
+    // Left: the start of the source, or straight after a terminator and the
+    // single space normalisation left behind. Anything else — a comma, a
+    // colon, a list marker, the tail of a heading — means the source was
+    // saying something before this, and what it was saying is not in evidence.
+    if (start !== 0 && !(haystack[start - 1] === " " && isTerminator(haystack[start - 2]))) continue;
+
+    // Right: the end of the source; or the source's own terminator sits right
+    // here (the bullet case — the answer dropped the period the source has);
+    // or the needle brought its terminator and the source's sentence ends with
+    // it. A needle ending in "." followed immediately by a non-space is NOT a
+    // sentence end — that "." was a decimal point or an abbreviation.
+    const end = start + needle.length;
+    if (
+      end === haystack.length ||
+      isTerminator(haystack[end]) ||
+      (needleIsTerminated && haystack[end] === " ")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * The id of the first source (in the order the caller supplied them) that
- * contains this sentence literally, or undefined when none does — which is
- * also the answer for every sentence under the length floor.
+ * carries this sentence as a whole sentence of its own, or undefined when none
+ * does — which is also the answer for every sentence under the length floor.
  */
 export function findVerbatimSource(sentenceText: string, index: VerbatimIndex): string | undefined {
   const needle = normaliseForContainment(sentenceText);
@@ -97,7 +200,7 @@ export function findVerbatimSource(sentenceText: string, index: VerbatimIndex): 
     // Cheap guard before the search: a haystack shorter than the needle can
     // never contain it, and a 200-source payload is scanned once per sentence.
     if (normalised.length < needle.length) continue;
-    if (normalised.includes(needle)) return sourceId;
+    if (containsWholeSentence(normalised, needle)) return sourceId;
   }
   return undefined;
 }

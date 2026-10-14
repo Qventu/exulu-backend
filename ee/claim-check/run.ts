@@ -65,10 +65,14 @@ export const BATCH = { selectDisambiguate: 25, decompose: 15, verifySentences: 8
  * never agreed to. The floor is what bounds a CONTENT-triggered failure (a
  * batch that would fail at any size) to at most 7 calls instead.
  *
- * The cost of the floor, stated plainly: an ORIGINAL batch at or below it —
- * the remainder batch of a short answer, and every batch of the 15-sentence
- * decomposition stage once split once — is not split at all, so its sentences
- * go straight to not_checked where {10, 5, 3} would have retried two halves.
+ * The floor applies to the RETRY rounds only. Round 0 always bisects a failed
+ * batch of more than one sentence, whatever its size: the brief's guarantee
+ * that "a lone failing batch still gets its bisect" has to hold for a short
+ * answer too, and applying the floor to the original batch quietly took it
+ * away — a lone failing batch of 2 to 8 sentences got ZERO retries and lost
+ * every sentence to not_checked, where {10, 5, 3} bisected and usually
+ * recovered half. What the floor is for is bounding the DEPTH of the
+ * recursion, not refusing the first retry.
  */
 export const BISECT_FLOOR = 8;
 /**
@@ -158,7 +162,9 @@ async function runBatched<R>(
 
     const next: SentenceWindow[][] = [];
     for (const batch of failed) {
-      if (batch.length > BISECT_FLOOR && round < MAX_BISECT_ROUNDS) {
+      // Round 0 always bisects (the first retry is never refused); the floor
+      // only stops the recursion going deeper. See BISECT_FLOOR.
+      if (batch.length > 1 && round < MAX_BISECT_ROUNDS && (round === 0 || batch.length > BISECT_FLOOR)) {
         const mid = Math.ceil(batch.length / 2);
         next.push(batch.slice(0, mid), batch.slice(mid));
         continue;
