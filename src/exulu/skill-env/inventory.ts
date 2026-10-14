@@ -105,6 +105,15 @@ export const ENV_CLASSIFICATION: Record<string, "secret" | "runtime"> = {
   FRONTEND: "runtime",
   // Found via `rg process\.env\.[A-Z0-9_]+ src ee` (Step 3 of the task brief):
   AUTH_MODE: "runtime", // "password" | "otp" mode selector, echoed by GET /config
+  // Platform fallback model for POST /claims/check when the request names no
+  // model and no agent config supplies one. It is a model IDENTIFIER, not a
+  // credential: knowing the string grants access to nothing, because reaching
+  // that model still needs the deployment's own proxy credentials
+  // (LITELLM_MASTER_KEY / EXULU_API_KEY, both classified secret) and passes
+  // through resolveModel's catalog. All it changes is which model a check
+  // runs on — behaviour, which is this class's definition. Same reasoning as
+  // EXULU_ENTITY_EXTRACTION_MODEL, TRANSCRIPTION_MODEL and TTS_MODEL below.
+  CLAIM_CHECK_DEFAULT_MODEL: "runtime",
   DISABLE_SCHEMA_UPDATE: "runtime", // LiteLLM child-process flag
   EXULU_ENTITY_EXTRACTION_MODEL: "runtime",
   // Request-rate ceilings for external users, classified exactly as their
