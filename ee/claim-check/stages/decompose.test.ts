@@ -5,6 +5,7 @@ jest.mock("@EE/agentic-retrieval/pipeline/micro-call", () => ({
 import { microCall } from "@EE/agentic-retrieval/pipeline/micro-call";
 import { splitIntoSentences, buildWindows } from "../split";
 import { runDecomposition } from "./decompose";
+import { CLAIM_CHECK_MAX_OUTPUT_TOKENS } from "../types";
 
 const ANSWER = "Die FST-2XT arbeitet mit 230 Volt und wird im Schaltschrank montiert.";
 const windows = () => buildWindows(splitIntoSentences(ANSWER, "de"), 5, 0);
@@ -91,5 +92,22 @@ describe("runDecomposition", () => {
     const prompt = String((microCall as jest.Mock).mock.calls[0][0].prompt);
     expect(prompt).toContain("[0] Die FST-2XT arbeitet mit 230 Volt.");
     expect(prompt).not.toContain("im Schaltschrank montiert");
+  });
+
+  it("passes the raised output cap and uses temperature 0", async () => {
+    (microCall as jest.Mock).mockResolvedValue({
+      output: { sentences: [] },
+      text: "",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    await runDecomposition({
+      windows: windows(),
+      question: "q",
+      sentenceTexts: new Map(),
+      model: {} as any,
+    });
+    const args = (microCall as jest.Mock).mock.calls[0][0];
+    expect(args.maxOutputTokens).toBe(CLAIM_CHECK_MAX_OUTPUT_TOKENS);
+    expect(args.temperature).toBe(0);
   });
 });
