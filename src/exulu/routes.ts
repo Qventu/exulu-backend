@@ -64,6 +64,7 @@ import { compactSession, CompactionInsufficientError } from "./compact-session.t
 import { describeRequestError } from "./request-error.ts";
 import { finishTurnMetadata } from "./turn-metadata.ts";
 import { recalledMemoriesMetadata } from "./memory/recalled-metadata.ts";
+import { claimCheckMetadata } from "./claim-check/finish-metadata.ts";
 import { isPublicSurface, treatAsGuest } from "./public-surface.ts";
 import { recordMemoryUsage } from "./memory/usage.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
@@ -820,6 +821,16 @@ export const createExpressRoutes = async (
 
         if (headers.session) markStreamActive(headers.session as string);
         const turnStartedAt = Date.now();
+        // claimCheckMetadata needs the turn's retrieval tool results, shaped
+        // like the assistant message's parts — but `messageMetadata`'s `finish`
+        // branch only ever receives the `finish` stream part itself (no
+        // message/parts access), and onFinish (which does get the assembled
+        // responseMessage) only fires AFTER that `finish` part — and its
+        // metadata — has already been sent to the client. So we collect each
+        // retrieval tool call's FINAL (non-preliminary) result ourselves as it
+        // streams past messageMetadata, below, and read it back once `finish`
+        // arrives.
+        const turnToolResults: { type: string; toolCallId: string; output: unknown }[] = [];
         let result: Awaited<ReturnType<typeof generateStream>>;
         try {
           result = await generateStream({
@@ -860,6 +871,14 @@ export const createExpressRoutes = async (
 
         result.stream.pipeUIMessageStreamToResponse(res, {
           messageMetadata: ({ part }) => {
+            // Record each retrieval tool call's final result (see
+            // turnToolResults above) — generator-tool yields are marked
+            // `preliminary: true` until the last one, so this keeps exactly
+            // one entry per call. Pure bookkeeping: returns nothing, so it
+            // never becomes a message-metadata chunk of its own.
+            if (part.type === "tool-result" && !part.preliminary) {
+              turnToolResults.push({ type: `tool-${part.toolName}`, toolCallId: part.toolCallId, output: part.output });
+            }
             // Per-step usage: the LAST step's inputTokens reflects the actual
             // prompt size of this turn (totalUsage sums every step's full
             // prompt, inflating multi-step turns ~stepCount×). Last write wins
@@ -876,6 +895,9 @@ export const createExpressRoutes = async (
                 // The public surface is a guest surface even for a signed-in visitor:
                 // the page renders in guest mode, so the data has to follow.
                 ...recalledMemoriesMetadata({ recall: result.recall, agent, isGuest: treatAsGuest(req, user) }),
+                // The chat posts the check itself once the stream ends; this
+                // only tells it that it may, and which sources to send.
+                ...claimCheckMetadata({ agent, user, toolResults: turnToolResults }),
               };
             }
             return undefined;
