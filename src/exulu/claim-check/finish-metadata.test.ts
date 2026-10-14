@@ -5,6 +5,7 @@ import {
   INVISIBLE_EVIDENCE_PART_TYPES,
   RECORDED_PART_TYPES,
   RETRIEVAL_PART_TYPES,
+  type ClaimCheckTurnContext,
 } from "./finish-metadata";
 import { AGENTIC_RETRIEVAL_TOOL_NAME } from "@EE/agentic-retrieval/pipeline/index";
 import { pipelineConfigFor } from "@EE/claim-check/agent-config";
@@ -59,15 +60,42 @@ const user = (over: Record<string, unknown> = {}) => ({ id: 7, type: "user", ...
  */
 const configOf = (claimCheck: string) => pipelineConfigFor(agentWith(claimCheck)).claimCheck;
 
+/**
+ * One TYPED turn context per call site, with the enabled-and-allowed
+ * defaults every test starts from, overridden per test.
+ *
+ * Typed on purpose (fix round 3, minor): the call sites used to spell the
+ * context inline and cast it `as any` — to avoid repeating `recallHadItems`
+ * and `messages` 60 times — which threw away the compile-time guard on the
+ * one contract that must not drift. A mistyped fixture key (`toolResult`,
+ * `recalledMemory`, `isGuests`) silently exercised the `undefined` path and
+ * the test still passed. It is a compile error now.
+ *
+ * `toolResults` is part of this shape because `claimCheckMetadata` takes it;
+ * `claimCheckStreamMetadata` ignores the key and accumulates its own.
+ */
+const ctx = (
+  over: Partial<ClaimCheckTurnContext & { toolResults: unknown }> = {},
+): ClaimCheckTurnContext & { toolResults: unknown } => ({
+  config: configOf('{"enabled":true}'),
+  user: user(),
+  isGuest: false,
+  isLicensed: true,
+  messages: [],
+  recallHadItems: false,
+  toolResults: [],
+  ...over,
+});
+
 describe("claimCheckMetadata", () => {
   it("emits ids only — never chunk content — when the check is enabled", () => {
-    const meta = claimCheckMetadata({
+    const meta = claimCheckMetadata(ctx({
       config: configOf('{"enabled":true}'),
       user: user(),
       isGuest: false,
       isLicensed: true,
       toolResults: retrievalParts,
-    } as any);
+    }));
     expect(meta).toEqual({
       claimCheck: { enabled: true, sources: retrievalSources },
     });
@@ -76,13 +104,13 @@ describe("claimCheckMetadata", () => {
 
   it("is ABSENT when the agent has the check disabled", () => {
     expect(
-      claimCheckMetadata({ config: configOf('{"enabled":false}'), user: user(), isGuest: false, isLicensed: true, toolResults: retrievalParts } as any),
+      claimCheckMetadata(ctx({ config: configOf('{"enabled":false}'), user: user(), isGuest: false, isLicensed: true, toolResults: retrievalParts })),
     ).toEqual({});
   });
 
   it("is ABSENT when the agent has no claim_check config at all (default off)", () => {
     expect(
-      claimCheckMetadata({ config: pipelineConfigFor({ id: "a", tools: [] }).claimCheck, user: user(), isGuest: false, isLicensed: true, toolResults: retrievalParts } as any),
+      claimCheckMetadata(ctx({ config: pipelineConfigFor({ id: "a", tools: [] }).claimCheck, user: user(), isGuest: false, isLicensed: true, toolResults: retrievalParts })),
     ).toEqual({});
   });
 
@@ -91,7 +119,7 @@ describe("claimCheckMetadata", () => {
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     try {
       expect(
-        claimCheckMetadata({ config: configOf("{not json"), user: user(), isGuest: false, isLicensed: true, toolResults: retrievalParts } as any),
+        claimCheckMetadata(ctx({ config: configOf("{not json"), user: user(), isGuest: false, isLicensed: true, toolResults: retrievalParts })),
       ).toEqual({});
     } finally {
       warn.mockRestore();
@@ -102,7 +130,7 @@ describe("claimCheckMetadata", () => {
   it("is ABSENT when the turn made no retrieval call", () => {
     const noRetrieval = [{ type: "step-start" }, { type: "text", text: "Gern!" }];
     expect(
-      claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: noRetrieval } as any),
+      claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: noRetrieval })),
     ).toEqual({});
   });
 
@@ -111,30 +139,30 @@ describe("claimCheckMetadata", () => {
       { type: "tool-Context_Search", toolCallId: "call_1", output: { result: JSON.stringify({ chunks: [] }) } },
     ];
     expect(
-      claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: empty } as any),
+      claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: empty })),
     ).toEqual({});
   });
 
   // Review Focus 2
   it("is ABSENT for an external viewer when showToExternalUsers is false, even with the check enabled", () => {
-    const meta = claimCheckMetadata({
+    const meta = claimCheckMetadata(ctx({
       config: configOf('{"enabled":true,"showToExternalUsers":false}'),
       user: user({ role: { id: "r1", name: "external" } }),
       isGuest: false,
       isLicensed: true,
       toolResults: retrievalParts,
-    } as any);
+    }));
     expect(meta).toEqual({});
   });
 
   it("is emitted for an external viewer when showToExternalUsers is true", () => {
-    const meta = claimCheckMetadata({
+    const meta = claimCheckMetadata(ctx({
       config: configOf('{"enabled":true,"showToExternalUsers":true}'),
       user: user({ role: { id: "r1", name: "external" } }),
       isGuest: false,
       isLicensed: true,
       toolResults: retrievalParts,
-    } as any);
+    }));
     expect(meta).toEqual({
       claimCheck: { enabled: true, sources: retrievalSources },
     });
@@ -144,24 +172,24 @@ describe("claimCheckMetadata", () => {
   // agent link renders in guest mode, so isGuest must gate the same as an
   // external role — the endpoint applies the identical OR (ee/claim-check/routes.ts).
   it("is ABSENT for a signed-in internal user on the public surface when showToExternalUsers is false", () => {
-    const meta = claimCheckMetadata({
+    const meta = claimCheckMetadata(ctx({
       config: configOf('{"enabled":true,"showToExternalUsers":false}'),
       user: user(), // internal: no external role
       isGuest: true, // ...but on the public surface
       isLicensed: true,
       toolResults: retrievalParts,
-    } as any);
+    }));
     expect(meta).toEqual({});
   });
 
   it("is emitted for a signed-in internal user on the public surface when showToExternalUsers is true", () => {
-    const meta = claimCheckMetadata({
+    const meta = claimCheckMetadata(ctx({
       config: configOf('{"enabled":true,"showToExternalUsers":true}'),
       user: user(),
       isGuest: true,
       isLicensed: true,
       toolResults: retrievalParts,
-    } as any);
+    }));
     expect(meta).toEqual({
       claimCheck: { enabled: true, sources: retrievalSources },
     });
@@ -174,14 +202,14 @@ describe("claimCheckMetadata", () => {
   // The panel could then only ever fail for this feature's headline external
   // audience, so the fragment must agree with the endpoint instead.
   it("is ABSENT for an anonymous guest with no user id, even when showToExternalUsers is true", () => {
-    const meta = claimCheckMetadata({
+    const meta = claimCheckMetadata(ctx({
       config: configOf('{"enabled":true,"showToExternalUsers":true}'),
       user: undefined,
       isGuest: true,
       isLicensed: true,
       toolResults: retrievalParts,
       messages: [],
-    } as any);
+    }));
     expect(meta).toEqual({});
   });
 
@@ -189,14 +217,14 @@ describe("claimCheckMetadata", () => {
   // there can only produce a failing post. Both EE flags flip together
   // today; this gate is what keeps them from drifting apart silently.
   it("is ABSENT when the deployment is not licensed for claim check", () => {
-    const meta = claimCheckMetadata({
+    const meta = claimCheckMetadata(ctx({
       config: configOf('{"enabled":true}'),
       user: user(),
       isGuest: false,
       isLicensed: false,
       toolResults: retrievalParts,
       messages: [],
-    } as any);
+    }));
     expect(meta).toEqual({});
   });
 
@@ -209,7 +237,7 @@ describe("claimCheckMetadata", () => {
       { type: "tool-Context_Search", toolCallId: "call_1", output: { result: JSON.stringify({ chunks: [{ item_id: "i2" }, { item_id: "i1" }] }) } },
       { type: "tool-Context_Search", toolCallId: "call_2", output: { result: JSON.stringify({ chunks: [{ item_id: "i1" }, { item_id: "i3" }] }) } },
     ];
-    const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: twoCalls } as any) as any;
+    const meta = claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: twoCalls })) as any;
     // first-seen wins: i1's entry carries call_1 (where it was FIRST seen), and
     // call_2 contributes only i3 — its own i1 is a duplicate, not a second entry.
     expect(meta.claimCheck.sources).toEqual([
@@ -222,7 +250,7 @@ describe("claimCheckMetadata", () => {
   it("survives a tool output that is not valid JSON without throwing", () => {
     const broken = [{ type: "tool-Context_Search", toolCallId: "call_1", output: { result: "<<not json>>" } }];
     expect(
-      claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: broken } as any),
+      claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: broken })),
     ).toEqual({});
   });
 
@@ -277,7 +305,7 @@ describe("claimCheckMetadata", () => {
           },
         ]),
       ];
-      const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any);
+      const meta = claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both }));
       expect(meta).toEqual({
         claimCheck: {
           enabled: true,
@@ -291,7 +319,7 @@ describe("claimCheckMetadata", () => {
         ...retrievalParts,
         sessionItemsPart([{ context: { name: "Handbücher", id: "ctx_1" }, chunks: [] }]),
       ];
-      const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any) as any;
+      const meta = claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both })) as any;
       expect(meta.claimCheck.sources.some((s: any) => s.type === "session_item")).toBe(false);
       expect(meta.claimCheck.sources.length).toBeGreaterThan(0); // the kb sources still count
     });
@@ -305,7 +333,7 @@ describe("claimCheckMetadata", () => {
         ...retrievalParts,
         sessionItemsPart(["Embedder not configured for context ctx_2."]),
       ];
-      const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any) as any;
+      const meta = claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both })) as any;
       expect(meta.claimCheck.sources.some((s: any) => s.type === "session_item")).toBe(false);
       expect(meta.claimCheck.sources.length).toBeGreaterThan(0);
     });
@@ -317,7 +345,7 @@ describe("claimCheckMetadata", () => {
           { context: { id: "ctx_1" }, chunks: [{ item_id: "i9", item_name: "leer.pdf", chunk_content: "   " }] },
         ]),
       ];
-      const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any) as any;
+      const meta = claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both })) as any;
       expect(meta.claimCheck.sources.some((s: any) => s.type === "session_item")).toBe(false);
       expect(meta.claimCheck.sources.length).toBeGreaterThan(0);
     });
@@ -331,7 +359,7 @@ describe("claimCheckMetadata", () => {
           { context: { id: "ctx_3" }, chunks: [{ item_id: "i9", item_name: "w.pdf", chunk_content: "230 Volt." }] },
         ]),
       ];
-      const meta = claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any) as any;
+      const meta = claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both })) as any;
       expect(meta.claimCheck.sources).toContainEqual({ type: "session_item", id: "tool:call_2", toolCallId: "call_2" });
     });
 
@@ -359,7 +387,7 @@ describe("claimCheckMetadata", () => {
         },
       ];
       expect(
-        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both, messages: [] } as any),
+        claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both, messages: [] })),
       ).toEqual({});
     });
 
@@ -369,7 +397,7 @@ describe("claimCheckMetadata", () => {
         { type: sessionItemsPartType, toolCallId: "call_2", output: { result: "<<not json>>" } },
       ];
       expect(
-        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any),
+        claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both })),
       ).toEqual({});
     });
 
@@ -379,7 +407,7 @@ describe("claimCheckMetadata", () => {
         sessionItemsPart({ chunks: [{ item_id: "i9", chunk_content: "230 Volt." }] }),
       ];
       expect(
-        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any),
+        claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both })),
       ).toEqual({});
     });
 
@@ -390,7 +418,7 @@ describe("claimCheckMetadata", () => {
     it("SUPPRESSES THE WHOLE FRAGMENT for an element that is not a per-context response at all", () => {
       const both = [...retrievalParts, sessionItemsPart([{ id: "s1", content: "230 Volt." }])];
       expect(
-        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any),
+        claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both })),
       ).toEqual({});
     });
 
@@ -403,7 +431,7 @@ describe("claimCheckMetadata", () => {
         sessionItemsPart([{ context: { id: "ctx_1" }, chunks: [{ chunk_content: "230 Volt." }] }]),
       ];
       expect(
-        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any),
+        claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both })),
       ).toEqual({});
     });
   });
@@ -422,7 +450,7 @@ describe("claimCheckMetadata", () => {
         { type: partTypeOf(VIEW_DOCUMENT_PAGE_TOOL_NAME), toolCallId: "call_2", output: { attached: true, filename: "x.pdf", page: 1, note: "shown" } },
       ];
       expect(
-        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both } as any),
+        claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: both })),
       ).toEqual({});
     });
 
@@ -434,43 +462,43 @@ describe("claimCheckMetadata", () => {
     // built for — agentic retrieval and nothing else — still emits.
     it("still emits for a turn whose only tool was agentic retrieval", () => {
       expect(
-        claimCheckMetadata({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: retrievalParts } as any),
+        claimCheckMetadata(ctx({ config: configOf('{"enabled":true}'), user: user(), isGuest: false, isLicensed: true, toolResults: retrievalParts })),
       ).toEqual({ claimCheck: { enabled: true, sources: retrievalSources } });
     });
 
     // names a document tool's output as a document entry (read_session_file)
     it("names a document tool's output as a document entry", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
         isLicensed: true,
         toolResults: [...retrievalParts, { type: "tool-read_session_file", toolCallId: "call_4", output: { content: "230 Volt." } }],
-      } as any) as any;
+      })) as any;
       expect(out.claimCheck.sources).toContainEqual({ type: "document", id: "tool:call_4", toolCallId: "call_4" });
     });
 
     // parse_document shares read_session_file's output shape — same handler.
     it("names parse_document's output as a document entry too", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
         isLicensed: true,
         toolResults: [...retrievalParts, { type: partTypeOf(PARSE_DOCUMENT_TOOL_NAME), toolCallId: "call_5", output: { content: "--- page 1 ---\n230 Volt." } }],
-      } as any) as any;
+      })) as any;
       expect(out.claimCheck.sources).toContainEqual({ type: "document", id: "tool:call_5", toolCallId: "call_5" });
     });
 
     // Review Focus 4
     it("does not name a document tool call whose output carries no content", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
         isLicensed: true,
         toolResults: [...retrievalParts, { type: "tool-read_session_file", toolCallId: "call_4", output: { content: "" } }],
-      } as any) as any;
+      })) as any;
       expect(out.claimCheck.sources.some((s: any) => s.id === "tool:call_4")).toBe(false);
     });
 
@@ -478,13 +506,13 @@ describe("claimCheckMetadata", () => {
     // the model was handed a failure message, which is not evidence, so this
     // is "provably nothing" — the entry goes, the fragment stays.
     it("does not name a document tool call that failed", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
         isLicensed: true,
         toolResults: [...retrievalParts, { type: "tool-read_session_file", toolCallId: "call_4", output: { error: "Could not read session file" } }],
-      } as any) as any;
+      })) as any;
       expect(out.claimCheck.sources.some((s: any) => s.id === "tool:call_4")).toBe(false);
       expect(out.claimCheck.sources.length).toBeGreaterThan(0); // the kb sources still count
     });
@@ -496,7 +524,7 @@ describe("claimCheckMetadata", () => {
     // `toEqual({})`, for the reason the session-items block spells out.
     it("SUPPRESSES THE WHOLE FRAGMENT when a document tool's output was offloaded", () => {
       expect(
-        claimCheckMetadata({
+        claimCheckMetadata(ctx({
           config: configOf('{"enabled":true}'),
           user: user(),
           isGuest: false,
@@ -509,19 +537,19 @@ describe("claimCheckMetadata", () => {
               output: { truncated: true, notice: "stored as tool-output-read_session_file-ab12.txt", preview: "230 Volt. …" },
             },
           ],
-        } as any),
+        })),
       ).toEqual({});
     });
 
     it("SUPPRESSES THE WHOLE FRAGMENT when a document tool's output is a shape it never emits", () => {
       expect(
-        claimCheckMetadata({
+        claimCheckMetadata(ctx({
           config: configOf('{"enabled":true}'),
           user: user(),
           isGuest: false,
           isLicensed: true,
           toolResults: [...retrievalParts, { type: "tool-read_session_file", toolCallId: "call_4", output: "230 Volt." }],
-        } as any),
+        })),
       ).toEqual({});
     });
 
@@ -535,18 +563,18 @@ describe("claimCheckMetadata", () => {
     const webEntry = { type: "web", id: "tool:call_9", toolCallId: "call_9" };
 
     it("names an internet-search call as a web entry when it carries the answer body", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
         isLicensed: true,
         toolResults: [...retrievalParts, webPart({ result: JSON.stringify({ content: "Die Anlage läuft mit 230 Volt.", citations: [] }) })],
-      } as any) as any;
+      })) as any;
       expect(out.claimCheck.sources).toContainEqual(webEntry);
     });
 
     it("names it when the body is empty but a cited page carries text", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
@@ -555,7 +583,7 @@ describe("claimCheckMetadata", () => {
           ...retrievalParts,
           webPart({ result: JSON.stringify({ content: "", search_results: [{ url: "https://x", title: "X", snippet: "230 Volt." }] }) }),
         ],
-      } as any) as any;
+      })) as any;
       expect(out.claimCheck.sources).toContainEqual(webEntry);
     });
 
@@ -563,13 +591,13 @@ describe("claimCheckMetadata", () => {
     // could send — so the model got no web evidence either and the turn's
     // other sources are the whole of the answer's evidence.
     it("does not name a web entry when the payload holds no text at all", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
         isLicensed: true,
         toolResults: [...retrievalParts, webPart({ result: JSON.stringify({ content: "   ", citations: [], search_results: [] }) })],
-      } as any) as any;
+      })) as any;
       expect(out.claimCheck.sources.some((src: any) => src.type === "web")).toBe(false);
       expect(out.claimCheck.sources.length).toBeGreaterThan(0); // the kb sources still count
     });
@@ -579,13 +607,13 @@ describe("claimCheckMetadata", () => {
     // JSON. The client's `JSON.parse` throws and it recovers nothing.
     it("SUPPRESSES THE WHOLE FRAGMENT when the search exhausted its retries", () => {
       expect(
-        claimCheckMetadata({
+        claimCheckMetadata(ctx({
           config: configOf('{"enabled":true}'),
           user: user(),
           isGuest: false,
           isLicensed: true,
           toolResults: [...retrievalParts, webPart({ result: "Max retries exceeded for perplexity research for query." })],
-        } as any),
+        })),
       ).toEqual({});
     });
 
@@ -594,7 +622,7 @@ describe("claimCheckMetadata", () => {
     // 4,000-char preview the model read.
     it("SUPPRESSES THE WHOLE FRAGMENT when the search output was offloaded", () => {
       expect(
-        claimCheckMetadata({
+        claimCheckMetadata(ctx({
           config: configOf('{"enabled":true}'),
           user: user(),
           isGuest: false,
@@ -603,19 +631,19 @@ describe("claimCheckMetadata", () => {
             ...retrievalParts,
             webPart({ truncated: true, notice: "stored as tool-output-internet_search-ab12.txt", preview: "230 Volt. …" }),
           ],
-        } as any),
+        })),
       ).toEqual({});
     });
 
     it("SUPPRESSES THE WHOLE FRAGMENT when the payload parses to something that is not a record", () => {
       expect(
-        claimCheckMetadata({
+        claimCheckMetadata(ctx({
           config: configOf('{"enabled":true}'),
           user: user(),
           isGuest: false,
           isLicensed: true,
           toolResults: [...retrievalParts, webPart({ result: JSON.stringify(["230 Volt."]) })],
-        } as any),
+        })),
       ).toEqual({});
     });
   });
@@ -642,14 +670,14 @@ describe("claimCheckMetadata", () => {
       },
     ];
     expect(
-      claimCheckMetadata({
+      claimCheckMetadata(ctx({
         config: configOf('{"enabled":true,"showToExternalUsers":true}'),
         user: user({ role: { id: "r1", name: "external" } }),
         isGuest: true,
         isLicensed: true,
         toolResults: stripped,
         messages: [],
-      } as any),
+      })),
     ).toEqual({});
   });
 
@@ -667,14 +695,14 @@ describe("claimCheckMetadata", () => {
 
     it("is ABSENT when this turn's user message carries a file part", () => {
       expect(
-        claimCheckMetadata({
+        claimCheckMetadata(ctx({
           config: configOf('{"enabled":true}'),
           user: user(),
           isGuest: false,
           isLicensed: true,
           toolResults: retrievalParts,
           messages: [textMessage, fileMessage],
-        } as any),
+        })),
       ).toEqual({});
     });
 
@@ -683,27 +711,27 @@ describe("claimCheckMetadata", () => {
     // visible for the life of the session.
     it("is ABSENT when an earlier message in the session carried the file part", () => {
       expect(
-        claimCheckMetadata({
+        claimCheckMetadata(ctx({
           config: configOf('{"enabled":true}'),
           user: user(),
           isGuest: false,
           isLicensed: true,
           toolResults: retrievalParts,
           messages: [fileMessage, textMessage],
-        } as any),
+        })),
       ).toEqual({});
     });
 
     it("still emits when no message of the turn carries a file part", () => {
       expect(
-        claimCheckMetadata({
+        claimCheckMetadata(ctx({
           config: configOf('{"enabled":true}'),
           user: user(),
           isGuest: false,
           isLicensed: true,
           toolResults: retrievalParts,
           messages: [textMessage],
-        } as any),
+        })),
       ).toEqual({ claimCheck: { enabled: true, sources: retrievalSources } });
     });
 
@@ -729,7 +757,7 @@ describe("claimCheckMetadata", () => {
 
     it("is ABSENT when a HISTORY message carries the inlined document wrapper as text", () => {
       expect(
-        claimCheckMetadata({
+        claimCheckMetadata(ctx({
           config: configOf('{"enabled":true}'),
           user: user(),
           isGuest: false,
@@ -737,20 +765,20 @@ describe("claimCheckMetadata", () => {
           toolResults: retrievalParts,
           // Turn 2 of the session: this is exactly what the stored row holds.
           messages: [inlinedDocumentMessage, { id: "m2", role: "assistant", parts: [{ type: "text", text: "..." }] }, textMessage],
-        } as any),
+        })),
       ).toEqual({});
     });
 
     it("is ABSENT when THIS turn's user message already holds the wrapper", () => {
       expect(
-        claimCheckMetadata({
+        claimCheckMetadata(ctx({
           config: configOf('{"enabled":true}'),
           user: user(),
           isGuest: false,
           isLicensed: true,
           toolResults: retrievalParts,
           messages: [inlinedDocumentMessage],
-        } as any),
+        })),
       ).toEqual({});
     });
 
@@ -758,7 +786,7 @@ describe("claimCheckMetadata", () => {
     // the string is not evidence the model was given a document — and when it
     // genuinely was, the user message carrying it suppresses anyway.
     it("still emits when only an ASSISTANT message mentions the wrapper", () => {
-      const meta = claimCheckMetadata({
+      const meta = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
@@ -768,14 +796,14 @@ describe("claimCheckMetadata", () => {
           textMessage,
           { id: "m2", role: "assistant", parts: [{ type: "text", text: 'Du schriebst <file file name = "x" >' }] },
         ],
-      } as any);
+      }));
       expect(meta).toEqual({ claimCheck: { enabled: true, sources: retrievalSources } });
     });
 
     // An extraction failure hands the model an error string, not the
     // document, so there is no invisible evidence to suppress for.
     it("still emits when the attachment failed to extract (an error marker, not content)", () => {
-      const meta = claimCheckMetadata({
+      const meta = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
@@ -784,34 +812,34 @@ describe("claimCheckMetadata", () => {
         messages: [
           { id: "m1", role: "user", parts: [{ type: "text", text: "[Error: Could not load file wartung.pdf]" }] },
         ],
-      } as any);
+      }));
       expect(meta).toEqual({ claimCheck: { enabled: true, sources: retrievalSources } });
     });
 
     it("treats a malformed messages argument as no signal rather than throwing", () => {
       expect(() =>
-        claimCheckMetadata({
+        claimCheckMetadata(ctx({
           config: configOf('{"enabled":true}'),
           user: user(),
           isGuest: false,
           isLicensed: true,
           toolResults: retrievalParts,
           messages: "not an array" as unknown,
-        } as any),
+        })),
       ).not.toThrow();
     });
 
     // Step 1's own case, verbatim: a fresh message array carrying only the
     // wrapper, with no prior history at all.
     it("is absent when an attachment was carried, as before", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
         isLicensed: true,
         toolResults: retrievalParts,
         messages: [{ role: "user", parts: [{ type: "text", text: '<file file name = "wartung.pdf" >…</file>' }] }],
-      } as any);
+      }));
       expect(out).toEqual({});
     });
   });
@@ -828,7 +856,7 @@ describe("claimCheckMetadata", () => {
     // exactly spec §8's "a memory turn with retrieval produces a complete
     // check... a fragment carrying both kinds".
     it("names a recalled memory as a memory entry with no tool call, alongside the knowledge_base entries", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
@@ -837,7 +865,7 @@ describe("claimCheckMetadata", () => {
         messages: [],
         recallHadItems: true,
         recalledMemories: [{ id: "m_7", title: "Sprache", information: "Der Kunde bevorzugt Deutsch." }],
-      } as any) as any;
+      })) as any;
       expect(out.claimCheck.sources).toEqual([{ type: "memory", id: "memory:m_7" }, ...retrievalSources]);
     });
 
@@ -848,7 +876,7 @@ describe("claimCheckMetadata", () => {
     // F3's guard refuses the WHOLE check over any one such entry — not a
     // degraded source, a silent total loss of checking on that turn.
     it("does not name a memory entry whose title AND information are both blank", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
@@ -857,7 +885,7 @@ describe("claimCheckMetadata", () => {
         messages: [],
         recallHadItems: true,
         recalledMemories: [{ id: "m_8", title: "", information: "" }, { id: "m_9", title: "   ", information: "   " }],
-      } as any) as any;
+      })) as any;
       expect(out.claimCheck.sources.some((s: any) => s.type === "memory")).toBe(false);
       expect(out.claimCheck.sources.length).toBeGreaterThan(0); // the kb sources still count
     });
@@ -869,7 +897,7 @@ describe("claimCheckMetadata", () => {
     // row with only a name is an ordinary shape. The client falls back to
     // the title as the content, so the entry IS fulfillable.
     it("names a memory whose information is blank but whose title is not", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
@@ -878,12 +906,12 @@ describe("claimCheckMetadata", () => {
         messages: [],
         recallHadItems: true,
         recalledMemories: [{ id: "m_8", title: "Kunde bevorzugt Deutsch", information: "" }],
-      } as any) as any;
+      })) as any;
       expect(out.claimCheck.sources).toContainEqual({ type: "memory", id: "memory:m_8" });
     });
 
     it("never puts a memory title on the entry it names either", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
@@ -892,14 +920,14 @@ describe("claimCheckMetadata", () => {
         messages: [],
         recallHadItems: true,
         recalledMemories: [{ id: "m_8", title: "Kunde bevorzugt Deutsch", information: "" }],
-      } as any) as any;
+      })) as any;
       expect(JSON.stringify(out)).not.toContain("bevorzugt");
     });
 
     // information is read purely as an inclusion test and must never reach
     // the produced entry itself — the fragment stays ids-only.
     it("never puts memory information on the entry it names", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
@@ -908,7 +936,7 @@ describe("claimCheckMetadata", () => {
         messages: [],
         recallHadItems: true,
         recalledMemories: [{ id: "m_7", information: "Der Kunde bevorzugt Deutsch." }],
-      } as any) as any;
+      })) as any;
       expect(JSON.stringify(out)).not.toContain("Deutsch");
     });
 
@@ -925,7 +953,7 @@ describe("claimCheckMetadata", () => {
     // safer than an outright false "unsupported", it just moves where the
     // dishonesty happens from the panel into a silently incomplete check.)
     it("is ABSENT when the recall had items but this viewer may not see them, even though a knowledge-base source exists", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true,"showToExternalUsers":true}'),
         user: user({ role: { id: "r1", name: "external" } }),
         isGuest: true,
@@ -934,13 +962,13 @@ describe("claimCheckMetadata", () => {
         messages: [],
         recallHadItems: true,
         recalledMemories: undefined, // what recalledMemoriesMetadata returns for a gated guest
-      } as any);
+      }));
       expect(out).toEqual({});
     });
 
     it("still emits when the recall ran and found nothing", () => {
       expect(
-        claimCheckMetadata({
+        claimCheckMetadata(ctx({
           config: configOf('{"enabled":true}'),
           user: user(),
           isGuest: false,
@@ -949,33 +977,33 @@ describe("claimCheckMetadata", () => {
           messages: [],
           recallHadItems: false,
           recalledMemories: undefined,
-        } as any),
+        })),
       ).toEqual({ claimCheck: { enabled: true, sources: retrievalSources } });
     });
 
     it("still emits when there was no recall collector at all (memory off)", () => {
       expect(
-        claimCheckMetadata({
+        claimCheckMetadata(ctx({
           config: configOf('{"enabled":true}'),
           user: user(),
           isGuest: false,
           isLicensed: true,
           toolResults: retrievalParts,
           messages: [],
-        } as any),
+        })),
       ).toEqual({ claimCheck: { enabled: true, sources: retrievalSources } });
     });
 
     // Step 1's own case, verbatim (spec §8: "a memory turn with retrieval
     // produces a complete check — a fragment carrying both kinds").
     it("still emits for a turn with retrieval alone", () => {
-      const out = claimCheckMetadata({
+      const out = claimCheckMetadata(ctx({
         config: configOf('{"enabled":true}'),
         user: user(),
         isGuest: false,
         isLicensed: true,
         toolResults: retrievalParts,
-      } as any) as any;
+      })) as any;
       expect(out.claimCheck.sources).toHaveLength(2);
     });
   });
@@ -1087,16 +1115,8 @@ describe("claimCheckStreamMetadata", () => {
     { type: "finish" },
   ];
 
-  const ctxFor = (claimCheck: string) => ({
-    config: configOf(claimCheck),
-    user: user(),
-    isGuest: false,
-    isLicensed: true,
-    messages: [],
-  });
-
   it("emits the fragment on the finish part, and nothing before it", () => {
-    const onPart = claimCheckStreamMetadata(ctxFor('{"enabled":true}') as any);
+    const onPart = claimCheckStreamMetadata(ctx());
     const emitted = streamParts.map((part) => onPart(part as never));
 
     for (const [i, out] of emitted.slice(0, -1).entries()) {
@@ -1109,7 +1129,7 @@ describe("claimCheckStreamMetadata", () => {
   });
 
   it("emits nothing at all when the agent has the check disabled", () => {
-    const onPart = claimCheckStreamMetadata(ctxFor('{"enabled":false}') as any);
+    const onPart = claimCheckStreamMetadata(ctx({ config: configOf('{"enabled":false}') }));
     for (const part of streamParts) expect(onPart(part as never)).toEqual({});
   });
 
@@ -1119,9 +1139,9 @@ describe("claimCheckStreamMetadata", () => {
     // disagree. The config is parsed by the caller now and handed in, so the
     // turn has one source of truth. Proven by the shape of the ctx: a plain
     // parsed config object, with no agent to re-parse.
-    const ctx = ctxFor('{"enabled":true}');
-    expect(ctx.config).toEqual(expect.objectContaining({ enabled: true }));
-    expect(ctx).not.toHaveProperty("agent");
+    const turnCtx = ctx();
+    expect(turnCtx.config).toEqual(expect.objectContaining({ enabled: true }));
+    expect(turnCtx).not.toHaveProperty("agent");
   });
 
   // Important 2, third guardrail: agentic retrieval's output is exempt from
@@ -1131,7 +1151,7 @@ describe("claimCheckStreamMetadata", () => {
   // chunkItemIdsOf skips it and claim-check silently stops working on exactly
   // the large turns it was built for. This is what that failure looks like.
   it("emits nothing when the retrieval output was offloaded (no result key)", () => {
-    const onPart = claimCheckStreamMetadata(ctxFor('{"enabled":true}') as any);
+    const onPart = claimCheckStreamMetadata(ctx());
     onPart({
       type: "tool-result",
       toolName: "Context_Search",
@@ -1149,16 +1169,16 @@ describe("claimCheckStreamMetadata", () => {
   // snapshotting it at construction.
   it("reads recalledMemories/recallHadItems lazily, at finish time", () => {
     let recallHadItems = false;
-    const ctx = {
-      ...ctxFor('{"enabled":true}'),
+    const turnCtx: ClaimCheckTurnContext = {
+      ...ctx(),
       get recallHadItems() {
         return recallHadItems;
       },
       get recalledMemories() {
-        return recallHadItems ? [{ id: "m_1", information: "Der Kunde bevorzugt Deutsch." }] : undefined;
+        return recallHadItems ? [{ id: "m_1", title: "Sprache", information: "Der Kunde bevorzugt Deutsch." }] : undefined;
       },
     };
-    const onPart = claimCheckStreamMetadata(ctx as any);
+    const onPart = claimCheckStreamMetadata(turnCtx);
     // "Recall" resolves mid-stream, after the ctx object was built.
     recallHadItems = true;
     for (const part of streamParts.slice(0, -1)) onPart(part as never);
