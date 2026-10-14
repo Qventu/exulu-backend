@@ -76,7 +76,12 @@ the caller can supply:
   two sources supplying the **same** id are a 400 rather than a silent merge — an evidence
   quote that cannot be traced to one document is worse than a rejected request.
 
-This is a loosening: every request that is valid today stays valid.
+This is a loosening, and it has to stay one: **an unrecognised `type` is ignored, not rejected.**
+The field is informational by design (see the trust-tier non-goal) — it cannot change a verdict,
+so refusing an entire check because a label is misspelled trades a working check for a 400 on a
+value the engine discards. Parsed with a fallback rather than a bare enum, every request that is
+valid today stays valid: before this change the schema silently stripped an unknown key, and a
+bare `z.enum` would have turned that 200 into a 400.
 
 ## 4. What the client assembles, and from where
 
