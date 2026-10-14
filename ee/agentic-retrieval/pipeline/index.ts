@@ -226,6 +226,17 @@ export function createAgenticRetrievalTool(opts: {
         type: "boolean",
         default: true,
       },
+      {
+        name: "claim_check",
+        description:
+          "Post-answer claim verification: extracts the factual claims the answer makes and reports, " +
+          "per claim, whether the retrieved passages support it, contradict it, or say nothing about it. " +
+          "Runs AFTER the answer has streamed and never delays or changes it. Keys: enabled, model " +
+          "(a fast, cheap model is the right choice), fidelity (fast | paper), completions, reRetrieve, " +
+          "thresholds {warn, alert}, showToExternalUsers, caps {maxSentences, maxClaims, maxReRetrievals}.",
+        type: "json",
+        default: '{"enabled":false,"model":"","fidelity":"fast","thresholds":{"warn":0.1,"alert":0.3}}',
+      },
     ],
     inputSchema: z.object({
       userQuery: z.string().describe("The original unaltered question from the user"),

@@ -136,3 +136,35 @@ describe("tuning.engine — the per-agent switch between the v1 flow and the par
     warn.mockRestore();
   });
 });
+
+describe("parsePipelineConfig — claim_check", () => {
+  it("defaults to disabled with the spec's thresholds and caps when the key is absent", () => {
+    const cfg = parsePipelineConfig({});
+    expect(cfg.claimCheck).toEqual({
+      enabled: false,
+      model: "",
+      fidelity: "fast",
+      completions: 1,
+      reRetrieve: true,
+      thresholds: { warn: 0.1, alert: 0.3 },
+      showToExternalUsers: false,
+      caps: { maxSentences: 120, maxClaims: 200, maxReRetrievals: 10 },
+    });
+  });
+
+  it("parses a JSON string and keeps unspecified keys at their defaults", () => {
+    const cfg = parsePipelineConfig({
+      claim_check: '{"enabled":true,"model":"vertex-gemini-3.5-flash","thresholds":{"warn":0.2,"alert":0.5}}',
+    });
+    expect(cfg.claimCheck.enabled).toBe(true);
+    expect(cfg.claimCheck.model).toBe("vertex-gemini-3.5-flash");
+    expect(cfg.claimCheck.thresholds).toEqual({ warn: 0.2, alert: 0.5 });
+    expect(cfg.claimCheck.fidelity).toBe("fast");
+    expect(cfg.claimCheck.caps.maxClaims).toBe(200);
+  });
+
+  it("falls back to defaults on malformed JSON and on a schema violation", () => {
+    expect(parsePipelineConfig({ claim_check: "{not json" }).claimCheck.enabled).toBe(false);
+    expect(parsePipelineConfig({ claim_check: { fidelity: "turbo" } }).claimCheck.fidelity).toBe("fast");
+  });
+});

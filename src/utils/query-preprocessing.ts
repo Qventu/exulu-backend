@@ -150,6 +150,7 @@ export function preprocessQuery(
     detectLanguage?: boolean;
     preserveCase?: boolean;
     minDetectionLength?: number;
+    silent?: boolean;
   } = {},
 ): {
   original: string;
@@ -162,12 +163,15 @@ export function preprocessQuery(
     detectLanguage = true,
     preserveCase = false,
     minDetectionLength = 10,
+    silent = false,
   } = options;
 
   // Detect language
   const language = detectLanguage ? detectQueryLanguage(query, minDetectionLength) : "eng";
 
-  console.log(`[EXULU] Query preprocessing - Detected language: ${language} for query: "${query}"`);
+  if (!silent) {
+    console.log(`[EXULU] Query preprocessing - Detected language: ${language} for query: "${query}"`);
+  }
 
   // If stemming is disabled, return as-is
   if (!enableStemming) {
@@ -196,7 +200,9 @@ export function preprocessQuery(
 
   const processed = stemmedWords.join(" ");
 
-  console.log(`[EXULU] Query preprocessing - Original: "${query}" → Stemmed: "${processed}"`);
+  if (!silent) {
+    console.log(`[EXULU] Query preprocessing - Original: "${query}" → Stemmed: "${processed}"`);
+  }
 
   return {
     original: query,
