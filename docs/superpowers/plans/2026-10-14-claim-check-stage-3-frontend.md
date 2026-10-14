@@ -44,6 +44,7 @@
   - `type ClaimCheckSource = { id: string; name?: string; content: string }`
   - `type ClaimCheckRequest = { question: string; answer: string; sources: ClaimCheckSource[]; agent?: string; session?: string; messageId?: string; locale?: string }`
   - `type ClaimCheckResult` — mirroring the API response in spec §4: `status`, `score`, `sentences`, `claims`, `usage`, `timings`, `limits`, `notes`
+  - `ScoreLabel = "ok" | "warn" | "alert" | "n/a"` and `ClaimCheckSentence` — Tasks F2 and F6 import both by name, so they must be exported, not inlined
   - `postClaimCheck(body: ClaimCheckRequest): Promise<ClaimCheckResult>`
   - `getSessionClaimChecks(session: string): Promise<Record<string, ClaimCheckResult>>`
 
@@ -1059,7 +1060,22 @@ Then **stop and report** rather than editing `response.tsx`: wiring a `<mark>` i
 
 **Interfaces:**
 - Consumes: the existing `WizardConfig`, `parseWizardConfig`, `serializeWizardConfig` and the model picker `behavior-step.tsx` uses for `utility_model`.
-- Produces: `WizardConfig["claimCheck"]` of shape `{ enabled: boolean; model: string; fidelity: "fast" | "paper"; thresholds: { warn: number; alert: number }; reRetrieve: boolean; showToExternalUsers: boolean }`, serialised as the 15th entry under the key `claim_check`.
+- Produces: `WizardConfig["claimCheck"]`, serialised as the 15th entry under the key `claim_check`, of **exactly** the shape the backend parses in `ee/agentic-retrieval/pipeline/config.ts` — all eight keys:
+
+```typescript
+{
+  enabled: boolean;
+  model: string;
+  fidelity: "fast" | "paper";
+  completions: number;                 // 1-3; no UI control, round-tripped only
+  reRetrieve: boolean;
+  thresholds: { warn: number; alert: number };
+  showToExternalUsers: boolean;
+  caps: { maxSentences: number; maxClaims: number; maxReRetrievals: number }; // no UI control, round-tripped only
+}
+```
+
+**`completions` and `caps` carry no UI control and must still be declared.** The wizard re-serialises the whole blob through this schema on every save, and a key the schema does not declare is silently deleted — the failure that wiped `tuning.engine: "v2"` from NEWLIFT production. An operator who tunes `caps` through the API must not lose it because an admin later opened the wizard.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1073,9 +1089,11 @@ describe("claim_check", () => {
       enabled: false,
       model: "",
       fidelity: "fast",
-      thresholds: { warn: 0.1, alert: 0.3 },
+      completions: 1,
       reRetrieve: true,
+      thresholds: { warn: 0.1, alert: 0.3 },
       showToExternalUsers: false,
+      caps: { maxSentences: 120, maxClaims: 200, maxReRetrievals: 10 },
     });
   });
 
@@ -1106,6 +1124,20 @@ describe("claim_check", () => {
     expect(JSON.parse(String(claim!.variable)).enabled).toBe(false);
   });
 
+  // The UI edits six of the eight keys; a save must not drop the other two.
+  it("preserves completions and caps set outside the wizard across a save", () => {
+    const cfg = parseWizardConfig([
+      {
+        name: "claim_check",
+        variable: '{"enabled":true,"completions":3,"caps":{"maxSentences":40,"maxClaims":60,"maxReRetrievals":0}}',
+        type: "json",
+      },
+    ]);
+    const saved = parseWizardConfig(serializeWizardConfig(cfg)).claimCheck;
+    expect(saved.completions).toBe(3);
+    expect(saved.caps).toEqual({ maxSentences: 40, maxClaims: 60, maxReRetrievals: 0 });
+  });
+
   it("falls back to the default on a malformed blob instead of throwing", () => {
     expect(parseWizardConfig([{ name: "claim_check", variable: "{not json", type: "json" }]).claimCheck.enabled).toBe(false);
   });
@@ -1127,11 +1159,11 @@ Add a `claimCheckSchema` zod object mirroring the backend's (`ee/agentic-retriev
     { name: "claim_check", variable: JSON.stringify(cfg.claimCheck), type: "json" },
 ```
 
-Spell nested defaults out explicitly — zod's `.default()` does not apply inner defaults, the same trap the backend's schema documents.
+Spell nested defaults out explicitly — zod's `.default()` does not apply inner defaults, the same trap the backend's schema documents. Declare all eight keys, including `completions` and `caps`, which have no UI control: they exist in this schema purely so a save round-trips them instead of deleting them.
 
 - [ ] **Step 4: Build the step UI**
 
-Create `steps/verification-step.tsx` following the shape of `memory-step.tsx`: an enable switch, the model picker `behavior-step.tsx` uses for `utility_model`, a fidelity select (`fast` / `paper`), two threshold number inputs, a `reRetrieve` switch and a `showToExternalUsers` switch. All labels and help text via `useTranslations`, with keys added to both message files. Register the step in `wizard.tsx` beside the others, add a line to `review-step.tsx`, and a line to `summary-card.tsx`.
+Create `steps/verification-step.tsx` following the shape of `memory-step.tsx`: an enable switch, the model picker `behavior-step.tsx` uses for `utility_model`, a fidelity select (`fast` / `paper`), two threshold number inputs, a `reRetrieve` switch and a `showToExternalUsers` switch. `completions` and `caps` get **no** control — they are schema-only, and inventing UI for them is out of scope. All labels and help text via `useTranslations`, with keys added to both message files. Register the step in `wizard.tsx` beside the others, add a line to `review-step.tsx`, and a line to `summary-card.tsx`.
 
 Copy to add (German first, mirrored in English) — note the help text that matters:
 
