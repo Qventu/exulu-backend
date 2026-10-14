@@ -134,7 +134,8 @@ their own sources skip this entirely.
 
 ## 3. Config schema
 
-A 15th option on the `agentic_context_search` tool, `claim_check`, type `json`:
+A further option on the `agentic_context_search` tool, `claim_check`, type `json` — the tool's
+16th, next to `suppress_duplicate_passages`:
 
 ```jsonc
 {
@@ -155,9 +156,15 @@ feature costs money and changes the UI, so it is opt-in per agent.
 **The frontend half is not optional.** `serializeWizardConfig` emits a fixed list of entries, so
 any key the knowledge-search wizard does not know is silently deleted the next time an admin saves
 that wizard. `claim_check` must be added to `WizardConfig`, `parseWizardConfig` and
-`serializeWizardConfig` (14 entries → 15, and the test asserting the count) in the same change as
-the backend option. This is the failure that killed `tuning.engine: "v2"` in NEWLIFT production,
-and `suppress_duplicate_passages` is currently in the same state.
+`serializeWizardConfig` (15 entries → 16, and the tests asserting the count) in the same change as
+the backend option. This is the failure that killed `tuning.engine: "v2"` in NEWLIFT production.
+
+`suppress_duplicate_passages` was in the same state and is now declared too (16 entries). It was
+originally deferred as a separate change, but this design is what made the verification step the
+only way to enable claim check: every admin turning the feature on would have wiped that key in
+the same save, reverting an explicit `false` to default-on. It has no wizard control, like
+`claim_check`'s own `completions` and `caps` — declared and round-tripped so an operator who set
+it through the API does not lose it.
 
 Model resolution order, first hit wins:
 
@@ -239,8 +246,8 @@ documented in `mintlify-docs`.
 
 ## 5. Chat integration
 
-At `finish`, next to `recalledMemoriesMetadata`, a `claimCheckMetadata({ cfg, toolResults,
-isGuest })` fragment carrying **ids only**:
+At `finish`, next to `recalledMemoriesMetadata`, a `claimCheckMetadata({ config, toolResults,
+isGuest, … })` fragment carrying **ids only**:
 
 ```jsonc
 { "claimCheck": { "enabled": true, "sourceIds": ["…"], "toolCallIds": ["…"] } }
@@ -250,6 +257,87 @@ The client already holds the full tool output — it renders source cards from i
 ~22k tokens of evidence through metadata would be pure waste. The frontend assembles `sources[]`
 from what it has. When the agent has the feature off, or the viewer is a guest/external user and
 `showToExternalUsers` is false, the fragment is absent and no check ever runs.
+
+The accumulate-then-emit pair is **one function**, `claimCheckStreamMetadata`: the chat route hands
+it the turn's context once (the parsed `claim_check` config, the viewer, this turn's messages — the
+new one before inlining, plus the already-inlined stored history — and the recall collector) and then feeds it every raw stream part. It collects each retrieval call's
+final tool result — `messageMetadata` is the only hook with access to tool outputs before the
+`finish` part needs them — and returns the fragment on `finish`. One function rather than two
+statements 20 lines apart in a 5,000-line route factory, because this is the feature's switch and
+nothing failed when it was silently broken. `pipeUIMessageStreamToResponse<ChatUIMessage>` carries
+the metadata type, so the fragment's shape is checked against `ClaimCheckTrigger` rather than
+against nothing.
+
+`isGuest` is `treatAsGuest(req, user)`, not a role test: the public surface renders in guest mode
+even for a signed-in internal visitor, so the surface and the role are ORed. The endpoint's own
+403 applies the same OR — one product rule, two enforcement points. (Stage 3 built the role half
+only and the task review caught it; recorded here because the plan, not the spec, was wrong.)
+
+Two more gates keep the fragment from promising a check that cannot run, because the chat stream
+also serves **fully anonymous** guests: no `user.id` means no fragment, whatever
+`showToExternalUsers` says (`POST /claims/check` needs an id that coerces to a finite number and
+answers 401 without one, and neither storage path can key a row), and an unlicensed deployment
+emits nothing either (the endpoint 404s). `showToExternalUsers` serves the signed-in guest-surface
+visitor and the external role, not an anonymous one.
+
+**A fragment is emitted only when every source the answer could have drawn on is one the check
+will receive.** `sourceIds` can only name knowledge-base item ids, and the frontend assembles
+`sources[]` from the retrieval tool's chunks alone, so any other evidence the model was given this
+turn is invisible to the check. Scoring an answer against a subset of the evidence it actually used
+returns `unsupported` for claims that are in fact grounded, and `score.ts` puts `unsupported` in
+the numerator of the label share — so the panel renders an **alert** for a correct answer. §2.4's
+honesty invariants exist to prevent exactly that. A missing panel is the safe failure; when in
+doubt between emitting and staying silent, the fragment stays absent.
+
+The whole class, all of it suppressing in `finish-metadata.ts`:
+
+| Invisible evidence | How it reaches the model | Attached when |
+|---|---|---|
+| `createSessionItemsRetrievalTool` | `{ result: JSON.stringify(array) }`, no `chunks` key | any session with knowledge items attached |
+| `read_session_file` | prose from a session file | **every** session with `fileUploads.s3Bucket` configured — no agent opt-in |
+| `parse_document` | extracted document text | same |
+| `view_document_page` | a rendered page image | same |
+| `internet_search` | web results | per agent, via its tool config |
+| A document attached to the message | `processFilePartsInMessages` inlines the extracted text as a **text part of the user message** | always — "upload a PDF and ask about it" |
+| A recalled memory | `memoryRecall.promptBlock`, injected into the **system prompt** | any agent with `agent.memory` |
+
+Each tool's part type is derived from that tool's own exported display-name literal
+(`tool-${sanitizeToolName(NAME)}`), never a second hardcoded spelling, so a rename fails the test
+suite instead of silently turning a suppression off. For the session-items tool a **cleanly-parsed
+empty array** still emits — proven empty is proven harmless — and anything else (a non-empty array,
+an unparseable payload, an offloaded `{ truncated, notice, preview }` object) suppresses: "cannot
+prove it empty" is not "empty". The other tools have no empty shape to prove, so presence of the
+call suppresses.
+
+**The attachment signal is two markers, because a document's attachment leaves two traces and only
+one survives the turn.** A `file` part on a message of the turn is the first. But a document's
+`file` part never reaches the database: `processFilePartsInMessages` rewrites it into a `text` part,
+`generateStream` returns that post-inlining array as `originalMessages`, the SDK builds onFinish's
+`messages` from it, and the chat route persists exactly those rows. So the stored user message holds
+`<file file name = "wartung.pdf" >…</file>` **as text**, and from turn 2 of that session onwards
+there is no `file` part anywhere in the loaded history while the document's extracted text is still
+in the prompt — the exact failure this section exists to prevent, on every follow-up question after
+an upload. The second marker is therefore that wrapper prefix in a **user** `text` part. It is
+ordinary text, so a user who types it loses claim checking for that conversation; that is the
+intended direction of error. The extraction *failure* markers (`[Error: Could not load file …]`)
+are not matched — the model was handed an error instead of the document, so there is nothing
+invisible to protect against. (Only `file` parts survive for images, which is why they already
+behaved this way.)
+
+**The functional cost is deliberate, and has two parts an operator would not guess.** First: an
+agent with memory enabled and a non-empty recall produces no claim check at all. Second: **one
+upload turns answer-checking off for the rest of that conversation** — the attachment's trace stays
+in the history, so every later turn in that session suppresses too (documents now match the
+behaviour images always had). A false "your answer was unfounded" about a correct answer is the
+worst output this system can produce, and that outweighs the panel. The lift for both is the same
+and it is not a narrower suppression here: coverage-aware scoring, listed in §10.
+
+**An external viewer with `show_sources_to_external_users: false` never gets a fragment either**,
+whatever `claim_check.showToExternalUsers` says: `serializeOutput` strips `item_id` from every
+chunk for that viewer, so there are no source ids to send. That is the right outcome (the check
+would have no evidence to verify against) but it is a consequence of the other flag, not of this
+one — an admin who enables `showToExternalUsers` while sources are hidden gets silence, and that
+is pinned by a test in `finish-metadata.test.ts`.
 
 ### 5.1 Frontend (separate repo, sibling worktree)
 
@@ -273,12 +361,22 @@ line in `review-step.tsx` and `summary-card.tsx`.
 ### 5.2 Persistence
 
 A reload must not lose the panel. One table `claim_checks` (`session`, `message_id`, `payload`
-jsonb, `created_at`), written by the endpoint and returned with the session's messages. Created
-through the `core-schema` / initdb path with a column-existence guard — never a standalone
-migration script.
+jsonb, `score_label`, `user`, `created_at`), written by the endpoint whenever a request names both
+`session` and `messageId`. Row uniqueness is **(session, message_id, user)** and the write is an
+`onConflict(...).merge()` upsert, never a delete-then-insert: a destructive statement that has to
+remember to carry a user scope is a defect waiting to recur. Created through the `core-schema` /
+initdb path with a column-existence guard — never a standalone migration script.
 
-A Redis result cache keyed by a hash of (question, answer, sources, options, model), 24 h, makes a
-frontend retry, a double-fire or a reload free.
+Checks are read back through **`GET /claims/check/:session`**, not alongside the session's
+messages: the payload holds the answer's sentences and verbatim source quotes, so it gets one
+deliberate read path, scoped to the authenticated caller in the query itself (`session` AND `user`,
+never a fetch-by-session with a JS filter), and the table has no GraphQL surface at all. The chat
+loads it when a session opens. (The spec originally said "returned with the session's messages";
+the separate route is the better choice and this is the amendment, not a deviation.)
+
+The same row is also consulted by the POST before any model call, so a double-fire, a re-check or a
+retry is free — see §9 for what that leaves of the Redis result cache keyed by a hash of
+(question, answer, sources, options, model).
 
 ## 6. Error handling & resilience
 
@@ -355,7 +453,14 @@ Three stages, each independently useful, so the plan can stop at any boundary:
    review was right to flag their absence, and both are deliberate deferrals rather than
    oversights:
    - **The Redis result cache (§5.2).** Nothing fires a check repeatedly until the chat surface
-     exists, so its absence costs only a double-fire paying twice.
+     exists, so its absence costs only a double-fire paying twice. **That rationale expired with
+     stage 3, and the cheap half shipped there instead of the Redis hash:** when a POST names both
+     `session` and `messageId`, the stored row is consulted first (caller-scoped, exactly as the
+     GET is) and returned instead of running ~8 provider calls again — so a double-fire, a
+     user-initiated re-check and a retry after a transport hiccup are all free. A lookup failure
+     falls through to running the check; a cache may never break the feature it accelerates.
+     The Redis hash-keyed cache (question, answer, sources, options, model) stays deferred and now
+     matters only for **agent-less API callers who name no session**, who have no row to find.
    - **The frontend `claim_check` plumbing (§3).** `WizardConfig` / `parseWizardConfig` /
      `serializeWizardConfig` do not know the key yet. **Until they do, no agent may hold a
      `claim_check` key** — the next save of the knowledge-search wizard silently deletes it, the
@@ -410,6 +515,38 @@ settle it.
 - Embedding-based evidence selection.
 - Per-claim retrieval for external callers (they bring their own sources).
 - Claim-exact highlighting inside rendered Markdown.
+- **In-body sentence highlighting, deferred with a measurement (Stage 3).** Two premises had to hold
+  for whole-answer offsets to land on the rendered answer. The first holds: `streamdown`'s
+  `parseMarkdownIntoBlocks` is lossless (`join("") === input`) across German text, lists, fenced
+  code, tables and runs of blank lines — measured, and pinned by a test. The second does not:
+  `message-renderer.tsx` renders **each text part through its own `Response` call** rather than the
+  joined answer, and mutates the text first — stripping `<file>` tags and replacing citation-shaped
+  blobs with `<cite-marker-*>` elements. So the rendered string is not character-identical to the
+  string the backend segmented, and highlights would drift. The offset-mapping utility
+  (`claim-check-highlight.ts`) is built and tested but deliberately **not wired**; wiring it needs a
+  second measurement first (is the rendered string still character-identical to `answerTextOf`?) or
+  a renderer that renders the joined answer once. The panel lists every claim with its evidence
+  quote, so the feature is complete without this.
 - An `ExuluEval` test-case integration for continuous scoring in the evals UI.
-- Fixing `suppress_duplicate_passages`' missing wizard entry — noted here because this design
-  shares its failure mode, but it is a separate change.
+- **Evidence the fragment cannot represent, as claim-check evidence.** The whole class in §5's
+  table: session-attached items, `read_session_file`, `parse_document`, `view_document_page`,
+  `internet_search`, a document attached to the message, and a recalled memory. Each would need an
+  output-shape (or prompt-block) handler in `finish-metadata.ts` **and** in the frontend's
+  `collectSources` before it could be sent as a source; until then a turn that used any of them is
+  suppressed rather than checked against partial evidence (see §5).
+- **Coverage-aware scoring — the real fix for the above, and the one that would let those turns be
+  checked again.** Today a claim whose evidence set could not include a source the answer used is
+  scored as if the sources were complete, which is what makes a partial fragment dangerous and
+  forces the all-or-nothing suppression. The rule: when the evidence given to the check is known to
+  be incomplete for a claim, its label must be `n/a` with a stated reason — never `warn` or
+  `alert`. That is an engine change plus a §2.4 amendment (a fourth honesty rule beside the three
+  there), not a chat-surface change, so it is out of scope for the stage-3 branch that found this.
+- **Claim checks on the public guest surface.** The backend emits the trigger fragment for a
+  **signed-in guest-surface visitor** when `claim_check.showToExternalUsers` is on (§5 — only fully
+  anonymous visitors are excluded, because `POST /claims/check` needs a user id), but the frontend's
+  `app/public/agents/[id]/components/use-public-chat-session.ts` hardcodes `claimChecks: {}` and
+  never fires the check, so nothing renders there however the flag is set. Closing it means
+  reproducing F4's trigger, state and rehydrate logic in that controller — a task, not a fix, and
+  the surface where most external users actually are (the app surface, external role) already
+  works. Until then the wizard's switch is labelled "Auch externen Nutzern anzeigen" / "Also show to
+  external users", naming only the half that works, and its hint states the gap.

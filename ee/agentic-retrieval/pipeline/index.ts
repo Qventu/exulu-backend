@@ -28,6 +28,15 @@ export { parsePreselectedItems } from "./global-ids";
 // ---------------------------------------------------------------------------
 
 /**
+ * The agentic retrieval tool's display name — the one literal the model and
+ * the UI both see, and the one `sanitizeToolName` turns into the AI-SDK tool
+ * key (and so the `tool-${...}` part type) every caller of this tool keys on.
+ * Exported so a rename here fails those call sites' test suites (claim-check's
+ * finish-metadata, notably) instead of silently breaking the feature.
+ */
+export const AGENTIC_RETRIEVAL_TOOL_NAME = "Context Search";
+
+/**
  * Accumulate chunks into result.chunks, deduplicating by chunk_id (first-seen wins).
  */
 function addChunks(result: AgenticRetrievalOutput, chunks: ChunkWithScore[]): void {
@@ -120,7 +129,7 @@ export function createAgenticRetrievalTool(opts: {
 
   return ExuluTool.internal({
     id: "agentic_context_search",
-    name: "Context Search",
+    name: AGENTIC_RETRIEVAL_TOOL_NAME,
     description:
       `Intelligent knowledge search across the available knowledge bases: ${contexts.map((c) => c.name || c.id).join(", ")}. Routes the question to the right sources, searches them with query expansion, and returns reranked passages. Results are exhaustive for the given query: do NOT repeat the call with a rephrased version of the same question — re-call only with genuinely new information (a different product or model, an explicitly named source or document, or new details from the user).` +
       // Note: the description suffix intentionally remains even when the per-agent project_search

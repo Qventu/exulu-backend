@@ -10,11 +10,46 @@ import type { LanguageModel } from "ai";
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ScopeCheckResult } from "@SRC/utils/check-api-key-scope";
 import { isExternalOrAnonymousUser } from "@SRC/exulu/resolve-max-steps";
+import { treatAsGuest } from "@SRC/exulu/public-surface";
 import { type ClaimCheckOptions, type ClaimCheckResult } from "./types";
 import type { ClaimCheckRateLimiter } from "./rate-limit";
 import { pipelineConfigFor } from "./agent-config";
 
 export const CLAIM_CHECK_PATH = "/claims/check";
+export const CLAIM_CHECK_SESSION_PATH = "/claims/check/:session";
+
+/** Rejects anything that is not a v4-shaped uuid before the database sees it. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * `auth.user.id` must not just be truthy, it must coerce to a finite number:
+ * the `claim_checks.user` column is a float, knex keeps a `NaN` binding alive
+ * rather than dropping it, `pg` sends it as the literal string `"NaN"`, and
+ * Postgres evaluates `NaN = NaN` as true — so a future auth path that ever
+ * produced a truthy non-numeric principal id would read and write one shared
+ * bucket instead of erroring. Not reachable today (every auth branch yields a
+ * numeric id); this is a guard against that never happening, not a fix for a
+ * live bug.
+ */
+function hasNumericUserId(user: { id?: unknown } | undefined): boolean {
+  return Boolean(user?.id) && Number.isFinite(Number(user?.id));
+}
+
+/**
+ * The status for a request that failed the gate above.
+ *
+ * `auth.code` describes the authentication ATTEMPT, not this gate: when a
+ * principal came back but its id is unusable, the attempt may well have
+ * "succeeded" (`code: 200`, or a `0` a future branch might leave unset), and
+ * echoing that would answer a 200 — or a nonsensical 0 — with an
+ * "Unauthorized." body. A principal we refuse to key a row by is a 401,
+ * whatever the attempt said. Only a genuine auth failure's own code (403 on a
+ * disabled key, say) is passed through.
+ */
+function unauthorizedStatus(auth: { user?: unknown; code?: number }): number {
+  if (auth.user) return 401;
+  return (auth.code ?? 0) || 401;
+}
 
 /** Payload caps: an answer is prose, evidence is documents. Beyond these, 413. */
 const MAX_ANSWER_CHARS = 200_000;
@@ -146,6 +181,25 @@ export type ClaimCheckRouteDeps = {
   secondChanceFor?: (args: { agent: any; user?: User; model: LanguageModel; cap: number }) =>
     | ((claimText: string) => Promise<any[]>)
     | undefined;
+  /** Upsert one stored check. Absent in tests that do not exercise persistence. */
+  saveClaimCheck?: (args: {
+    session: string;
+    messageId: string;
+    userId: number;
+    result: ClaimCheckResult;
+  }) => Promise<void>;
+  /** Stored checks for a session, keyed by message id, scoped to the caller. */
+  listClaimChecks?: (args: { session: string; userId: number }) => Promise<Record<string, ClaimCheckResult>>;
+  /**
+   * The stored check for ONE message, scoped to the caller — consulted before
+   * the engine runs (spec §5.2). Absent means no lookup and no caching, which
+   * is the pre-stage-3 behaviour.
+   */
+  findClaimCheck?: (args: {
+    session: string;
+    messageId: string;
+    userId: number;
+  }) => Promise<ClaimCheckResult | undefined>;
 };
 
 export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps): void {
@@ -178,11 +232,11 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
     }
 
     const auth = await deps.authenticate(req);
-    if (!auth.user?.id) {
-      res.status(auth.code ?? 401).json({ detail: auth.message ?? "Unauthorized." });
+    if (!hasNumericUserId(auth.user)) {
+      res.status(unauthorizedStatus(auth)).json({ detail: auth.message ?? "Unauthorized." });
       return;
     }
-    const user = auth.user;
+    const user = auth.user as User;
 
     // Spec §4: the external/guest budget applies here as everywhere else, so
     // an external identity does not get a fresh 30/min on the most expensive
@@ -267,14 +321,53 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
     // Spec §5: a guest or external viewer sees no claim check unless the agent
     // says they may. isExternalOrAnonymousUser is the helper the sibling
     // show_sources_to_external_users flag uses, and this is the same
-    // visibility question about the same kind of viewer.
-    if (agent && isExternalOrAnonymousUser(user) && !cfg.claimCheck.showToExternalUsers) {
+    // visibility question about the same kind of viewer. treatAsGuest adds
+    // the public surface: a signed-in internal user viewing a public agent
+    // link renders in guest mode, so the endpoint must refuse them the same
+    // way the chat's finish-part fragment does (src/exulu/claim-check/finish-metadata.ts).
+    if (agent && (treatAsGuest(req, user) || isExternalOrAnonymousUser(user)) && !cfg.claimCheck.showToExternalUsers) {
       res.status(403).json({
         detail:
           "Claim check is not available to external users for this agent; " +
           "set claim_check.showToExternalUsers to allow it.",
       });
       return;
+    }
+
+    // A verdict already on disk is not bought twice (spec §5.2's result cache,
+    // in this branch's shape). A double-fire, a user-initiated re-check or a
+    // retry after a transport hiccup would otherwise pay ~8 provider calls
+    // again for an answer that is already stored.
+    //
+    // Three properties this must keep:
+    //  - It sits AFTER every gate above, so a stored row can never become a
+    //    way to read a verdict for an agent whose admin turned the check off,
+    //    or an agent the caller may not use.
+    //  - It is scoped by the authenticated caller exactly as the GET is —
+    //    (session, message_id, user) in one query, never a request-supplied
+    //    identity (see src/exulu/claim-check/store.ts).
+    //  - A lookup failure falls THROUGH to running the check. A cache that
+    //    can break the feature it accelerates is worse than no cache.
+    //
+    // §9 keeps the Redis hash-keyed cache deferred: it now only matters for
+    // agent-less API callers who name no session, who have no row to find.
+    if (deps.findClaimCheck && body.session && body.messageId && UUID_RE.test(body.session)) {
+      try {
+        const stored = await deps.findClaimCheck({
+          session: body.session,
+          messageId: body.messageId,
+          userId: Number(user.id),
+        });
+        if (stored) {
+          res.status(200).json(stored);
+          return;
+        }
+      } catch (err) {
+        console.warn(
+          "[EXULU claim-check] could not read the stored check for this message; running the check.",
+          err,
+        );
+      }
     }
 
     const candidates = [
@@ -363,6 +456,11 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
     const controller = new AbortController();
     const timeoutMs = resolveClaimCheckTimeoutMs();
     let deadline: ReturnType<typeof setTimeout> | undefined;
+    // Set only on the success path, and read only after the slot is released
+    // below — persistence must never hold the global in-flight budget open,
+    // and the write needs its own deadline, not one that raced a
+    // Promise.race the response already settled.
+    let completedResult: ClaimCheckResult | undefined;
     try {
       const secondChance =
         agent && options.reRetrieve && deps.secondChanceFor
@@ -389,6 +487,11 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
         }),
         timedOut,
       ]);
+      // Recorded BEFORE the response is sent: if the client has gone away and
+      // res.json throws, the check was already paid for, and discarding it
+      // then is the one case where persistence matters most — the next load
+      // of that session would re-buy a verdict we already had.
+      completedResult = result;
       res.status(200).json(result);
     } catch (err) {
       if (err instanceof ClaimCheckTimeoutError) {
@@ -405,6 +508,77 @@ export function registerClaimCheckRoutes(app: Express, deps: ClaimCheckRouteDeps
       // including on the timeout path, where the engine may still be unwinding.
       if (deadline) clearTimeout(deadline);
       deps.limiter.release();
+    }
+
+    // Persistence is a convenience, not part of the verdict, and runs ONLY
+    // after the slot is released and the deadline timer is cleared above: a
+    // database write that hangs must never pin the deployment-wide in-flight
+    // budget that 429s this endpoint for every other caller. The response
+    // was already sent inside the try block; a reload losing the panel is
+    // worse than nothing, but a database hiccup here must not turn a
+    // completed check into an error the caller has already paid for — so
+    // this runs outside any try/catch that could still touch `res`, in its
+    // own try/catch that only logs.
+    if (completedResult && body.session && body.messageId && UUID_RE.test(body.session)) {
+      if (!deps.saveClaimCheck) {
+        // A missing dep is a deployment wiring defect, not "nothing to store".
+        // The GET refuses loudly for exactly this reason; skipping silently
+        // here meant a panel that never survived a reload, with no signal
+        // anywhere that the wiring had been dropped.
+        console.error(
+          "[EXULU claim-check] saveClaimCheck is not wired; this check cannot survive a reload.",
+        );
+      } else {
+        try {
+          await deps.saveClaimCheck({
+            session: body.session,
+            messageId: body.messageId,
+            userId: Number(user.id),
+            result: completedResult,
+          });
+        } catch (err) {
+          console.warn("[EXULU claim-check] could not store the check for this message.", err);
+        }
+      }
+    }
+  });
+
+  // GET /claims/check/:session — the only read path to the claim_checks
+  // table (it has no GraphQL surface: see ee/schemas.ts's claimChecksSchema).
+  // The stored payload holds the answer's sentences and verbatim source
+  // quotes, so scoping here is the only thing standing between one user and
+  // another user's stored answers: the query itself filters by session AND
+  // the authenticated caller's id, never by session alone with a JS filter,
+  // and a request-supplied user id is never trusted.
+  app.get(CLAIM_CHECK_SESSION_PATH, async (req: Request, res: Response) => {
+    if (!deps.isLicensed()) {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    const session = req.params.session ?? "";
+    if (!UUID_RE.test(session)) {
+      res.status(400).json({ detail: "session must be a uuid." });
+      return;
+    }
+    const auth = await deps.authenticate(req);
+    if (!hasNumericUserId(auth.user)) {
+      res.status(unauthorizedStatus(auth)).json({ detail: auth.message ?? "Unauthorized." });
+      return;
+    }
+    if (!deps.listClaimChecks) {
+      // A missing dep is a deployment wiring defect, not "nothing stored":
+      // answering 200 here would make a future regression that drops the
+      // wiring read as an empty, legitimate result instead of failing loudly.
+      console.error("[EXULU claim-check] listClaimChecks is not wired; refusing to answer as if nothing were stored.");
+      res.status(500).json({ detail: "Could not read stored checks." });
+      return;
+    }
+    try {
+      const checks = await deps.listClaimChecks({ session, userId: Number((auth.user as User).id) });
+      res.status(200).json({ checks });
+    } catch (err) {
+      console.error("[EXULU claim-check] could not read stored checks.", err);
+      res.status(500).json({ detail: "Could not read stored checks." });
     }
   });
 }

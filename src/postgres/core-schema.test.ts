@@ -146,3 +146,57 @@ describe("context_map_topics", () => {
     expect(schema.fields.find((f) => f.name === "context")?.index).toBe(true);
   });
 });
+
+describe("claim_checks table", () => {
+  // No `buildSchemas` helper exists here — coreSchemas.get() reads the
+  // licence straight off EXULU_ENTERPRISE_LICENSE (see ee/entitlements.ts),
+  // so the gating behaviour is exercised by toggling that env var around the
+  // call, then restoring it.
+  const originalLicense = process.env.EXULU_ENTERPRISE_LICENSE;
+
+  afterEach(() => {
+    if (originalLicense === undefined) {
+      delete process.env.EXULU_ENTERPRISE_LICENSE;
+    } else {
+      process.env.EXULU_ENTERPRISE_LICENSE = originalLicense;
+    }
+  });
+
+  it("is registered only when the claim-check licence is present", () => {
+    process.env.EXULU_ENTERPRISE_LICENSE = "EXULU_EE_test";
+    const withLicence = coreSchemas.get();
+    expect(typeof withLicence.claimChecksSchema).toBe("function");
+
+    delete process.env.EXULU_ENTERPRISE_LICENSE;
+    const withoutLicence = coreSchemas.get();
+    expect(withoutLicence.claimChecksSchema).toBeUndefined();
+  });
+
+  it("carries the fields the chat reads back", () => {
+    process.env.EXULU_ENTERPRISE_LICENSE = "EXULU_EE_test";
+    const table = coreSchemas.get().claimChecksSchema!();
+    const names = table.fields.map((f) => f.name);
+    expect(names).toEqual(expect.arrayContaining(["session", "message_id", "payload", "score_label"]));
+    expect(table.fields.find((f) => f.name === "payload")?.type).toBe("json");
+    expect(table.fields.find((f) => f.name === "session")?.type).toBe("uuid");
+  });
+
+  // name.plural becomes the literal Postgres table name (init-exulu-db.ts's
+  // knex.schema.createTable(schema.name.plural, ...)) and name.singular is
+  // spliced raw into the GraphQL SDL (`type ${table.name.singular} {`). A
+  // space in either is a runtime defect a fields-only test cannot see —
+  // this asserts the physical/GraphQL names stay snake_case, matching every
+  // other multi-word table (agent_messages, test_cases, job_results, ...).
+  it("names the table snake_case, not spaced", () => {
+    process.env.EXULU_ENTERPRISE_LICENSE = "EXULU_EE_test";
+    const table = coreSchemas.get().claimChecksSchema!();
+    expect(table.name.plural).toBe("claim_checks");
+    expect(table.name.singular).toBe("claim_check");
+  });
+
+  it("is kept off the auto-CRUD GraphQL surface pending a verified read-scoping story", () => {
+    process.env.EXULU_ENTERPRISE_LICENSE = "EXULU_EE_test";
+    const table = coreSchemas.get().claimChecksSchema!();
+    expect(table.graphql).toBe(false);
+  });
+});

@@ -40,7 +40,8 @@ export type ExuluTableDefinition = {
     | "image_generations"
     | "oauth_tokens"
     | "shared_artifacts"
-    | "otp_send_attempts";
+    | "otp_send_attempts"
+    | "claim_checks";
     id?: string;
     name: {
       plural:
@@ -80,7 +81,8 @@ export type ExuluTableDefinition = {
       | "image_generations"
       | "oauth_tokens"
       | "shared_artifacts"
-      | "otp_send_attempts";
+      | "otp_send_attempts"
+      | "claim_checks";
       singular:
       | "skill"
       | "context_preset"
@@ -118,7 +120,8 @@ export type ExuluTableDefinition = {
       | "image_generation"
       | "oauth_token"
       | "shared_artifact"
-      | "otp_send_attempt";
+      | "otp_send_attempt"
+      | "claim_check";
     };
     processor?: ExuluContextProcessor;
     fields: ExuluContextFieldDefinition[];

@@ -62,8 +62,9 @@ import { markStreamActive, clearStreamActive, isStreamActive } from "./active-st
 import { resumeRoutineRunIfWaiting } from "@SRC/exulu/routines/run-state";
 import { compactSession, CompactionInsufficientError } from "./compact-session.ts";
 import { describeRequestError } from "./request-error.ts";
-import { finishTurnMetadata } from "./turn-metadata.ts";
+import { finishTurnMetadata, type ChatUIMessage } from "./turn-metadata.ts";
 import { recalledMemoriesMetadata } from "./memory/recalled-metadata.ts";
+import { claimCheckStreamMetadata } from "./claim-check/finish-metadata.ts";
 import { isPublicSurface, treatAsGuest } from "./public-surface.ts";
 import { recordMemoryUsage } from "./memory/usage.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
@@ -75,6 +76,12 @@ import { registerClaimCheckRoutes } from "@EE/claim-check/routes";
 import { claimCheckRateLimiter } from "@EE/claim-check/rate-limit";
 import { runClaimCheck } from "@EE/claim-check/run";
 import { makeSecondChance } from "@EE/claim-check/second-chance";
+import { pipelineConfigFor } from "@EE/claim-check/agent-config";
+import {
+  saveClaimCheck as storeClaimCheck,
+  listClaimChecks as listStoredClaimChecks,
+  findClaimCheck as findStoredClaimCheck,
+} from "./claim-check/store.ts";
 import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
 import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
 import { transcriptionService } from "./transcription/service.ts";
@@ -182,6 +189,7 @@ const getExuluVersionNumber = async () => {
 const {
   agentsSchema,
   feedbackSchema,
+  claimChecksSchema,
   projectsSchema,
   jobResultsSchema,
   testCasesSchema,
@@ -282,6 +290,7 @@ export const createExpressRoutes = async (
       rolesSchema(),
       agentsSchema(),
       feedbackSchema(),
+      claimChecksSchema(),
       projectsSchema(),
       jobResultsSchema(),
       promptLibrarySchema(),
@@ -858,8 +867,37 @@ export const createExpressRoutes = async (
         // even when the client response is aborted:
         result.stream.consumeStream(); // no await
 
-        result.stream.pipeUIMessageStreamToResponse(res, {
+        // The claim-check fragment needs the turn's retrieval tool results,
+        // but `messageMetadata`'s `finish` branch only ever receives the
+        // `finish` stream part itself (no message/parts access), and onFinish
+        // (which does get the assembled responseMessage) only fires AFTER
+        // that `finish` part — and its metadata — has already been sent to
+        // the client. So the handler below accumulates each retrieval call's
+        // FINAL (non-preliminary) result as it streams past, and emits the
+        // fragment when `finish` arrives. One function, with its own tests:
+        // see claimCheckStreamMetadata.
+        const claimCheckOnPart = claimCheckStreamMetadata({
+          config: pipelineConfigFor(agent).claimCheck,
+          user,
+          // The public surface is a guest surface even for a signed-in
+          // visitor, same expression recalledMemoriesMetadata uses below.
+          isGuest: treatAsGuest(req, user),
+          isLicensed: Boolean(checkLicense()["claim-check"]),
+          // The PRE-inlining view of this turn's prompt (history + the new
+          // message): result.originalMessages has already had every attached
+          // document turned into a text part, which is the one thing the
+          // fragment must suppress on.
+          messages: [...result.previousMessages, ...(message ? [message] : [])],
+          // Same collector recalledMemoriesMetadata reads below.
+          recall: result.recall,
+        });
+
+        result.stream.pipeUIMessageStreamToResponse<ChatUIMessage>(res, {
           messageMetadata: ({ part }) => {
+            // Accumulates on every part; returns the fragment only on
+            // `finish`, and `{}` on everything else (including every part of
+            // a turn whose agent has the check off).
+            const claimCheck = claimCheckOnPart(part);
             // Per-step usage: the LAST step's inputTokens reflects the actual
             // prompt size of this turn (totalUsage sums every step's full
             // prompt, inflating multi-step turns ~stepCount×). Last write wins
@@ -876,11 +914,21 @@ export const createExpressRoutes = async (
                 // The public surface is a guest surface even for a signed-in visitor:
                 // the page renders in guest mode, so the data has to follow.
                 ...recalledMemoriesMetadata({ recall: result.recall, agent, isGuest: treatAsGuest(req, user) }),
+                // The chat posts the check itself once the stream ends; this
+                // only tells it that it may, and which sources to send.
+                ...claimCheck,
               };
             }
             return undefined;
           },
-          originalMessages: result.originalMessages,
+          // The ChatUIMessage generic above is there to type-check the
+          // messageMetadata return; the SDK reads only ids and roles off
+          // originalMessages (to id the response message for persistence).
+          // generate-stream hands back plain UIMessages, whose `metadata` is
+          // `unknown` — wider than ChatMessageMetadata, not narrower — so
+          // this assertion cannot hide a mistake in the metadata the callback
+          // builds, which is the thing the generic is here to catch.
+          originalMessages: result.originalMessages as ChatUIMessage[],
           sendReasoning: true,
           sendSources: true,
           onError: (error) => {
@@ -4928,13 +4976,18 @@ export const createExpressRoutes = async (
         messages: messagesBySession.get(s.id) ?? [],
       }));
 
-      const [feedback, promptFavorites, tracking] = await Promise.all([
+      const [feedback, promptFavorites, tracking, claimChecks] = await Promise.all([
         db.from("feedback").where({ user: targetUser.id }).catch(() => []),
         db
           .from("prompt_favorites")
           .where({ user_id: targetUser.id })
           .catch(() => []),
         db.from("tracking").where({ user: targetUser.id }).catch(() => []),
+        // The stored claim checks keyed to this user. `payload` is personal
+        // data (their answers' sentences, verbatim source quotes), so Art. 15
+        // covers it. Same `.catch(() => [])` as its siblings: the table only
+        // exists on deployments licensed for claim-check.
+        db.from("claim_checks").where({ user: targetUser.id }).catch(() => []),
       ]);
 
       const exportedAt = new Date().toISOString();
@@ -4954,6 +5007,7 @@ export const createExpressRoutes = async (
         `  - feedback.json         feedback the user submitted`,
         `  - prompt_favorites.json prompt-library favourites`,
         `  - tracking.json         tracking events linked to the user`,
+        `  - claim_checks.json     answer verification results stored for the user`,
         ``,
       ].join("\n");
 
@@ -4967,6 +5021,7 @@ export const createExpressRoutes = async (
         JSON.stringify(promptFavorites, null, 2),
       );
       zip.file("tracking.json", JSON.stringify(tracking, null, 2));
+      zip.file("claim_checks.json", JSON.stringify(claimChecks, null, 2));
 
       const buffer = await zip.generateAsync({ type: "nodebuffer" });
       const filename = `user-${targetUser.id}-export-${exportedAt.replace(/[:.]/g, "-")}.zip`;
@@ -4999,6 +5054,15 @@ export const createExpressRoutes = async (
         await trx("agent_messages").where({ user: targetUser.id }).delete();
         await trx("agent_sessions").where({ user: targetUser.id }).delete();
         await trx("feedback").where({ user: targetUser.id }).delete();
+        // Stored claim checks: `payload` holds the user's answers and verbatim
+        // source quotes, keyed by `user`, so the docblock's "every row
+        // referencing them" covers it. Guarded by hasTable because the table
+        // only exists on deployments licensed for claim-check — an unguarded
+        // delete would abort this transaction (and so the user deletion)
+        // everywhere else.
+        if (await trx.schema.hasTable("claim_checks")) {
+          await trx("claim_checks").where({ user: targetUser.id }).delete();
+        }
         await trx("prompt_favorites")
           .where({ user_id: targetUser.id })
           .delete();
@@ -5176,6 +5240,26 @@ export const createExpressRoutes = async (
     platformDefaultModel: async () => process.env.CLAIM_CHECK_DEFAULT_MODEL ?? "",
     secondChanceFor: ({ agent, user, model, cap }) =>
       makeSecondChance({ agent, user, role: user?.role?.id, model, contexts: contexts ?? [], cap }),
+    // The SQL bodies live in src/exulu/claim-check/store.ts, not inline here:
+    // a 5,000+ line factory is not a testable seam, and the scoping these two
+    // functions enforce (never a delete, both session AND user in the same
+    // query) is the one guarantee in this feature that has to be verified
+    // against a real query builder, not a jest.fn() at the handler level.
+    // See store.test.ts.
+    saveClaimCheck: async (args) => {
+      const { db } = await postgresClient();
+      await storeClaimCheck(db, args);
+    },
+    listClaimChecks: async (args) => {
+      const { db } = await postgresClient();
+      return listStoredClaimChecks(db, args);
+    },
+    // The POST's "is this verdict already on disk" lookup. Same module, same
+    // caller-scoping as the two above.
+    findClaimCheck: async (args) => {
+      const { db } = await postgresClient();
+      return findStoredClaimCheck(db, args);
+    },
   });
 
   // Serve bytes. Auth depends on the row's auth_mode.

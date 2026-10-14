@@ -10,6 +10,15 @@ const DEFAULT_LIMIT = 250;
 const MAX_CONTENT_CHARS = 16_000;
 
 /**
+ * This tool's display name — exported so the sanitized key it maps to (used
+ * by claim-check's finish-metadata to detect that a turn read evidence the
+ * check will never see) breaks loudly on a rename instead of silently
+ * turning that detection off. Same reason as
+ * SESSION_ITEMS_RETRIEVAL_TOOL_NAME.
+ */
+export const SESSION_FILE_READ_TOOL_NAME = "read_session_file";
+
+/**
  * Escape hatch for offloaded tool outputs and uploaded documents (spec §2):
  * page through any file in the session's S3 file folder by line range.
  * Registered for every session with file uploads configured — sandbox or not.
@@ -70,7 +79,7 @@ export const createSessionFileReadTool = ({
 
   return ExuluTool.internal({
     id: "read_session_file",
-    name: "read_session_file",
+    name: SESSION_FILE_READ_TOOL_NAME,
     needsApproval: false,
     description:
       "Read a line range from a file stored in this session's files — including offloaded tool outputs " +
