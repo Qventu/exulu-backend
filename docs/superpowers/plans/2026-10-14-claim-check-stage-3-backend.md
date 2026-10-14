@@ -331,6 +331,7 @@ git commit -m "feat(claim-check): tell the chat a check is available on the fini
 
 **Interfaces:**
 - Consumes: `ExuluTableDefinition` from `@EXULU_TYPES/exulu-table-definition`; `addCoreFields` and `checkLicense` as `core-schema.ts` already uses them.
+- **`name.plural` is the physical table name** (`init-exulu-db.ts` calls `knex.schema.createTable(schema.name.plural)`), and `name.singular` is spliced raw into the GraphQL SDL (`type ${name.singular} {`). Both must be snake_case like every sibling (`agent_messages`, `test_cases`, `workflow_templates`); a space breaks the table name AND makes `createSDL` throw at server boot.
 - Produces: `claimChecksSchema: ExuluTableDefinition` with `type: "claim_checks"` and fields `session` (uuid), `message_id` (text), `payload` (json), `score_label` (enum), `user` (number).
 
 - [ ] **Step 1: Write the failing test**
@@ -378,10 +379,17 @@ In `ee/schemas.ts`, beside `feedbackSchema`:
  * every payload.
  */
 export const claimChecksSchema: ExuluTableDefinition = {
+    // graphql: false — nothing consumes a GraphQL claim-checks API (the chat reads
+    // these rows through the caller-scoped REST route in Task B3), and `payload`
+    // holds answer sentences and verbatim source quotes: customer content. The
+    // generated pagination/ById surface's read scoping could not be established,
+    // so it stays off. A future admin list view needs a scoped route or a verified
+    // RBAC story -- that is what `score_label` is denormalised for.
+    graphql: false,
     type: "claim_checks",
     name: {
-        plural: "claim checks",
-        singular: "claim check",
+        plural: "claim_checks",
+        singular: "claim_check",
     },
     fields: [
         {
