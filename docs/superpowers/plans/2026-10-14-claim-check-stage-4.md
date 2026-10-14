@@ -172,8 +172,12 @@ it("names no memory source when the recall list was withheld from this viewer", 
     recalledMemories: undefined, // what recalledMemoriesMetadata returns for a gated guest
     recallHadItems: true,
   });
-  expect(out.claimCheck?.sources.some((s) => s.type === "memory")).toBe(false);
-  expect(out.claimCheck?.sources.length).toBeGreaterThan(0); // the kb source still counts
+  // The spec (§5) is explicit: a withheld memory list means the turn is
+  // uncovered and "the fragment must stay absent". The answer may rest on a
+  // memory the client cannot send, so there is nothing partial to emit — and
+  // asserting partial omission here is also unsatisfiable, since `out` is `{}`
+  // and `out.claimCheck?.sources` is then `undefined`, not an array.
+  expect(out).toEqual({});
 });
 
 it("still emits for a turn with retrieval alone", () => {
