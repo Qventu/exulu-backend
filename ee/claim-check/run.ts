@@ -14,6 +14,7 @@ import {
   type DisambiguationOutcome,
   type EvidenceSnippet,
   type SelectionOutcome,
+  type Sentence,
   type SentenceState,
   type SentenceWindow,
 } from "./types";
@@ -80,10 +81,10 @@ async function runBatched<R>(
     }
   });
 
-  // Only a genuinely multi-batch stage can show a "failure pattern"; with a
-  // single batch the ratio is always 0 or 1, which would make the circuit
-  // breaker pre-empt the bisect-once guarantee on every lone failing batch.
-  if (batches.length > 1 && failures / batches.length > STAGE_FAILURE_ABORT) {
+  // A single failure is never systemic: it must get its bisect (that is the
+  // point of bisect-once). The breaker exists for a provider failing broadly,
+  // which takes at least two observed failures to establish.
+  if (failures >= 2 && failures / batches.length > STAGE_FAILURE_ABORT) {
     state.partial = true;
     state.notes.push(
       `${label}: aborted after ${failures} of ${batches.length} calls failed; remaining sentences are not_checked`,
@@ -161,271 +162,308 @@ export async function runClaimCheck(args: {
   };
 
   const state: StageState = { usage: { ...EMPTY_USAGE }, notes: [], states: new Map(), partial: false };
-  const locale = args.locale ?? localeFromText(args.answer);
+  // Hoisted so a failure anywhere past the split stage can still report
+  // whatever was already determined, instead of losing it to the catch below.
+  let allSentences: Sentence[] = [];
+  let skipped: Sentence[] = [];
 
-  // ── Split ────────────────────────────────────────────────────────────────
-  let tStage = Date.now();
-  const allSentences = splitIntoSentences(args.answer, locale);
-  const sentences = allSentences.slice(0, options.caps.maxSentences);
-  const skipped = allSentences.slice(options.caps.maxSentences);
-  for (const s of skipped) state.states.set(s.index, { state: "not_checked", reason: "cap_exceeded" });
-  if (skipped.length > 0) {
-    state.partial = true;
-    state.notes.push(`maxSentences (${options.caps.maxSentences}) reached; ${skipped.length} sentence(s) not checked`);
-  }
-  lap("splitMs", tStage);
+  try {
+    const locale = args.locale ?? localeFromText(args.answer);
 
-  // ── Selection + Disambiguation ───────────────────────────────────────────
-  tStage = Date.now();
-  const selectWindows = buildWindows(sentences, 5, 5);
-  const laterWindows = new Map(buildWindows(sentences, 5, 0).map((w) => [w.sentence.index, w]));
-  const temperature = options.completions > 1 ? 0.2 : 0;
-  const batches = chunk(selectWindows, BATCH.selectDisambiguate);
+    // ── Split ──────────────────────────────────────────────────────────────
+    let tStage = Date.now();
+    allSentences = splitIntoSentences(args.answer, locale);
+    const sentences = allSentences.slice(0, options.caps.maxSentences);
+    skipped = allSentences.slice(options.caps.maxSentences);
+    for (const s of skipped) state.states.set(s.index, { state: "not_checked", reason: "cap_exceeded" });
+    if (skipped.length > 0) {
+      state.partial = true;
+      state.notes.push(`maxSentences (${options.caps.maxSentences}) reached; ${skipped.length} sentence(s) not checked`);
+    }
+    lap("splitMs", tStage);
 
-  const selection: SelectionOutcome[] = [];
-  const disambiguation: DisambiguationOutcome[] = [];
+    // ── Selection + Disambiguation ─────────────────────────────────────────
+    tStage = Date.now();
+    const selectWindows = buildWindows(sentences, 5, 5);
+    const laterWindows = new Map(buildWindows(sentences, 5, 0).map((w) => [w.sentence.index, w]));
+    const temperature = options.completions > 1 ? 0.2 : 0;
+    const batches = chunk(selectWindows, BATCH.selectDisambiguate);
 
-  if (options.fidelity === "paper") {
-    const selectionRuns: SelectionOutcome[][] = [];
-    for (let run = 0; run < options.completions; run += 1) {
-      const results = await runBatched(batches, "selection", state, async (windows) => {
-        const { outcomes, usage } = await runSelection({
+    const selection: SelectionOutcome[] = [];
+    const disambiguation: DisambiguationOutcome[] = [];
+
+    if (options.fidelity === "paper") {
+      const selectionRuns: SelectionOutcome[][] = [];
+      for (let run = 0; run < options.completions; run += 1) {
+        const results = await runBatched(batches, "selection", state, async (windows) => {
+          const { outcomes, usage } = await runSelection({
+            windows, question: args.question, model: args.model, temperature,
+          });
+          return { result: outcomes, usage };
+        });
+        selectionRuns.push(results.flat());
+      }
+      const selectionVote = vote(selectionRuns, (o) => o.verifiable, options.completions);
+      for (const [index, { passed, sample }] of selectionVote) {
+        selection.push({ ...sample, index, verifiable: passed });
+      }
+
+      const survivors = selection.filter((s) => s.verifiable).map((s) => laterWindows.get(s.index)!).filter(Boolean);
+      // Correction 1: this map is built from the GLOBAL selection array above
+      // (every sentence that has a rewrite), not from one batch's slice of it —
+      // a window's preceding/following sentences routinely belong to other
+      // batches, and excerptFor substitutes by index across the whole window.
+      const texts = new Map(selection.filter((s) => s.rewritten).map((s) => [s.index, s.rewritten!]));
+      const disambiguationRuns: DisambiguationOutcome[][] = [];
+      for (let run = 0; run < options.completions; run += 1) {
+        const results = await runBatched(chunk(survivors, BATCH.selectDisambiguate), "disambiguation", state, async (windows) => {
+          const { outcomes, usage } = await runDisambiguation({
+            windows, question: args.question, sentenceTexts: texts, model: args.model, temperature,
+          });
+          return { result: outcomes, usage };
+        });
+        disambiguationRuns.push(results.flat());
+      }
+      const disambiguationVote = vote(disambiguationRuns, (o) => o.resolvable, options.completions);
+      for (const [index, { passed, sample }] of disambiguationVote) {
+        disambiguation.push({ ...sample, index, resolvable: passed });
+      }
+    } else {
+      const merged = await runBatched(batches, "selection+disambiguation", state, async (windows) => {
+        const out = await runSelectAndDisambiguate({
           windows, question: args.question, model: args.model, temperature,
         });
-        return { result: outcomes, usage };
+        return { result: { selection: out.selection, disambiguation: out.disambiguation }, usage: out.usage };
       });
-      selectionRuns.push(results.flat());
+      for (const part of merged) {
+        selection.push(...part.selection);
+        disambiguation.push(...part.disambiguation);
+      }
     }
-    const selectionVote = vote(selectionRuns, (o) => o.verifiable, options.completions);
-    for (const [index, { passed, sample }] of selectionVote) {
-      selection.push({ ...sample, index, verifiable: passed });
+    lap("selectDisambiguateMs", tStage);
+
+    // Record the states these two stages decided.
+    const selectionByIndex = new Map(selection.map((s) => [s.index, s]));
+    const disambiguationByIndex = new Map(disambiguation.map((d) => [d.index, d]));
+    const survivingIndexes: number[] = [];
+    for (const sentence of sentences) {
+      const sel = selectionByIndex.get(sentence.index);
+      const dis = disambiguationByIndex.get(sentence.index);
+      if (!sel) continue; // not_checked was already recorded by runBatched
+      if (!sel.verifiable) {
+        state.states.set(sentence.index, { state: "no_verifiable_content", reason: sel.reason });
+        continue;
+      }
+      if (!dis?.resolvable) {
+        state.states.set(sentence.index, {
+          state: "cannot_disambiguate",
+          reason: dis?.reason ?? "disambiguation did not report an outcome",
+        });
+        continue;
+      }
+      state.states.set(sentence.index, { state: "checked" });
+      survivingIndexes.push(sentence.index);
     }
 
-    const survivors = selection.filter((s) => s.verifiable).map((s) => laterWindows.get(s.index)!).filter(Boolean);
-    // Correction 1: this map is built from the GLOBAL selection array above
-    // (every sentence that has a rewrite), not from one batch's slice of it —
-    // a window's preceding/following sentences routinely belong to other
-    // batches, and excerptFor substitutes by index across the whole window.
-    const texts = new Map(selection.filter((s) => s.rewritten).map((s) => [s.index, s.rewritten!]));
-    const disambiguationRuns: DisambiguationOutcome[][] = [];
-    for (let run = 0; run < options.completions; run += 1) {
-      const results = await runBatched(chunk(survivors, BATCH.selectDisambiguate), "disambiguation", state, async (windows) => {
-        const { outcomes, usage } = await runDisambiguation({
-          windows, question: args.question, sentenceTexts: texts, model: args.model, temperature,
+    // ── Decomposition ────────────────────────────────────────────────────────
+    tStage = Date.now();
+    const claims: Claim[] = [];
+    if (survivingIndexes.length > 0) {
+      // Correction 1: built from every surviving sentence, globally — same
+      // reasoning as the `texts` map above.
+      const decomposeTexts = new Map<number, string>();
+      for (const index of survivingIndexes) {
+        const clarified = disambiguationByIndex.get(index)?.clarified;
+        const rewritten = selectionByIndex.get(index)?.rewritten;
+        const text = clarified ?? rewritten;
+        if (text) decomposeTexts.set(index, text);
+      }
+      const survivorWindows = survivingIndexes.map((i) => laterWindows.get(i)!).filter(Boolean);
+      const decomposed = await runBatched(chunk(survivorWindows, BATCH.decompose), "decomposition", state, async (windows) => {
+        const { outcomes, usage } = await runDecomposition({
+          windows, question: args.question, sentenceTexts: decomposeTexts, model: args.model, temperature: 0,
         });
         return { result: outcomes, usage };
       });
-      disambiguationRuns.push(results.flat());
-    }
-    const disambiguationVote = vote(disambiguationRuns, (o) => o.resolvable, options.completions);
-    for (const [index, { passed, sample }] of disambiguationVote) {
-      disambiguation.push({ ...sample, index, resolvable: passed });
-    }
-  } else {
-    const merged = await runBatched(batches, "selection+disambiguation", state, async (windows) => {
-      const out = await runSelectAndDisambiguate({
-        windows, question: args.question, model: args.model, temperature,
-      });
-      return { result: { selection: out.selection, disambiguation: out.disambiguation }, usage: out.usage };
-    });
-    for (const part of merged) {
-      selection.push(...part.selection);
-      disambiguation.push(...part.disambiguation);
-    }
-  }
-  lap("selectDisambiguateMs", tStage);
 
-  // Record the states these two stages decided.
-  const selectionByIndex = new Map(selection.map((s) => [s.index, s]));
-  const disambiguationByIndex = new Map(disambiguation.map((d) => [d.index, d]));
-  const survivingIndexes: number[] = [];
-  for (const sentence of sentences) {
-    const sel = selectionByIndex.get(sentence.index);
-    const dis = disambiguationByIndex.get(sentence.index);
-    if (!sel) continue; // not_checked was already recorded by runBatched
-    if (!sel.verifiable) {
-      state.states.set(sentence.index, { state: "no_verifiable_content", reason: sel.reason });
-      continue;
-    }
-    if (!dis?.resolvable) {
-      state.states.set(sentence.index, {
-        state: "cannot_disambiguate",
-        reason: dis?.reason ?? "disambiguation did not report an outcome",
-      });
-      continue;
-    }
-    state.states.set(sentence.index, { state: "checked" });
-    survivingIndexes.push(sentence.index);
-  }
-
-  // ── Decomposition ────────────────────────────────────────────────────────
-  tStage = Date.now();
-  const claims: Claim[] = [];
-  if (survivingIndexes.length > 0) {
-    // Correction 1: built from every surviving sentence, globally — same
-    // reasoning as the `texts` map above.
-    const decomposeTexts = new Map<number, string>();
-    for (const index of survivingIndexes) {
-      const clarified = disambiguationByIndex.get(index)?.clarified;
-      const rewritten = selectionByIndex.get(index)?.rewritten;
-      const text = clarified ?? rewritten;
-      if (text) decomposeTexts.set(index, text);
-    }
-    const survivorWindows = survivingIndexes.map((i) => laterWindows.get(i)!).filter(Boolean);
-    const decomposed = await runBatched(chunk(survivorWindows, BATCH.decompose), "decomposition", state, async (windows) => {
-      const { outcomes, usage } = await runDecomposition({
-        windows, question: args.question, sentenceTexts: decomposeTexts, model: args.model, temperature: 0,
-      });
-      return { result: outcomes, usage };
-    });
-
-    const allowed = new Set(survivingIndexes);
-    const flat = decomposed.flat().filter((o) => allowed.has(o.index)).sort((a, b) => a.index - b.index);
-    for (const outcome of flat) {
-      for (const c of outcome.claims) {
-        if (claims.length >= options.caps.maxClaims) break;
-        claims.push({
-          id: `c${claims.length + 1}`,
-          sentenceIndex: outcome.index,
-          text: c.text,
-          inferred: c.inferred,
-          verdict: "unsupported",
-          evidence: [],
-          rationale: "",
-          rechecked: false,
-        });
-      }
-    }
-    const produced = flat.reduce((n, o) => n + o.claims.length, 0);
-    if (produced > claims.length) {
-      state.partial = true;
-      state.notes.push(`maxClaims (${options.caps.maxClaims}) reached; ${produced - claims.length} claim(s) dropped`);
-    }
-
-    // Correction 2: a sentence decomposition REPORTED ON but found no claim in
-    // ("no_verifiable_content") is a different fact from a sentence it never
-    // answered for at all ("not_checked") — runDecomposition omits an entry
-    // entirely in the latter case, so the two are distinguishable here, and a
-    // reader deserves to know which one happened.
-    const outcomeIndexes = new Set(flat.map((o) => o.index));
-    const withClaims = new Set(claims.map((c) => c.sentenceIndex));
-    const missingOutcome: number[] = [];
-    for (const index of survivingIndexes) {
-      if (withClaims.has(index)) continue;
-      if (outcomeIndexes.has(index)) {
-        state.states.set(index, { state: "no_verifiable_content", reason: "decomposition extracted no claim" });
-      } else {
-        state.states.set(index, { state: "not_checked", reason: "decomposition did not report an outcome" });
-        missingOutcome.push(index);
-      }
-    }
-    if (missingOutcome.length > 0) {
-      state.partial = true;
-      state.notes.push(`decomposition did not report an outcome for ${missingOutcome.length} sentence(s)`);
-    }
-  }
-  lap("decomposeMs", tStage);
-
-  // ── Evidence + Verification ──────────────────────────────────────────────
-  tStage = Date.now();
-  const passages = indexSources(args.sources);
-  lap("evidenceMs", tStage);
-
-  tStage = Date.now();
-  // Correction 3: a verification group whose CALL FAILED must not leave its
-  // claims standing as "unsupported" — that reports a provider outage as a
-  // coverage gap in the customer's sources. Those claims are dropped from the
-  // result entirely (never reaching scoreClaims), and their sentences become
-  // not_checked instead.
-  let finalClaims: Claim[] = claims;
-  if (claims.length > 0) {
-    const bySentence = new Map<number, Claim[]>();
-    for (const claim of claims) {
-      const list = bySentence.get(claim.sentenceIndex) ?? [];
-      list.push(claim);
-      bySentence.set(claim.sentenceIndex, list);
-    }
-    const groups = chunk([...bySentence.values()], BATCH.verifySentences).map((g) => g.flat());
-
-    const verified = await mapWithConcurrency(groups, MAX_IN_FLIGHT, async (group) => {
-      const evidence = selectEvidence(group.map((c) => c.text), passages);
-      return runVerification({
-        claims: group.map((c) => ({ id: c.id, text: c.text })),
-        evidence,
-        model: args.model,
-      });
-    });
-
-    const droppedClaimIds = new Set<string>();
-    const byId = new Map(claims.map((c) => [c.id, c]));
-    verified.forEach((outcome, i) => {
-      const group = groups[i]!;
-      if (outcome.status !== "fulfilled") {
-        state.partial = true;
-        state.notes.push(`verification failed for ${group.length} claim(s); they were dropped from the result`);
-        const sentenceIndexes = new Set(group.map((c) => c.sentenceIndex));
-        for (const c of group) droppedClaimIds.add(c.id);
-        for (const index of sentenceIndexes) {
-          state.states.set(index, { state: "not_checked", reason: "verification failed for this sentence" });
-        }
-        return;
-      }
-      state.usage = addUsage(state.usage, outcome.value.usage);
-      for (const verdict of outcome.value.outcomes) {
-        const claim = byId.get(verdict.claimId);
-        if (!claim) continue;
-        claim.verdict = verdict.verdict;
-        claim.evidence = verdict.evidence;
-        claim.rationale = verdict.rationale;
-      }
-    });
-
-    finalClaims = droppedClaimIds.size > 0 ? claims.filter((c) => !droppedClaimIds.has(c.id)) : claims;
-
-    // ── Second chance for unsupported claims (IMP callers only) ────────────
-    if (options.reRetrieve && args.secondChance && options.caps.maxReRetrievals > 0) {
-      const candidates = finalClaims.filter((c) => c.verdict === "unsupported");
-      const budget = candidates.slice(0, options.caps.maxReRetrievals);
-      if (candidates.length > budget.length) {
-        state.notes.push(
-          `maxReRetrievals (${options.caps.maxReRetrievals}) reached; ${candidates.length - budget.length} unsupported claim(s) were not re-retrieved`,
-        );
-      }
-      await mapWithConcurrency(budget, MAX_IN_FLIGHT, async (claim) => {
-        try {
-          const extra = await args.secondChance!(claim.text);
-          if (extra.length === 0) return;
-          const { outcomes, usage } = await runVerification({
-            claims: [{ id: claim.id, text: claim.text }],
-            evidence: extra,
-            model: args.model,
+      const allowed = new Set(survivingIndexes);
+      const flat = decomposed.flat().filter((o) => allowed.has(o.index)).sort((a, b) => a.index - b.index);
+      // Finding 4: a sentence whose decomposition DID produce claims, but every
+      // one of them landed past the maxClaims cap, must read as a resource cap
+      // (cap_exceeded) — not as "decomposition found nothing to verify here",
+      // which is what no_verifiable_content means.
+      const capCutSentences = new Set<number>();
+      for (const outcome of flat) {
+        let pushedForThisOutcome = 0;
+        for (const c of outcome.claims) {
+          if (claims.length >= options.caps.maxClaims) break;
+          claims.push({
+            id: `c${claims.length + 1}`,
+            sentenceIndex: outcome.index,
+            text: c.text,
+            inferred: c.inferred,
+            verdict: "unsupported",
+            evidence: [],
+            rationale: "",
+            rechecked: false,
           });
-          state.usage = addUsage(state.usage, usage);
-          const verdict = outcomes[0];
-          if (!verdict) return;
-          claim.rechecked = true;
+          pushedForThisOutcome += 1;
+        }
+        if (outcome.claims.length > 0 && pushedForThisOutcome === 0) {
+          capCutSentences.add(outcome.index);
+        }
+      }
+      const produced = flat.reduce((n, o) => n + o.claims.length, 0);
+      if (produced > claims.length) {
+        state.partial = true;
+        state.notes.push(`maxClaims (${options.caps.maxClaims}) reached; ${produced - claims.length} claim(s) dropped`);
+      }
+
+      // Correction 2: a sentence decomposition REPORTED ON but found no claim in
+      // ("no_verifiable_content") is a different fact from a sentence it never
+      // answered for at all ("not_checked") — runDecomposition omits an entry
+      // entirely in the latter case, so the two are distinguishable here, and a
+      // reader deserves to know which one happened.
+      const outcomeIndexes = new Set(flat.map((o) => o.index));
+      const withClaims = new Set(claims.map((c) => c.sentenceIndex));
+      const missingOutcome: number[] = [];
+      for (const index of survivingIndexes) {
+        if (withClaims.has(index)) continue;
+        if (capCutSentences.has(index)) {
+          state.states.set(index, { state: "not_checked", reason: "cap_exceeded" });
+        } else if (outcomeIndexes.has(index)) {
+          state.states.set(index, { state: "no_verifiable_content", reason: "decomposition extracted no claim" });
+        } else {
+          state.states.set(index, { state: "not_checked", reason: "decomposition did not report an outcome" });
+          missingOutcome.push(index);
+        }
+      }
+      if (missingOutcome.length > 0) {
+        state.partial = true;
+        state.notes.push(`decomposition did not report an outcome for ${missingOutcome.length} sentence(s)`);
+      }
+    }
+    lap("decomposeMs", tStage);
+
+    // ── Evidence + Verification ──────────────────────────────────────────────
+    tStage = Date.now();
+    const passages = indexSources(args.sources);
+    lap("evidenceMs", tStage);
+
+    tStage = Date.now();
+    // Correction 3: a verification group whose CALL FAILED must not leave its
+    // claims standing as "unsupported" — that reports a provider outage as a
+    // coverage gap in the customer's sources. Those claims are dropped from the
+    // result entirely (never reaching scoreClaims), and their sentences become
+    // not_checked instead.
+    let finalClaims: Claim[] = claims;
+    if (claims.length > 0) {
+      const bySentence = new Map<number, Claim[]>();
+      for (const claim of claims) {
+        const list = bySentence.get(claim.sentenceIndex) ?? [];
+        list.push(claim);
+        bySentence.set(claim.sentenceIndex, list);
+      }
+      const groups = chunk([...bySentence.values()], BATCH.verifySentences).map((g) => g.flat());
+
+      const verified = await mapWithConcurrency(groups, MAX_IN_FLIGHT, async (group) => {
+        const evidence = selectEvidence(group.map((c) => c.text), passages);
+        return runVerification({
+          claims: group.map((c) => ({ id: c.id, text: c.text })),
+          evidence,
+          model: args.model,
+        });
+      });
+
+      const droppedClaimIds = new Set<string>();
+      const byId = new Map(claims.map((c) => [c.id, c]));
+      verified.forEach((outcome, i) => {
+        const group = groups[i]!;
+        if (outcome.status !== "fulfilled") {
+          state.partial = true;
+          state.notes.push(`verification failed for ${group.length} claim(s); they were dropped from the result`);
+          const sentenceIndexes = new Set(group.map((c) => c.sentenceIndex));
+          for (const c of group) droppedClaimIds.add(c.id);
+          for (const index of sentenceIndexes) {
+            state.states.set(index, { state: "not_checked", reason: "verification failed for this sentence" });
+          }
+          return;
+        }
+        state.usage = addUsage(state.usage, outcome.value.usage);
+        for (const verdict of outcome.value.outcomes) {
+          const claim = byId.get(verdict.claimId);
+          if (!claim) continue;
           claim.verdict = verdict.verdict;
           claim.evidence = verdict.evidence;
           claim.rationale = verdict.rationale;
-        } catch {
-          // A failed second chance leaves the first verdict standing.
-          state.notes.push(`second-chance retrieval failed for ${claim.id}`);
         }
       });
+
+      finalClaims = droppedClaimIds.size > 0 ? claims.filter((c) => !droppedClaimIds.has(c.id)) : claims;
+
+      // ── Second chance for unsupported claims (IMP callers only) ────────────
+      if (options.reRetrieve && args.secondChance && options.caps.maxReRetrievals > 0) {
+        const candidates = finalClaims.filter((c) => c.verdict === "unsupported");
+        const budget = candidates.slice(0, options.caps.maxReRetrievals);
+        if (candidates.length > budget.length) {
+          state.notes.push(
+            `maxReRetrievals (${options.caps.maxReRetrievals}) reached; ${candidates.length - budget.length} unsupported claim(s) were not re-retrieved`,
+          );
+        }
+        await mapWithConcurrency(budget, MAX_IN_FLIGHT, async (claim) => {
+          try {
+            const extra = await args.secondChance!(claim.text);
+            if (extra.length === 0) return;
+            const { outcomes, usage } = await runVerification({
+              claims: [{ id: claim.id, text: claim.text }],
+              evidence: extra,
+              model: args.model,
+            });
+            state.usage = addUsage(state.usage, usage);
+            const verdict = outcomes[0];
+            if (!verdict) return;
+            claim.rechecked = true;
+            claim.verdict = verdict.verdict;
+            claim.evidence = verdict.evidence;
+            claim.rationale = verdict.rationale;
+          } catch {
+            // A failed second chance leaves the first verdict standing.
+            state.notes.push(`second-chance retrieval failed for ${claim.id}`);
+          }
+        });
+      }
     }
+    lap("verifyMs", tStage);
+
+    timings.totalMs = Date.now() - startedAt;
+
+    return {
+      status: state.partial ? "partial" : "ok",
+      score: scoreClaims(finalClaims, options.thresholds),
+      sentences: buildSentenceResults(allSentences, state.states, finalClaims),
+      claims: finalClaims,
+      usage: state.usage,
+      timings,
+      limits: { truncated: skipped.length > 0, sentencesSkipped: skipped.length },
+      notes: state.notes,
+    };
+  } catch (err) {
+    // "Partial beats failing": an uncaught error anywhere in the pipeline
+    // (provider calls are already isolated per-call by mapWithConcurrency, so
+    // this is for something like a bug in split/evidence/score) degrades to a
+    // partial result instead of rejecting the caller's promise. The note
+    // carries the error forward rather than swallowing it.
+    timings.totalMs = Date.now() - startedAt;
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      status: "partial",
+      score: scoreClaims([], options.thresholds),
+      sentences: buildSentenceResults(allSentences, state.states, []),
+      claims: [],
+      usage: state.usage,
+      timings,
+      limits: { truncated: skipped.length > 0, sentencesSkipped: skipped.length },
+      notes: [...state.notes, `claim check failed internally: ${message}`],
+    };
   }
-  lap("verifyMs", tStage);
-
-  timings.totalMs = Date.now() - startedAt;
-
-  return {
-    status: state.partial ? "partial" : "ok",
-    score: scoreClaims(finalClaims, options.thresholds),
-    sentences: buildSentenceResults(allSentences, state.states, finalClaims),
-    claims: finalClaims,
-    usage: state.usage,
-    timings,
-    limits: { truncated: skipped.length > 0, sentencesSkipped: skipped.length },
-    notes: state.notes,
-  };
 }

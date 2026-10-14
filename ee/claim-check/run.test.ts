@@ -135,6 +135,30 @@ describe("runClaimCheck — fast path", () => {
 });
 
 describe("runClaimCheck — resilience", () => {
+  // Finding 3 (R19): "partial beats failing" is unconditional — an error
+  // thrown anywhere in the pipeline (not just a provider call) must degrade
+  // to a partial result rather than reject the caller's promise. An invalid
+  // Intl.Segmenter locale throws synchronously inside the split stage, before
+  // any stage mock is ever reached.
+  it("degrades to a partial result instead of throwing when the pipeline itself throws", async () => {
+    const result = await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources: SOURCES,
+      model: {} as any,
+      options: options(),
+      locale: "💥not-a-locale💥",
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.claims).toEqual([]);
+    expect(result.sentences).toEqual([]);
+    expect(result.score.label).toBe("n/a");
+    expect(result.notes.some((n) => n.includes("claim check failed internally"))).toBe(true);
+    expect(runSelectAndDisambiguate).not.toHaveBeenCalled();
+  });
+
+
   it("bisects a failed batch once and only marks the still-failing half not_checked", async () => {
     const seen: number[][] = [];
     (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) => {
@@ -158,17 +182,57 @@ describe("runClaimCheck — resilience", () => {
     expect(result.notes.join(" ")).toContain("not_checked");
   });
 
-  it("aborts a stage above the failure ratio and returns a partial result", async () => {
+  // Renamed from "aborts a stage above the failure ratio...": with only one
+  // batch (3 sentences, well under BATCH.selectDisambiguate), the breaker's
+  // failures>=2 floor can never trip — a lone failing batch always gets its
+  // bisect-retry instead. This test now actually exercises "the bisected
+  // halves fail too", not the circuit breaker. See the dedicated breaker test
+  // below for that.
+  it("fails every sentence not_checked when a lone batch's bisected halves fail too (not the breaker)", async () => {
     (runSelectAndDisambiguate as jest.Mock).mockRejectedValue(new Error("provider down"));
 
     const result = await runClaimCheck({
       question: "q", answer: ANSWER, sources: SOURCES, model: {} as any, options: options(), locale: "de",
     });
 
+    // 1 initial call (the whole batch) + 2 retries (its bisected halves) — no
+    // abort, since one batch's failure can never meet the failures>=2 floor.
+    expect((runSelectAndDisambiguate as jest.Mock).mock.calls.length).toBe(3);
     expect(result.status).toBe("partial");
     expect(result.claims).toEqual([]);
     expect(result.sentences.every((s) => s.state === "not_checked")).toBe(true);
     expect(result.notes.some((n) => n.includes("selection+disambiguation"))).toBe(true);
+  });
+
+  // Finding 2 (R18): a genuine multi-batch circuit-breaker fixture. 25
+  // sentences batch into [10, 10, 5] for BATCH.selectDisambiguate = 10; the
+  // mock fails only the two full-size (un-bisected) batches outright — any
+  // bisected retry (always length < 10) would succeed — so disabling the
+  // breaker changes the outcome: the aborted batches' sentences would recover
+  // via their retries instead of staying not_checked, and the call count
+  // would rise from 3 to 7. That is the sensitivity check this test relies on.
+  it("trips the circuit breaker across multiple batches and never retries the aborted ones", async () => {
+    const answer = Array.from({ length: 25 }, (_, i) => `Satz Nummer ${i + 1} ist eindeutig wahr.`).join(" ");
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) => {
+      const indexes = windows.map((w: any) => w.sentence.index);
+      if (indexes.length === 10 && (indexes[0] === 0 || indexes[0] === 10)) {
+        throw new Error("provider down for this batch");
+      }
+      return allClear(indexes);
+    });
+    (runDecomposition as jest.Mock).mockResolvedValue({ outcomes: [], usage: USAGE });
+
+    const result = await runClaimCheck({
+      question: "q", answer, sources: SOURCES, model: {} as any, options: options(), locale: "de",
+    });
+
+    // Only the 3 initial batch calls — the breaker fired before any bisect
+    // retry was attempted for the two failing batches.
+    expect((runSelectAndDisambiguate as jest.Mock).mock.calls.length).toBe(3);
+    expect(result.status).toBe("partial");
+    expect(result.notes.some((n) => n.includes("selection+disambiguation") && n.includes("aborted"))).toBe(true);
+    expect(result.sentences[0]!.state).toBe("not_checked");
+    expect(result.sentences[15]!.state).toBe("not_checked");
   });
 
   // Review Focus 5
@@ -231,6 +295,48 @@ describe("runClaimCheck — resilience", () => {
     expect(result.claims).toHaveLength(1);
     expect(result.claims[0]!.text).toBe("echt");
     expect(result.claims[0]!.sentenceIndex).toBe(0);
+  });
+
+  // Finding 4 (R20): a surviving sentence whose decomposed claims were ALL cut
+  // by maxClaims must read as cap_exceeded, not no_verifiable_content — the
+  // cap is a resource limit, not a judgement that the sentence had nothing
+  // checkable in it.
+  it("marks a sentence cap_exceeded, not no_verifiable_content, when the cap cuts all of its claims", async () => {
+    const answer = "Erster Satz ist eindeutig. Zweiter Satz ist auch eindeutig.";
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [
+          { text: `a${w.sentence.index}`, inferred: false },
+          { text: `b${w.sentence.index}`, inferred: false },
+        ],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q",
+      answer,
+      sources: SOURCES,
+      model: {} as any,
+      // maxClaims = 2 exhausts entirely on sentence 0's two claims, so
+      // sentence 1's two claims are cut before either one is pushed.
+      options: options({ caps: { maxClaims: 2 } }),
+      locale: "de",
+    });
+
+    expect(result.claims).toHaveLength(2);
+    expect(result.sentences[0]!.state).toBe("checked");
+    expect(result.sentences[1]!.state).toBe("not_checked");
+    expect(result.sentences[1]!.reason).toBe("cap_exceeded");
+    expect(result.status).toBe("partial");
   });
 
   // Correction 2: runDecomposition OMITS an entry entirely for a sentence the
