@@ -126,3 +126,82 @@ describe("rerankResults", () => {
     expect(passedItems[0].chunk_content).toBe("hello\nworld");
   });
 });
+
+describe("duplicate suppression", () => {
+  const reranker = { model: "m", rerank: jest.fn(async (_q: string, items: any[]) =>
+    items.map((it, i) => ({ ...it, rerank_score: 0.9 - i * 0.01 }))) } as any;
+
+  it("keeps the best-scoring copy and backfills the freed slot", async () => {
+    const chunks = Array.from({ length: 6 }, (_, i) => chunk("c" + i, "I" + i, 1));
+    const r = await rerankResults({
+      chunks, query: "q", state: state(), reranker, tuning: { ...tuning, topK: 3 },
+      findNearDuplicates: async () => [["c0", "c1"]],
+    });
+    const ids = r.limited_results.map((c: any) => c.chunk_id);
+    expect(ids).toHaveLength(3);
+    expect(ids).toContain("c0");      // better score survives
+    expect(ids).not.toContain("c1");  // its near-duplicate is dropped
+    expect(ids).toContain("c3");      // slot backfilled past c2
+  });
+
+  it("still returns topK when every candidate is a near-duplicate", async () => {
+    const chunks = Array.from({ length: 5 }, (_, i) => chunk("d" + i, "I" + i, 1));
+    const all: Array<[string, string]> = [];
+    for (let i = 0; i < 5; i++) for (let j = i + 1; j < 5; j++) all.push(["d" + i, "d" + j]);
+    const r = await rerankResults({
+      chunks, query: "q", state: state(), reranker, tuning: { ...tuning, topK: 3 },
+      findNearDuplicates: async () => all,
+    });
+    expect(r.limited_results).toHaveLength(3);
+    expect(r.limited_results[0].chunk_id).toBe("d0");
+  });
+
+  it("keeps a chunk with no chunk_id and never suppresses by it", async () => {
+    // 4 candidates, topK 3: e2 is a duplicate of e0 and must lose its slot to e3,
+    // while the id-less chunk is kept and never used as a suppression key.
+    const chunks = [
+      chunk("e0", "I0", 1),
+      chunk("e2", "I2", 1),
+      { ...chunk("x", "I1", 1), chunk_id: undefined },
+      chunk("e3", "I3", 1),
+    ];
+    const r = await rerankResults({
+      chunks: chunks as any, query: "q", state: state(), reranker, tuning: { ...tuning, topK: 3 },
+      findNearDuplicates: async () => [["e0", "e2"]],
+    });
+    const ids = r.limited_results.map((c: any) => c.chunk_id);
+    expect(r.limited_results).toHaveLength(3);
+    expect(ids).toContain("e0");
+    expect(ids).not.toContain("e2");            // duplicate dropped
+    expect(ids).toContain(undefined);           // id-less chunk kept
+    expect(ids).toContain("e3");                // freed slot backfilled
+  });
+
+  it("behaves exactly as before when no callback is supplied", async () => {
+    const chunks = Array.from({ length: 6 }, (_, i) => chunk("f" + i, "I" + i, 1));
+    const base = { chunks, query: "q", state: state(), reranker, tuning: { ...tuning, topK: 3 } };
+    const without = await rerankResults(base);
+    expect(without.limited_results.map((c: any) => c.chunk_id)).toEqual(["f0", "f1", "f2"]);
+  });
+
+  it("suppresses duplicates on the page-filter path too (three copies of page 127)", async () => {
+    // The motivating case from the design spec: an explicit page lookup where the page
+    // exists three times under different filenames. The page filter used to overwrite
+    // limited_results with a plain slice, which bypassed suppression entirely.
+    const chunks = Array.from({ length: 5 }, (_, i) =>
+      chunk("p" + i, "I" + i, 1, { chunk_metadata: { page: 127 } }),
+    );
+    const r = await rerankResults({
+      chunks, query: "q", state: state({ userRequestedPage: 127 }), reranker,
+      tuning: { ...tuning, topK: 3 },
+      findNearDuplicates: async () => [["p0", "p1"], ["p0", "p2"], ["p1", "p2"]],
+    });
+    const ids = r.limited_results.map((c: any) => c.chunk_id);
+    expect(ids).toHaveLength(3);
+    expect(ids).toContain("p0");      // best-scoring copy survives
+    expect(ids).not.toContain("p1");  // its near-duplicates lose their slots
+    expect(ids).not.toContain("p2");
+    expect(ids).toContain("p3");      // freed slots carry different content
+    expect(ids).toContain("p4");
+  });
+});

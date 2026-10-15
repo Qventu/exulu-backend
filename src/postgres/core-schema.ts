@@ -1,6 +1,7 @@
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import {
   feedbackSchema,
+  claimChecksSchema,
   rolesSchema,
   teamsSchema,
   statisticsSchema,
@@ -950,6 +951,19 @@ const sharedArtifactsSchema: ExuluTableDefinition = {
     { name: "password_hash", type: "text", required: false, hidden: true }, // bcrypt; password mode only
     { name: "expires_at", type: "date", required: false }, // null = no expiry
     { name: "content_type", type: "text", required: false },
+    // `grant_viewer_identity`, `identity_granted_by` and `identity_granted_at`
+    // were here. The viewer-identity capability is no longer a per-row grant:
+    // `auth_mode: "regular"` carries it, because such an artifact only renders
+    // for a logged-in user who passes RBAC on this row, so handing that user
+    // their own identity grants nothing they did not already have.
+    //
+    // addMissingFields only ever adds columns, so removing these three leaves
+    // them orphaned on databases that already ran init-db. Dropping them is a
+    // manual, per-environment step:
+    //   alter table shared_artifacts
+    //     drop column if exists grant_viewer_identity,
+    //     drop column if exists identity_granted_by,
+    //     drop column if exists identity_granted_at;
   ],
 };
 
@@ -1112,7 +1126,11 @@ export const coreSchemas = {
     if (license["agent-feedback"]) {
       schemas.feedbackSchema = (): ExuluTableDefinition => addCoreFields(feedbackSchema)
     }
-    
+
+    if (license["claim-check"]) {
+      schemas.claimChecksSchema = (): ExuluTableDefinition => addCoreFields(claimChecksSchema)
+    }
+
     if (license["rbac"]) {
       schemas.rolesSchema = (): ExuluTableDefinition => addCoreFields(rolesSchema)
       schemas.teamsSchema = (): ExuluTableDefinition => addCoreFields(teamsSchema)

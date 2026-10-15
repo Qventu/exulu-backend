@@ -14,6 +14,7 @@ import { hydrateContextEmbedders } from "@SRC/exulu/hydrate-embedders";
 const {
   agentsSchema,
   feedbackSchema,
+  claimChecksSchema,
   testCasesSchema,
   evalSetsSchema,
   evalRunsSchema,
@@ -147,6 +148,7 @@ const up = async function (knex: Knex) {
     rbacSchema(),
     agentsSchema(),
     feedbackSchema(),
+    claimChecksSchema(),
     variablesSchema(),
     skillsSchema(),
     workflowTemplatesSchema(),
@@ -360,6 +362,21 @@ const up = async function (knex: Knex) {
   // Memory conflicts (sub-project 3b): upsert idempotence via key, query by context+status.
   if (await knex.schema.hasTable("memory_conflicts")) {
     await knex.raw(`CREATE INDEX IF NOT EXISTS memory_conflicts_context_status_idx ON memory_conflicts (context, status)`);
+  }
+
+  // Claim check persistence (Task B3): row uniqueness is (session, message_id,
+  // user), not (session, message_id) alone — read-scoping is by (session,
+  // user), and a unique index on (session, message_id) alone would let two
+  // different users racing the same session uuid and message id collide on
+  // one row. This index is what lets saveClaimCheck's onConflict(...).merge()
+  // upsert (src/exulu/claim-check/store.ts) work as a true upsert instead of
+  // a delete-then-insert: a row belonging to a different user can never
+  // conflict with, and therefore is never touched by, another user's write.
+  if (await knex.schema.hasTable("claim_checks")) {
+    await knex.raw(
+      `CREATE UNIQUE INDEX IF NOT EXISTS claim_checks_session_message_user_uidx
+          ON claim_checks (session, message_id, "user")`,
+    );
   }
 
   /*  if (!await knex.schema.hasTable('sessions')) {

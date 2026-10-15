@@ -1,4 +1,7 @@
-import { convertExuluToolsToAiSdkTools } from "./convert-exulu-tools-to-ai-sdk-tools";
+import {
+  convertExuluToolsToAiSdkTools,
+  OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS,
+} from "./convert-exulu-tools-to-ai-sdk-tools";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
 import { postgresClient } from "@SRC/postgres/client";
 
@@ -148,6 +151,17 @@ describe("tool-output offload exemption (agentic retrieval)", () => {
         .Context_Search.execute({}, {}),
     );
     expect(guardMock).not.toHaveBeenCalled();
+  });
+
+  // Fix round 2, Important 2.3: claim-check reads the retrieval tool's
+  // `output.result`, which an offloaded output does not have — so this
+  // exemption is load-bearing for a feature in another directory. Removing
+  // the id to save context would turn claim checks off on exactly the large
+  // turns they were built for, with every gate green and no log line. This
+  // assertion is the loud failure that replaces that silence; see
+  // src/exulu/claim-check/finish-metadata.ts.
+  it("still exempts agentic_context_search, which claim-check depends on", () => {
+    expect(OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS.has("agentic_context_search")).toBe(true);
   });
 
   it("other tools still pass through guardToolOutput", async () => {

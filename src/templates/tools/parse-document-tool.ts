@@ -10,6 +10,14 @@ import { sessionFilePrefix } from "@SRC/exulu/session-files";
 
 const DEFAULT_LIMIT = 250;
 const MAX_CONTENT_CHARS = 16_000;
+
+/**
+ * This tool's display name — exported so the sanitized key it maps to (used
+ * by claim-check's finish-metadata to detect that a turn read evidence the
+ * check will never see) breaks loudly on a rename instead of silently
+ * turning that detection off.
+ */
+export const PARSE_DOCUMENT_TOOL_NAME = "parse_document";
 /** Under this many non-whitespace chars per page on average, the PDF is
  * effectively scanned — its text layer is useless and OCR-class processing
  * (knowledge base with a processor) or view_document_page is the way in. */
@@ -202,7 +210,7 @@ export const createParseDocumentTool = ({
 
   return ExuluTool.internal({
     id: "parse_document",
-    name: "parse_document",
+    name: PARSE_DOCUMENT_TOOL_NAME,
     needsApproval: false,
     description:
       "Extract the text of an uploaded PDF or Office document from this session's files, with " +

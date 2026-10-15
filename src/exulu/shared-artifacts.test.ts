@@ -8,6 +8,7 @@ import {
   hashSharePassword,
   verifySharePassword,
   contentHeadersFor,
+  publicMetaFor,
   getSharedArtifactByName,
 } from "./shared-artifacts";
 
@@ -134,6 +135,33 @@ describe("contentHeadersFor", () => {
   });
 });
 
+// A `validateCreateInput — grant_viewer_identity` block stood here, proving
+// the create route refused the flag. Gone with the flag: `auth_mode: "regular"`
+// is the capability now, and `auth_mode`'s own validation is covered by the
+// `validateCreateInput` block above.
+//
+// What replaced it as the thing worth asserting: a create body that carries the
+// retired field is now simply ignored rather than rejected, which is the
+// behaviour change a caller would notice.
+describe("validateCreateInput — the retired grant field", () => {
+  const now = new Date("2026-10-08T00:00:00Z");
+  const valid = {
+    s3key: "artifacts/app.html",
+    name: "app.html",
+    auth_mode: "regular",
+  };
+
+  test("accepts a body that still carries grant_viewer_identity — the field is inert, not an error", () => {
+    expect(
+      validateCreateInput({ ...valid, grant_viewer_identity: true } as any, now),
+    ).toEqual({ ok: true });
+  });
+
+  test("accepts a body that omits it", () => {
+    expect(validateCreateInput({ ...valid } as any, now)).toEqual({ ok: true });
+  });
+});
+
 describe("getSharedArtifactByName", () => {
   test("queries shared_artifacts by name and returns the first row", async () => {
     const first = jest.fn().mockResolvedValue({ id: "x", name: "report" });
@@ -147,3 +175,51 @@ describe("getSharedArtifactByName", () => {
     expect(row).toEqual({ id: "x", name: "report" });
   });
 });
+
+describe("publicMetaFor", () => {
+  const row = {
+    auth_mode: "regular",
+    expires_at: null,
+    s3key: "artifacts/123_EXULU_app.html",
+    content_type: null,
+  };
+
+  test("reports exactly the low-sensitivity fields, and auth_mode among them", () => {
+    expect(publicMetaFor(row)).toEqual({
+      auth_mode: "regular",
+      expires_at: null,
+      filename: "app.html",
+      content_type: null,
+      is_html: true,
+    });
+  });
+
+  // The payload is unauthenticated, so what it does NOT carry is as much the
+  // contract as what it does. The retired grant field must not reappear, and
+  // the password hash must never be reachable through it.
+  test("does not report a retired or sensitive field even when the row carries one", () => {
+    const meta = publicMetaFor({
+      ...row,
+      grant_viewer_identity: true,
+      password_hash: "$2b$12$notasecretreally",
+    } as any);
+    expect(meta).not.toHaveProperty("grant_viewer_identity");
+    expect(meta).not.toHaveProperty("password_hash");
+  });
+
+  test("passes auth_mode through verbatim — it is the capability", () => {
+    expect(publicMetaFor({ ...row, auth_mode: "password" }).auth_mode).toBe("password");
+    expect(publicMetaFor({ ...row, auth_mode: "public" }).auth_mode).toBe("public");
+  });
+
+  test("marks a non-html key as not html", () => {
+    expect(publicMetaFor({ ...row, s3key: "a/b.pdf" }).is_html).toBe(false);
+  });
+});
+
+// describe("authorizeIdentityGrant") and describe("parseIdentityGrantBody")
+// stood here. Both helpers were removed along with the PATCH route they
+// served — `auth_mode: "regular"` is now the capability on its own, so there
+// is no grant to authorize or parse. The retained rejection of the field at
+// create time is still covered by the
+// `validateCreateInput — grant_viewer_identity` block above.

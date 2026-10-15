@@ -34,6 +34,7 @@ const TABLE_FACTORIES = [
   "rolesSchema",
   "agentsSchema",
   "feedbackSchema",
+  "claimChecksSchema",
   "projectsSchema",
   "jobResultsSchema",
   "promptLibrarySchema",

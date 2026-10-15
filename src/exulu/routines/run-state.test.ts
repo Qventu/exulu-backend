@@ -255,7 +255,7 @@ describe("resumeRoutineRunIfWaiting", () => {
 });
 
 // A db mock that records terminal ops (delete/del/select) per table.
-const makeCascadeDb = (opts: { liveRuns?: any[] } = {}) => {
+const makeCascadeDb = (opts: { liveRuns?: any[]; hasClaimChecks?: boolean } = {}) => {
   const ops: { table: string; where?: any; whereIn?: any[]; op: string }[] = [];
   const builder = (table: string) => {
     const b: any = {};
@@ -269,7 +269,18 @@ const makeCascadeDb = (opts: { liveRuns?: any[] } = {}) => {
     b.del = async () => { ops.push({ table, where: b._where, op: "del" }); return 1; };
     return b;
   };
-  const db: any = { from: (t: string) => builder(t) };
+  // claim_checks only exists on deployments licensed for claim-check, so the
+  // cascade asks before deleting; `hasClaimChecks: false` is the unlicensed
+  // deployment, where the statement must not run at all.
+  const db: any = {
+    from: (t: string) => builder(t),
+    schema: {
+      hasTable: async (t: string) => {
+        ops.push({ table: t, op: "hasTable" });
+        return opts.hasClaimChecks ?? true;
+      },
+    },
+  };
   return { db, ops };
 };
 
@@ -291,11 +302,17 @@ describe("deleteRoutineRunRow", () => {
 });
 
 describe("deleteAgentSessionData", () => {
-  it("deletes the session's messages, checks for live runs, and removes its rbac snapshot", async () => {
+  it("deletes the session's messages and claim checks, checks for live runs, and removes its rbac snapshot", async () => {
     const { db, ops } = makeCascadeDb({ liveRuns: [] });
     await deleteAgentSessionData(db, "sess-1", queuesMock);
     expect(ops).toEqual([
       { table: "agent_messages", where: { session: "sess-1" }, op: "delete" },
+      // Fix round 2, Important 4: the stored claim-check payload holds the
+      // answer's sentences and verbatim source quotes. Without this, deleting
+      // a chat left them behind forever, unreachable by any read path (the
+      // GET needs the session uuid the user no longer has).
+      { table: "claim_checks", op: "hasTable" },
+      { table: "claim_checks", where: { session: "sess-1" }, op: "delete" },
       {
         table: "job_results",
         where: { session: "sess-1" },
@@ -304,5 +321,17 @@ describe("deleteAgentSessionData", () => {
       },
       { table: "rbac", where: { entity: "agent_session", target_resource_id: "sess-1" }, op: "del" },
     ]);
+  });
+
+  it("skips the claim_checks delete on a deployment without the table", async () => {
+    // Unlicensed for claim-check: the table was never created, and an
+    // unguarded delete would throw and abort the whole session deletion.
+    const { db, ops } = makeCascadeDb({ liveRuns: [], hasClaimChecks: false });
+    await deleteAgentSessionData(db, "sess-1", queuesMock);
+    expect(ops).toContainEqual({ table: "claim_checks", op: "hasTable" });
+    expect(ops).not.toContainEqual({ table: "claim_checks", where: { session: "sess-1" }, op: "delete" });
+    // ...and the rest of the cascade still ran.
+    expect(ops).toContainEqual({ table: "agent_messages", where: { session: "sess-1" }, op: "delete" });
+    expect(ops).toContainEqual({ table: "rbac", where: { entity: "agent_session", target_resource_id: "sess-1" }, op: "del" });
   });
 });

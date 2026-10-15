@@ -38,6 +38,77 @@ export const feedbackSchema: ExuluTableDefinition = {
     ]
 }
 
+/**
+ * One stored claim check per assistant message (spec §5.2).
+ *
+ * `payload` holds the endpoint's whole response, so the chat can re-render a
+ * panel after a reload without re-spending ~8 provider calls. `score_label` is
+ * duplicated out of it only so a list view can colour a row without parsing
+ * every payload — that list view still needs either a scoped route or a
+ * verified RBAC story before it can be built; `graphql: false` below is not
+ * an oversight blocking it.
+ *
+ * `graphql: false`: nothing consumes a GraphQL claim-checks API today — the
+ * frontend reads these rows through the REST route the next task adds,
+ * scoped to the calling user. `payload` holds the whole check result,
+ * including the answer's sentences and verbatim quotes from source
+ * documents — customer content — and the generated pagination/`ById`
+ * surface's cross-tenant read scoping is not verified here, so this table
+ * is kept off the auto-CRUD generator until it is. Same shape as
+ * `workflowTriggersSchema` below.
+ *
+ * Because of that flag, registering this schema with `createSDL` is a
+ * deliberate NO-OP for the GraphQL surface: `createSDL` skips every table with
+ * `graphql: false` (src/graphql/schemas/index.ts, `if (table.graphql ===
+ * false) continue`), so a printed SDL contains no `claim_check` type at all.
+ * A `grep -c claim_check` over the SDL returning **zero is the expected
+ * result**, not a missing registration — the stage-3 plan asked for a non-zero
+ * count, which was never achievable. The registration exists so the table is
+ * created and migrated by the initdb path like every other core table.
+ *
+ * Row uniqueness is (session, message_id, user) — read-scoping is by
+ * (session, user), so a unique index on (session, message_id) alone would
+ * let two different users racing the same session uuid and message id
+ * collide on one row. A composite UNIQUE index on (session, message_id,
+ * user) is created in init-exulu-db.ts (the schema's `index` flag is
+ * informational only, same as `memoryUsagesSchema` in core-schema.ts) — it
+ * backs the real upsert in src/exulu/claim-check/store.ts, which is
+ * `onConflict(["session", "message_id", "user"]).merge()`, never a
+ * delete-then-insert: a row belonging to a different user can never
+ * conflict with, and therefore is never touched by, another user's write.
+ */
+export const claimChecksSchema: ExuluTableDefinition = {
+    type: "claim_checks",
+    graphql: false,
+    name: {
+        plural: "claim_checks",
+        singular: "claim_check",
+    },
+    fields: [
+        {
+            name: "session",
+            type: "uuid",
+        },
+        {
+            name: "message_id",
+            type: "text",
+        },
+        {
+            name: "payload",
+            type: "json",
+        },
+        {
+            name: "score_label",
+            type: "enum",
+            enumValues: ["ok", "warn", "alert", "n/a"],
+        },
+        {
+            name: "user",
+            type: "number",
+        },
+    ],
+}
+
 export const rolesSchema: ExuluTableDefinition = {
     type: "roles",
     name: {

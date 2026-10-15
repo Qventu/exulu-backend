@@ -62,14 +62,26 @@ import { markStreamActive, clearStreamActive, isStreamActive } from "./active-st
 import { resumeRoutineRunIfWaiting } from "@SRC/exulu/routines/run-state";
 import { compactSession, CompactionInsufficientError } from "./compact-session.ts";
 import { describeRequestError } from "./request-error.ts";
-import { finishTurnMetadata } from "./turn-metadata.ts";
+import { finishTurnMetadata, type ChatUIMessage } from "./turn-metadata.ts";
 import { recalledMemoriesMetadata } from "./memory/recalled-metadata.ts";
+import { claimCheckStreamMetadata } from "./claim-check/finish-metadata.ts";
 import { isPublicSurface, treatAsGuest } from "./public-surface.ts";
 import { recordMemoryUsage } from "./memory/usage.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { transcriptionClient } from "./transcription/client.ts";
 import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts";
 import { registerTranscriptExportRoute } from "./transcription/export-route.ts";
+import { registerViewerIdentityRoutes } from "./viewer-identity-routes.ts";
+import { registerClaimCheckRoutes } from "@EE/claim-check/routes";
+import { claimCheckRateLimiter } from "@EE/claim-check/rate-limit";
+import { runClaimCheck } from "@EE/claim-check/run";
+import { makeSecondChance } from "@EE/claim-check/second-chance";
+import { pipelineConfigFor } from "@EE/claim-check/agent-config";
+import {
+  saveClaimCheck as storeClaimCheck,
+  listClaimChecks as listStoredClaimChecks,
+  findClaimCheck as findStoredClaimCheck,
+} from "./claim-check/store.ts";
 import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
 import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
 import { transcriptionService } from "./transcription/service.ts";
@@ -137,6 +149,7 @@ import {
   isExpired,
   deriveFilename,
   contentHeadersFor,
+  publicMetaFor,
 } from "./shared-artifacts.ts";
 import { publicAgentView, evaluateGuestChatAccess } from "./public-agents.ts";
 import {
@@ -176,6 +189,7 @@ const getExuluVersionNumber = async () => {
 const {
   agentsSchema,
   feedbackSchema,
+  claimChecksSchema,
   projectsSchema,
   jobResultsSchema,
   testCasesSchema,
@@ -199,6 +213,11 @@ const {
   statisticsSchema,
   transcriptionJobsSchema,
 } = coreSchemas.get();
+
+// One limiter per process, not per request — it tracks in-flight calls and
+// per-user windows across the whole server, so it must outlive any single
+// request handler closure.
+const claimCheckLimiter = claimCheckRateLimiter();
 
 export const createExpressRoutes = async (
   app: Express,
@@ -259,7 +278,7 @@ export const createExpressRoutes = async (
     █████╗   ╚███╔╝ ██║   ██║██║      ██║   ██║
     ██╔══╝   ██╔██╗ ██║   ██║██║      ██║   ██║
     ███████╗██╔╝ ██╗╚██████╔╝███████╗╚██████╔╝
-    ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ╚═════╝ 
+    ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ╚═════╝
     Intelligence Management Platform - Server
 
     `);
@@ -271,6 +290,7 @@ export const createExpressRoutes = async (
       rolesSchema(),
       agentsSchema(),
       feedbackSchema(),
+      claimChecksSchema(),
       projectsSchema(),
       jobResultsSchema(),
       promptLibrarySchema(),
@@ -847,8 +867,53 @@ export const createExpressRoutes = async (
         // even when the client response is aborted:
         result.stream.consumeStream(); // no await
 
-        result.stream.pipeUIMessageStreamToResponse(res, {
+        // The claim-check fragment needs the turn's retrieval tool results,
+        // but `messageMetadata`'s `finish` branch only ever receives the
+        // `finish` stream part itself (no message/parts access), and onFinish
+        // (which does get the assembled responseMessage) only fires AFTER
+        // that `finish` part — and its metadata — has already been sent to
+        // the client. So the handler below accumulates each retrieval call's
+        // FINAL (non-preliminary) result as it streams past, and emits the
+        // fragment when `finish` arrives. One function, with its own tests:
+        // see claimCheckStreamMetadata.
+        //
+        // The public surface is a guest surface even for a signed-in visitor
+        // — computed once and reused below (recalledMemoriesMetadata's own
+        // call site) rather than calling treatAsGuest(req, user) twice.
+        const isGuestTurn = treatAsGuest(req, user);
+        const claimCheckOnPart = claimCheckStreamMetadata({
+          config: pipelineConfigFor(agent).claimCheck,
+          user,
+          isGuest: isGuestTurn,
+          isLicensed: Boolean(checkLicense()["claim-check"]),
+          // The PRE-inlining view of this turn's prompt (history + the new
+          // message): result.originalMessages has already had every attached
+          // document turned into a text part, which is the one thing the
+          // fragment must suppress on.
+          messages: [...result.previousMessages, ...(message ? [message] : [])],
+          // This ctx is captured now, before the stream has run — but
+          // `result.recall` keeps accumulating through it, so both of these
+          // have to be read lazily, at `finish` time, same as
+          // recalledMemoriesMetadata's own call below, not at construction
+          // time when recall has not run yet.
+          get recallHadItems() {
+            return (result.recall?.list().length ?? 0) > 0;
+          },
+          // recalledMemoriesMetadata already owns the "may this viewer see
+          // it" rule (guest + agent.memory_config.guests.showRecalled); ask
+          // it rather than re-deriving that gate here, so the two can never
+          // drift apart (see finish-metadata.ts's ClaimCheckTurnContext).
+          get recalledMemories() {
+            return recalledMemoriesMetadata({ recall: result.recall, agent, isGuest: isGuestTurn }).recalledMemories;
+          },
+        });
+
+        result.stream.pipeUIMessageStreamToResponse<ChatUIMessage>(res, {
           messageMetadata: ({ part }) => {
+            // Accumulates on every part; returns the fragment only on
+            // `finish`, and `{}` on everything else (including every part of
+            // a turn whose agent has the check off).
+            const claimCheck = claimCheckOnPart(part);
             // Per-step usage: the LAST step's inputTokens reflects the actual
             // prompt size of this turn (totalUsage sums every step's full
             // prompt, inflating multi-step turns ~stepCount×). Last write wins
@@ -864,12 +929,22 @@ export const createExpressRoutes = async (
                 ...finishTurnMetadata({ totalUsage: part.totalUsage, startedAt: turnStartedAt }),
                 // The public surface is a guest surface even for a signed-in visitor:
                 // the page renders in guest mode, so the data has to follow.
-                ...recalledMemoriesMetadata({ recall: result.recall, agent, isGuest: treatAsGuest(req, user) }),
+                ...recalledMemoriesMetadata({ recall: result.recall, agent, isGuest: isGuestTurn }),
+                // The chat posts the check itself once the stream ends; this
+                // only tells it that it may, and which sources to send.
+                ...claimCheck,
               };
             }
             return undefined;
           },
-          originalMessages: result.originalMessages,
+          // The ChatUIMessage generic above is there to type-check the
+          // messageMetadata return; the SDK reads only ids and roles off
+          // originalMessages (to id the response message for persistence).
+          // generate-stream hands back plain UIMessages, whose `metadata` is
+          // `unknown` — wider than ChatMessageMetadata, not narrower — so
+          // this assertion cannot hide a mistake in the metadata the callback
+          // builds, which is the thing the generic is here to catch.
+          originalMessages: result.originalMessages as ChatUIMessage[],
           sendReasoning: true,
           sendSources: true,
           onError: (error) => {
@@ -2172,7 +2247,7 @@ export const createExpressRoutes = async (
   //
   // Registered BEFORE /litellm/:project so the mount path can collide with
   // a project-shaped URL without being swallowed by the API handler.
-  
+
   if (isLiteLLMEnabled() && LITELLM_UI_PATH) {
     console.log("[EXULU] Registering LiteLLM UI at", LITELLM_UI_PATH);
     app.use(LITELLM_UI_PATH, async (req: Request, res: Response) => {
@@ -4917,13 +4992,18 @@ export const createExpressRoutes = async (
         messages: messagesBySession.get(s.id) ?? [],
       }));
 
-      const [feedback, promptFavorites, tracking] = await Promise.all([
+      const [feedback, promptFavorites, tracking, claimChecks] = await Promise.all([
         db.from("feedback").where({ user: targetUser.id }).catch(() => []),
         db
           .from("prompt_favorites")
           .where({ user_id: targetUser.id })
           .catch(() => []),
         db.from("tracking").where({ user: targetUser.id }).catch(() => []),
+        // The stored claim checks keyed to this user. `payload` is personal
+        // data (their answers' sentences, verbatim source quotes), so Art. 15
+        // covers it. Same `.catch(() => [])` as its siblings: the table only
+        // exists on deployments licensed for claim-check.
+        db.from("claim_checks").where({ user: targetUser.id }).catch(() => []),
       ]);
 
       const exportedAt = new Date().toISOString();
@@ -4943,6 +5023,7 @@ export const createExpressRoutes = async (
         `  - feedback.json         feedback the user submitted`,
         `  - prompt_favorites.json prompt-library favourites`,
         `  - tracking.json         tracking events linked to the user`,
+        `  - claim_checks.json     answer verification results stored for the user`,
         ``,
       ].join("\n");
 
@@ -4956,6 +5037,7 @@ export const createExpressRoutes = async (
         JSON.stringify(promptFavorites, null, 2),
       );
       zip.file("tracking.json", JSON.stringify(tracking, null, 2));
+      zip.file("claim_checks.json", JSON.stringify(claimChecks, null, 2));
 
       const buffer = await zip.generateAsync({ type: "nodebuffer" });
       const filename = `user-${targetUser.id}-export-${exportedAt.replace(/[:.]/g, "-")}.zip`;
@@ -4988,6 +5070,15 @@ export const createExpressRoutes = async (
         await trx("agent_messages").where({ user: targetUser.id }).delete();
         await trx("agent_sessions").where({ user: targetUser.id }).delete();
         await trx("feedback").where({ user: targetUser.id }).delete();
+        // Stored claim checks: `payload` holds the user's answers and verbatim
+        // source quotes, keyed by `user`, so the docblock's "every row
+        // referencing them" covers it. Guarded by hasTable because the table
+        // only exists on deployments licensed for claim-check — an unguarded
+        // delete would abort this transaction (and so the user deletion)
+        // everywhere else.
+        if (await trx.schema.hasTable("claim_checks")) {
+          await trx("claim_checks").where({ user: targetUser.id }).delete();
+        }
         await trx("prompt_favorites")
           .where({ user_id: targetUser.id })
           .delete();
@@ -5133,13 +5224,58 @@ export const createExpressRoutes = async (
       res.status(410).json({ detail: "This link has expired." });
       return;
     }
-    res.json({
-      auth_mode: row.auth_mode,
-      expires_at: row.expires_at,
-      filename: deriveFilename(row.s3key),
-      content_type: row.content_type,
-      is_html: /\.html?$/i.test(row.s3key),
-    });
+    res.json(publicMetaFor(row));
+  });
+
+  // GET /shared-artifacts/:name/access live in viewer-identity-routes.ts so
+  // their HTTP contract is testable with supertest and no Postgres. See
+  // viewer-identity-routes.test.ts.
+  registerViewerIdentityRoutes(app, {
+    authenticate: (req) => requestValidators.authenticate(req),
+    getDb: async () => (await postgresClient()).db,
+    RBACResolver,
+    checkRecordAccess,
+  });
+
+  // POST /claims/check lives in ee/claim-check/routes.ts so its full HTTP
+  // contract (licensing, payload caps, rate limiting, model fallback) is
+  // unit-testable with supertest and no Postgres. See routes.test.ts.
+  registerClaimCheckRoutes(app, {
+    authenticate: (req) => requestValidators.authenticate(req),
+    checkApiKeyScope,
+    checkRecordAccess,
+    getAgent: (id) => exuluApp.get().agent(id),
+    resolveModel: ({ modelId, user }) => resolveModel({ modelId, user }),
+    runCheck: runClaimCheck,
+    isLicensed: () => Boolean(checkLicense()["claim-check"]),
+    limiter: claimCheckLimiter,
+    isExternalUser,
+    externalRateLimitExceeded,
+    // Platform default model for callers with no agent; empty until an
+    // operator sets it.
+    platformDefaultModel: async () => process.env.CLAIM_CHECK_DEFAULT_MODEL ?? "",
+    secondChanceFor: ({ agent, user, model, cap }) =>
+      makeSecondChance({ agent, user, role: user?.role?.id, model, contexts: contexts ?? [], cap }),
+    // The SQL bodies live in src/exulu/claim-check/store.ts, not inline here:
+    // a 5,000+ line factory is not a testable seam, and the scoping these two
+    // functions enforce (never a delete, both session AND user in the same
+    // query) is the one guarantee in this feature that has to be verified
+    // against a real query builder, not a jest.fn() at the handler level.
+    // See store.test.ts.
+    saveClaimCheck: async (args) => {
+      const { db } = await postgresClient();
+      await storeClaimCheck(db, args);
+    },
+    listClaimChecks: async (args) => {
+      const { db } = await postgresClient();
+      return listStoredClaimChecks(db, args);
+    },
+    // The POST's "is this verdict already on disk" lookup. Same module, same
+    // caller-scoping as the two above.
+    findClaimCheck: async (args) => {
+      const { db } = await postgresClient();
+      return findStoredClaimCheck(db, args);
+    },
   });
 
   // Serve bytes. Auth depends on the row's auth_mode.
@@ -5165,6 +5301,12 @@ export const createExpressRoutes = async (
       }
     } else if (row.auth_mode === "regular") {
       // regular: viewer's bearer token; backend enforces RBAC.
+      //
+      // This block is deliberately duplicated by the regular-mode RBAC check
+      // in viewer-identity-routes.ts's GET /shared-artifacts/:name/access
+      // (extracting a shared helper would mean touching this route, which
+      // was out of scope for that capability). If this block changes, check
+      // that one too — the two must change together.
       const viewer = await requestValidators.authenticate(req);
       if (!viewer.user?.id) {
         res.status(401).json({ detail: "Authentication required." });
@@ -5411,4 +5553,3 @@ function buildUnifiedDiff(
 
   return lines.join("\n");
 }
-

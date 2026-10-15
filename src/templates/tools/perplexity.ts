@@ -2,9 +2,17 @@ import { ExuluTool } from "@SRC/exulu/tool";
 import z from "zod";
 import Perplexity from "@perplexity-ai/perplexity_ai";
 
+/**
+ * This tool's display name — exported so the sanitized key it maps to (used
+ * by claim-check's finish-metadata to detect that a turn drew on web results
+ * the check will never see) breaks loudly on a rename instead of silently
+ * turning that detection off.
+ */
+export const INTERNET_SEARCH_TOOL_NAME = "Internet Search";
+
 const internetSearchTool = new ExuluTool({
   id: "internet_search",
-  name: "Internet Search",
+  name: INTERNET_SEARCH_TOOL_NAME,
   description: "Search the internet for information.",
   inputSchema: z.object({
     query: z.string().describe("The query to the tool."),

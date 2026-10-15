@@ -169,6 +169,38 @@ describe("fuzzyPrefilter supplement scope and degenerate corpora", () => {
   });
 });
 
+describe("fuzzyPrefilter supplement budget", () => {
+  it("caps the separator supplement at the supplied budget", async () => {
+    const items = Array.from({ length: 80 }, (_, i) => ({
+      id: "i" + i, name: `hb_FST2XT_part${i}.pdf`, external_id: null,
+    }));
+    const context = { id: "c", getItems: async () => items } as any;
+    const common = {
+      cacheKey: "t2-" + Math.random(), relevantKeywords: ["FST-2XT"], context,
+      fields: ["id", "name"], normalize: (it: any) => it.name,
+      supplementSeparatorVariants: true,
+    };
+    const narrow = await fuzzyPrefilter({ ...common, supplementBudget: 15 });
+    const wide = await fuzzyPrefilter({ ...common, cacheKey: "t2w-" + Math.random(), supplementBudget: 50 });
+    expect(wide.length).toBeGreaterThan(narrow.length);
+    expect(wide.length).toBeLessThanOrEqual(50 + narrow.length);
+  });
+
+  it("defaults to the narrow budget when none is supplied (flag off)", async () => {
+    const items = Array.from({ length: 80 }, (_, i) => ({
+      id: "j" + i, name: `hb_FST2XT_part${i}.pdf`, external_id: null,
+    }));
+    const context = { id: "c", getItems: async () => items } as any;
+    const common = {
+      relevantKeywords: ["FST-2XT"], context, fields: ["id", "name"],
+      normalize: (it: any) => it.name, supplementSeparatorVariants: true,
+    };
+    const explicit = await fuzzyPrefilter({ ...common, cacheKey: "t2a-" + Math.random(), supplementBudget: 15 });
+    const omitted = await fuzzyPrefilter({ ...common, cacheKey: "t2b-" + Math.random() });
+    expect(omitted.length).toBe(explicit.length);
+  });
+});
+
 describe("resolveIdentifierPins", () => {
   it("runs one extraction call per identifier set and routes pins to the set's contexts", async () => {
     (generateText as jest.Mock).mockResolvedValue({

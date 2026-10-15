@@ -14,6 +14,7 @@ import { runMemoryPhase } from "./memory";
 import { resolveIdentifierPins } from "./prefilter";
 import { searchContexts } from "./search";
 import { rerankResults } from "./rerank";
+import { makeNearDuplicateFinder } from "./near-duplicates";
 import type { AgenticRetrievalOutput, RerankState, ChunkWithScore } from "./types";
 import { withTiming } from "./timing";
 import { needsPinRerun } from "./pin-rerun";
@@ -25,6 +26,15 @@ export { parsePreselectedItems } from "./global-ids";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * The agentic retrieval tool's display name — the one literal the model and
+ * the UI both see, and the one `sanitizeToolName` turns into the AI-SDK tool
+ * key (and so the `tool-${...}` part type) every caller of this tool keys on.
+ * Exported so a rename here fails those call sites' test suites (claim-check's
+ * finish-metadata, notably) instead of silently breaking the feature.
+ */
+export const AGENTIC_RETRIEVAL_TOOL_NAME = "Context Search";
 
 /**
  * Accumulate chunks into result.chunks, deduplicating by chunk_id (first-seen wins).
@@ -119,7 +129,7 @@ export function createAgenticRetrievalTool(opts: {
 
   return ExuluTool.internal({
     id: "agentic_context_search",
-    name: "Context Search",
+    name: AGENTIC_RETRIEVAL_TOOL_NAME,
     description:
       `Intelligent knowledge search across the available knowledge bases: ${contexts.map((c) => c.name || c.id).join(", ")}. Routes the question to the right sources, searches them with query expansion, and returns reranked passages. Results are exhaustive for the given query: do NOT repeat the call with a rephrased version of the same question — re-call only with genuinely new information (a different product or model, an explicitly named source or document, or new details from the user).` +
       // Note: the description suffix intentionally remains even when the per-agent project_search
@@ -179,6 +189,17 @@ export function createAgenticRetrievalTool(opts: {
         default: true,
       },
       {
+        name: "suppress_duplicate_passages",
+        description:
+          "Keep only the best-scoring copy when several retrieved passages carry near-identical content " +
+          "(the same page re-uploaded under different filenames, a document filed in two folders). " +
+          "Nothing is merged or rewritten — redundant copies are dropped from the result so the places " +
+          "freed up can carry different information. Also widens the identifier-pin budget, which is " +
+          "only safe together with this. Leave empty to keep it on; set to false to restore the previous behaviour.",
+        type: "boolean",
+        default: true,
+      },
+      {
         name: "knowledge_bases",
         description: "Per-knowledge-base profiles: enabled, kind (documents | conversations | records), instructions, and per-KB overrides (limit, expand, multiQuery, hyde). JSON object keyed by context id.",
         type: "json",
@@ -213,6 +234,17 @@ export function createAgenticRetrievalTool(opts: {
         description: "When disabled, hides source references (item names, IDs, chunk info) from external users and anonymous guests. Sources are stripped from the tool output and the system prompt guidance for citation is omitted.",
         type: "boolean",
         default: true,
+      },
+      {
+        name: "claim_check",
+        description:
+          "Post-answer claim verification: extracts the factual claims the answer makes and reports, " +
+          "per claim, whether the retrieved passages support it, contradict it, or say nothing about it. " +
+          "Runs AFTER the answer has streamed and never delays or changes it. Keys: enabled, model " +
+          "(a fast, cheap model is the right choice), fidelity (fast | paper), completions, reRetrieve, " +
+          "thresholds {warn, alert}, showToExternalUsers, caps {maxSentences, maxClaims, maxReRetrievals}.",
+        type: "json",
+        default: '{"enabled":false,"model":"","fidelity":"fast","thresholds":{"warn":0.1,"alert":0.3}}',
       },
     ],
     inputSchema: z.object({
@@ -398,6 +430,7 @@ export function createAgenticRetrievalTool(opts: {
           contextsById,
           kbKindById,
           model: utilityModel,
+          suppressDuplicatePassages: cfg.suppressDuplicatePassages,
         });
 
       const [memResult, routResult, parallelPins] = await Promise.all([
@@ -597,6 +630,13 @@ export function createAgenticRetrievalTool(opts: {
       };
 
       // ── Phase 3: rerank main results ──────────────────────────────────────
+      // Built once per run and shared by both rerank call sites below: each knowledge
+      // base stores its chunks in its own table, so the lookup is scoped to the known
+      // context ids (excludes the synthetic "memory" tag, which has no own table).
+      const findNearDuplicates = cfg.suppressDuplicatePassages
+        ? makeNearDuplicateFinder({ contextIds: Array.from(contextsById.keys()) })
+        : undefined;
+
       result.steps.push({
         stepNumber: 1,
         text: `Reranking ${mainSearch.chunks.length} chunks`,
@@ -618,6 +658,7 @@ export function createAgenticRetrievalTool(opts: {
           identifierBoost: cfg.tuning.identifierBoost,
           pageWindow: cfg.tuning.pageWindow,
         },
+        findNearDuplicates,
       });
 
       result.steps.push({
@@ -695,6 +736,7 @@ export function createAgenticRetrievalTool(opts: {
             identifierBoost: cfg.tuning.identifierBoost,
             pageWindow: cfg.tuning.pageWindow,
           },
+          findNearDuplicates,
         });
 
         result.steps.push({

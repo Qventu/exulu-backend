@@ -375,6 +375,7 @@
               "api-reference/rest/file-uploads",
               "api-reference/rest/gateways-litellm",
               "api-reference/rest/mcp",
+              "api-reference/rest/claim-check",
               "api-reference/rest/gdpr"
             ]
           },

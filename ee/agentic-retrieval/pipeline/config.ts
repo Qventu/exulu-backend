@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CLAIM_CHECK_DEFAULTS } from "@EE/claim-check/types";
 
 export const KB_KINDS = ["documents", "conversations", "records"] as const;
 export type KbKind = (typeof KB_KINDS)[number];
@@ -74,7 +75,32 @@ const tuningSchema = z.object({
     .default({ mergedMemoryCall: true, mergedRoutingCall: true, parallelPins: true }),
 });
 
+const claimCheckSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** Empty = fall back to the agent's utility model, then the agent's model. */
+  model: z.string().default(""),
+  fidelity: z.enum(["fast", "paper"]).default(CLAIM_CHECK_DEFAULTS.fidelity),
+  completions: z.number().int().min(1).max(3).default(CLAIM_CHECK_DEFAULTS.completions),
+  reRetrieve: z.boolean().default(CLAIM_CHECK_DEFAULTS.reRetrieve),
+  thresholds: z
+    .object({
+      warn: z.number().min(0).max(1).default(CLAIM_CHECK_DEFAULTS.thresholds.warn),
+      alert: z.number().min(0).max(1).default(CLAIM_CHECK_DEFAULTS.thresholds.alert),
+    })
+    // zod's .default() returns the value as-is (inner defaults are not applied), so spell it out.
+    .default(CLAIM_CHECK_DEFAULTS.thresholds),
+  showToExternalUsers: z.boolean().default(false),
+  caps: z
+    .object({
+      maxSentences: z.number().int().positive().default(CLAIM_CHECK_DEFAULTS.caps.maxSentences),
+      maxClaims: z.number().int().positive().default(CLAIM_CHECK_DEFAULTS.caps.maxClaims),
+      maxReRetrievals: z.number().int().min(0).default(CLAIM_CHECK_DEFAULTS.caps.maxReRetrievals),
+    })
+    .default(CLAIM_CHECK_DEFAULTS.caps),
+});
+
 export type KbProfile = z.infer<typeof kbProfileSchema>;
+export type ClaimCheckConfig = z.infer<typeof claimCheckSchema>;
 export type RoutingRule = z.infer<typeof routingRuleSchema>;
 export type IdentifierSet = z.infer<typeof identifierSetSchema>;
 
@@ -88,12 +114,16 @@ export type PipelineConfig = {
   projectSearch: boolean;
   /** Show source references (item names, IDs, chunk info) to external users and guests. When false, sources are hidden. Default true. */
   showSourcesToExternalUsers: boolean;
+  /** Widen the identifier-pin budget and drop near-identical passages during top-K selection. Default true. */
+  suppressDuplicatePassages: boolean;
   utilityModel: string;
   knowledgeBases: Record<string, KbProfile>;
   routing: z.infer<typeof routingSchema>;
   vocabulary: z.infer<typeof vocabularySchema>;
   memory: z.infer<typeof memorySchema>;
   tuning: z.infer<typeof tuningSchema>;
+  /** Post-answer claim verification (spec 2026-10-13). Off unless an admin enables it. */
+  claimCheck: ClaimCheckConfig;
 };
 
 const boolVal = (v: unknown): boolean => v === true || v === "true" || v === 1;
@@ -139,6 +169,7 @@ function defaultFor(name: string): unknown {
     case "vocabulary": return { glossary: [], identifiers: [], rewrites: [], styleHint: "" };
     case "memory": return {};
     case "tuning": return {};
+    case "claim_check": return {};
     default: return {};
   }
 }
@@ -159,12 +190,17 @@ export function parsePipelineConfig(raw?: Record<string, unknown>): PipelineConf
       r["show_sources_to_external_users"] === undefined || r["show_sources_to_external_users"] === ""
         ? true
         : boolVal(r["show_sources_to_external_users"]),
+    suppressDuplicatePassages:
+      r["suppress_duplicate_passages"] === undefined || r["suppress_duplicate_passages"] === ""
+        ? true
+        : boolVal(r["suppress_duplicate_passages"]),
     utilityModel: strVal(r["utility_model"], ""),
     knowledgeBases: jsonVal("knowledge_bases", knowledgeBasesSchema, r["knowledge_bases"]),
     routing: jsonVal("routing", routingSchema, r["routing"]),
     vocabulary: jsonVal("vocabulary", vocabularySchema, r["vocabulary"]),
     memory: jsonVal("memory", memorySchema, r["memory"]),
     tuning: jsonVal("tuning", tuningSchema, r["tuning"]),
+    claimCheck: jsonVal("claim_check", claimCheckSchema, r["claim_check"]),
   };
 }
 

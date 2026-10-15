@@ -295,6 +295,16 @@ export async function deleteAgentSessionData(
   queues: { list: Map<string, { use: () => Promise<any> }> },
 ): Promise<void> {
   await db.from("agent_messages").where({ session: sessionId }).delete();
+  // Stored claim checks for this session's messages. Their `payload` holds the
+  // answer's sentences and verbatim quotes from source documents — customer
+  // content — and once the session is gone there is no read path left to reach
+  // them: GET /claims/check/:session needs the session uuid the user no longer
+  // has. Guarded by hasTable because claim_checks only exists on deployments
+  // licensed for claim-check (ee/schemas.ts via core-schema), and an unguarded
+  // delete would throw and abort the whole cascade everywhere else.
+  if (await db.schema.hasTable("claim_checks")) {
+    await db.from("claim_checks").where({ session: sessionId }).delete();
+  }
   const liveRuns = await db
     .from("job_results")
     .where({ session: sessionId })
