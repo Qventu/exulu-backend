@@ -10,7 +10,7 @@ import { runDisambiguation } from "./stages/disambiguate";
 import { runDecomposition } from "./stages/decompose";
 import { runVerification } from "./stages/verify";
 import { BISECT_FLOOR, MAX_EVIDENCE_PER_CALL, runClaimCheck, selectGroupEvidence } from "./run";
-import { indexSources, selectEvidence } from "./evidence";
+import { indexSources, selectEvidence, MAX_CHARS_PER_SOURCE } from "./evidence";
 import { CLAIM_CHECK_DEFAULTS, type ClaimCheckOptions } from "./types";
 
 const USAGE = { calls: 1, inputTokens: 100, outputTokens: 10 };
@@ -726,6 +726,179 @@ describe("runClaimCheck — source truncation", () => {
     // The discriminator for the assertion above: truncation is what turns a
     // check partial here, not the fixture.
     expect(result.status).toBe("ok");
+  });
+
+  it("names the truncated source in the note it already emits", async () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `c${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources: [
+        { id: "big", name: "handbuch.pdf", content: "x".repeat(MAX_CHARS_PER_SOURCE + 100) },
+        { id: "small", content: "fits" },
+      ],
+      model: {} as any,
+      options: options(),
+      locale: "de",
+    });
+    expect(result.status).toBe("partial");                     // unchanged behaviour
+    expect(result.limits.truncated).toBe(true);                // unchanged behaviour
+    const note = result.notes.find((n) => n.includes("truncated"));
+    expect(note).toContain("handbuch.pdf");
+    expect(note).not.toContain("small");                       // an uncut source is not named
+  });
+
+  it("falls back to the id when a truncated source has no name", async () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `c${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources: [{ id: "big", content: "x".repeat(MAX_CHARS_PER_SOURCE + 100) }],
+      model: {} as any,
+      options: options(),
+      locale: "de",
+    });
+    expect(result.notes.find((n) => n.includes("truncated"))).toContain("big");
+  });
+
+  it("caps the name list at three names and adds 'and N more' for the rest", async () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `c${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    // Create 5 sources, all truncated
+    const sources = Array.from({ length: 5 }, (_, i) => ({
+      id: `s${i}`,
+      name: `file${i}.pdf`,
+      content: "x".repeat(MAX_CHARS_PER_SOURCE + 100),
+    }));
+
+    const result = await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources,
+      model: {} as any,
+      options: options(),
+      locale: "de",
+    });
+
+    const note = result.notes.find((n) => n.includes("truncated"));
+    // Should show exactly 3 names and "and 2 more"
+    expect(note).toContain('"file0.pdf"');
+    expect(note).toContain('"file1.pdf"');
+    expect(note).toContain('"file2.pdf"');
+    expect(note).toContain("and 2 more");
+    expect(note).not.toContain("file3.pdf");
+    expect(note).not.toContain("file4.pdf");
+  });
+
+  it("quotes source names to disambiguate commas in filenames", async () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `c${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources: [
+        { id: "s1", name: "Report, Final.pdf", content: "x".repeat(MAX_CHARS_PER_SOURCE + 100) },
+        { id: "s2", name: "Draft.pdf", content: "x".repeat(MAX_CHARS_PER_SOURCE + 100) },
+      ],
+      model: {} as any,
+      options: options(),
+      locale: "de",
+    });
+
+    const note = result.notes.find((n) => n.includes("truncated"));
+    // Names should be quoted so commas don't cause misattribution
+    expect(note).toContain('"Report, Final.pdf"');
+    expect(note).toContain('"Draft.pdf"');
+    // Should read as 2 sources, not 3
+    expect(note).toMatch(/2 source\(s\)/);
+  });
+
+  // Fix round 3, minor: the cap and the quoting are in place, but a
+  // caller-supplied name is arbitrary text — a newline in one made a
+  // single-line note read as two, and the note is shown to a reader.
+  it("collapses whitespace in a caller-supplied name so one note stays one line", async () => {
+    (runSelectAndDisambiguate as jest.Mock).mockImplementation(async ({ windows }) =>
+      allClear(windows.map((w: any) => w.sentence.index)),
+    );
+    (runDecomposition as jest.Mock).mockImplementation(async ({ windows }) => ({
+      outcomes: windows.map((w: any) => ({
+        index: w.sentence.index,
+        claims: [{ text: `c${w.sentence.index}`, inferred: false }],
+      })),
+      usage: USAGE,
+    }));
+    (runVerification as jest.Mock).mockImplementation(async ({ claims }) => ({
+      outcomes: claims.map((c: any) => ({ claimId: c.id, verdict: "supported", evidence: [], rationale: "r" })),
+      usage: USAGE,
+    }));
+
+    const result = await runClaimCheck({
+      question: "q",
+      answer: ANSWER,
+      sources: [{ id: "s1", name: "Wartung\n2026\tQ3.pdf", content: "x".repeat(MAX_CHARS_PER_SOURCE + 100) }],
+      model: {} as any,
+      options: options(),
+      locale: "de",
+    });
+
+    const note = result.notes.find((n) => n.includes("truncated"))!;
+    expect(note).toContain('"Wartung 2026 Q3.pdf"');
+    expect(note).not.toContain("\n");
+    expect(note).not.toContain("\t");
   });
 });
 

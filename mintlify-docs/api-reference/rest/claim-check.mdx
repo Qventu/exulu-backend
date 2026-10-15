@@ -23,7 +23,7 @@ Sentences that carry nothing to verify — introductions, conclusions, opinions,
 {
   "question": "…",                       // required
   "answer": "…",                         // required
-  "sources": [ { "id": "s1", "name": "handbuch.pdf", "content": "…" } ], // optional, defaults to []
+  "sources": [ { "content": "…" }, { "id": "s1", "name": "handbuch.pdf", "type": "document", "content": "…" } ], // optional, defaults to []
   "agent": "uuid",                       // optional: agent config, model, and second-chance retrieval
   "session": "uuid", "messageId": "…",   // optional: provenance, and if both are set the check is stored
   "model": "…",                          // optional, super-admin callers only
@@ -42,12 +42,23 @@ Sentences that carry nothing to verify — introductions, conclusions, opinions,
 |---|---|---|
 | `question` | `string` | The question the answer responds to. Required, non-empty. |
 | `answer` | `string` | The answer text to check, as originally produced (markdown as streamed). Required, non-empty. |
-| `sources` | `{ id: string, name?: string, content: string }[]` | The caller's evidence. `id` must be unique within the request and is echoed back in `claims[].evidence[].sourceId`, so a caller can map evidence back to its own records. **Optional** — an omitted `sources` key validates as an empty array (the schema's permissive shape is deliberate), not a validation error. With no evidence to verify against, every claim the engine extracts comes back `unsupported` with "no evidence was available for this claim" — but the **score is reported as `label: "n/a"` and `status: "partial"`** with a note, never as a 100% unsupported share: a verdict reached without reading a single source is not a verdict about the answer. Pass sources if you want anything to resolve as `supported` or `contradicted`. |
+| `sources` | `{ content: string, id?: string, name?: string, type?: string }[]` | The caller's evidence. **`content` is the only required field** — a source needs nothing else to be usable. **Optional** — an omitted `sources` key validates as an empty array (the schema's permissive shape is deliberate), not a validation error. With no evidence to verify against, every claim the engine extracts comes back `unsupported` with "no evidence was available for this claim" — but the **score is reported as `label: "n/a"` and `status: "partial"`** with a note, never as a 100% unsupported share: a verdict reached without reading a single source is not a verdict about the answer. Pass sources if you want anything to resolve as `supported` or `contradicted`. See Source shape below for `id`, `name`, and `type`. |
 | `agent` | `string` | Optional agent UUID. When set, the caller's API key must be scoped to it and the caller must have read access; the agent's `claim_check` configuration and second-chance retrieval become available. The agent must have claim check **enabled** (`claim_check.enabled`), otherwise the request is refused with `403` — the feature costs money, so it is opt-in per agent. An external or guest identity additionally needs `claim_check.showToExternalUsers` on that agent. Agent-less calls (the standalone API product) are unaffected by both flags. |
 | `session`, `messageId` | `string` | Optional provenance fields; not used for access control. When **both** are set (and `session` is a well-formed uuid), the result is also stored — upserted by `(session, messageId, caller)`, so re-running the same check on the same message replaces the earlier row rather than accumulating, and the upsert can never touch a row belonging to a different caller — and can be read back later with `GET /claims/check/:session` below. Storage is a best-effort convenience: a database failure is logged and never changes the response status — a check that succeeded is never turned into an error because its panel could not be saved. |
 | `model` | `string` | Optional model override. **Accepted only from a super-admin caller** — see Model resolution below. A non-admin caller who sets this field gets `403`, not a silently-ignored parameter. |
 | `locale` | `string` | Optional. Defaults to a locale detected from the answer text. Must be a language tag the runtime can segment with (`de`, `en`, `fr`, …); anything else is a `400`, not a silently degraded check. |
 | `options` | object | Optional per-call overrides. Omitted keys fall back to the agent's `claim_check` configuration, then to the engine defaults (`fidelity: "fast"`, `completions: 1`, `reRetrieve: true`, `thresholds: { warn: 0.1, alert: 0.3 }`, `caps: { maxSentences: 120, maxClaims: 200, maxReRetrievals: 10 }`). `options.caps` **clamp the configured value, they never raise it** — see Option limits below. `options.fidelity: "paper"` and `options.completions` above 1 are **super-admin only** (`403` otherwise). |
+
+### Source shape
+
+Each entry in `sources` is:
+
+| Field | Type | Description |
+|---|---|---|
+| `content` | `string` | **Required.** The evidence text itself. Everything else on the source is optional. |
+| `id` | `string` | Optional. Echoed back in `claims[].evidence[].sourceId`, so a caller can map evidence back to its own records. Omit it and the endpoint assigns one positionally (`s1`, `s2`, …); supply it yourself if you want evidence to key back to an id you already have (a document id, a memory id, …). A request can mix the two freely — some sources with their own id, others left to be assigned one. If a caller-supplied id would collide with a generated one, the generated id gets `_` appended until it is unique. **Two sources in the same request may not supply the same `id`** — that request is refused with `400`, not merged, because an evidence quote has to trace back to exactly one document. |
+| `name` | `string` | Optional display name (a filename, a title, …). Carried through to the engine and echoed wherever the id is, for a UI to show something more readable than `s1`. |
+| `type` | `string` | Optional, one of `knowledge_base`, `document`, `memory`, `web`, `session_item`, `other`. **Purely informational** — it is dropped before the check runs, and the engine treats every source identically regardless of `type`: a web page and a knowledge-base document carry the same evidentiary weight, by design (there are no trust tiers). Use it to label and group sources in your own UI, or to make a logged request self-describing; it has no effect on the verdict. **An unrecognised value is silently ignored, not rejected** — a request with `"type": "guesswork"` still runs, as if `type` had been omitted. Since the field can never change a verdict, a request isn't refused over a mislabeled one. |
 
 ### Option limits
 
@@ -118,7 +129,7 @@ If none of these resolves to a usable model, the endpoint responds `400` naming 
 |---|---|
 | The answer had more sentences than `caps.maxSentences` | `limits.sentencesSkipped`, `limits.truncated: true`, sentences `not_checked` with `reason: "cap_exceeded"` |
 | Decomposition produced more claims than `caps.maxClaims` | a note naming the dropped count |
-| At least one source was cut at the 60,000-character per-source limit | `limits.truncated: true` and a note naming the dropped characters |
+| At least one source was cut at the 60,000-character per-source limit | `limits.truncated: true` and a note naming the cut sources and the dropped characters |
 | No usable source content was supplied at all | `score.label: "n/a"` and a note |
 | A stage call failed, was bisected and still failed, or the stage circuit breaker tripped | sentences `not_checked`, a note per group |
 | The model returned no outcome for a sentence, or no verdict for a claim | sentences `not_checked`, the claim dropped from `claims[]` |
@@ -155,7 +166,7 @@ When `agent` is set and `options.reRetrieve` is on, `unsupported` claims get one
 | Status | When |
 |---|---|
 | `200` | The check ran, `status` is `"ok"` or `"partial"`. |
-| `400` | The request body failed validation (including an unusable `locale`, or resolved thresholds whose `warn` exceeds `alert`), or no model could be resolved (`detail` names `CLAIM_CHECK_DEFAULT_MODEL`). |
+| `400` | The request body failed validation (including an unusable `locale`, or resolved thresholds whose `warn` exceeds `alert` — note that an unrecognised `sources[].type` is **not** in this list; it is ignored, not rejected), two sources supplied the same `id` (`detail` matches `duplicate source id "…"`), or no model could be resolved (`detail` names `CLAIM_CHECK_DEFAULT_MODEL`). |
 | `401` | Authentication failed. |
 | `403` | The API key is not scoped to the named `agent`, or the caller cannot read it; the named agent has `claim_check.enabled` off; or the caller is an external/guest identity and that agent has `claim_check.showToExternalUsers` off. Also returned when a non-super-admin caller sets `model`, `options.fidelity: "paper"`, or `options.completions` above 1 in the request body. |
 | `404` | The deployment is not licensed for claim check. The endpoint does not advertise a feature the deployment has not bought, so this looks identical to a route that does not exist. Also returned, with `{ "detail": "Agent {id} not found." }`, when an `agent` is named that does not exist or whose id is malformed. |
@@ -198,7 +209,7 @@ One request can cost on the order of 10 LLM calls over arbitrary caller-supplied
 | Number of sources | 200 |
 | Total source content | 2,000,000 characters, summed across all `sources[].content` |
 
-**Per-source truncation** (no `413` — the check still runs): only the first **60,000 characters** of each `sources[].content` are indexed and searched. Anything past that is never read, so a claim that is supported only in the dropped tail comes back `unsupported`. When this happens the response sets `limits.truncated: true`, sets `status: "partial"`, and adds a note naming how many sources were cut and how many characters were dropped. Split a long document into several `sources` entries (or pre-select the relevant part) if you need all of it checked.
+**Per-source truncation** (no `413` — the check still runs): only the first **60,000 characters** of each `sources[].content` are indexed and searched. Anything past that is never read, so a claim that is supported only in the dropped tail comes back `unsupported`. When this happens the response sets `limits.truncated: true`, sets `status: "partial"`, and adds a note saying how many sources were cut, **which ones** — up to three of them by `name` (falling back to `id`), then "and N more" — and how many characters were dropped, so you can act on the note rather than only count it. Split a long document into several `sources` entries (or pre-select the relevant part) if you need all of it checked.
 
 **Rate limits** (`429` when exceeded):
 
@@ -226,6 +237,8 @@ curl -X POST "https://your-imp-host/claims/check" \
 ```
 
 This call has no `agent`, so the model comes from the platform's default claim-check model (`CLAIM_CHECK_DEFAULT_MODEL`). To use an `agent` with its own `claim_check.model` configuration instead, add `"agent": "<uuid>"`. Only a super-admin key may add `"model": "<model-id>"` to pick a model per call; any other caller gets `403` for that field.
+
+The minimal version of the same call needs nothing but `content`: `"sources": [{ "content": "Die FST-2XT arbeitet mit 230 Volt." }]` works unchanged — see Source shape above.
 
 For this input, the first sentence resolves to a `supported` claim and the second — an opinion with nothing to verify — is reported as `no_verifiable_content`, so `score.label` is `"ok"`.
 

@@ -876,20 +876,36 @@ export const createExpressRoutes = async (
         // FINAL (non-preliminary) result as it streams past, and emits the
         // fragment when `finish` arrives. One function, with its own tests:
         // see claimCheckStreamMetadata.
+        //
+        // The public surface is a guest surface even for a signed-in visitor
+        // — computed once and reused below (recalledMemoriesMetadata's own
+        // call site) rather than calling treatAsGuest(req, user) twice.
+        const isGuestTurn = treatAsGuest(req, user);
         const claimCheckOnPart = claimCheckStreamMetadata({
           config: pipelineConfigFor(agent).claimCheck,
           user,
-          // The public surface is a guest surface even for a signed-in
-          // visitor, same expression recalledMemoriesMetadata uses below.
-          isGuest: treatAsGuest(req, user),
+          isGuest: isGuestTurn,
           isLicensed: Boolean(checkLicense()["claim-check"]),
           // The PRE-inlining view of this turn's prompt (history + the new
           // message): result.originalMessages has already had every attached
           // document turned into a text part, which is the one thing the
           // fragment must suppress on.
           messages: [...result.previousMessages, ...(message ? [message] : [])],
-          // Same collector recalledMemoriesMetadata reads below.
-          recall: result.recall,
+          // This ctx is captured now, before the stream has run — but
+          // `result.recall` keeps accumulating through it, so both of these
+          // have to be read lazily, at `finish` time, same as
+          // recalledMemoriesMetadata's own call below, not at construction
+          // time when recall has not run yet.
+          get recallHadItems() {
+            return (result.recall?.list().length ?? 0) > 0;
+          },
+          // recalledMemoriesMetadata already owns the "may this viewer see
+          // it" rule (guest + agent.memory_config.guests.showRecalled); ask
+          // it rather than re-deriving that gate here, so the two can never
+          // drift apart (see finish-metadata.ts's ClaimCheckTurnContext).
+          get recalledMemories() {
+            return recalledMemoriesMetadata({ recall: result.recall, agent, isGuest: isGuestTurn }).recalledMemories;
+          },
         });
 
         result.stream.pipeUIMessageStreamToResponse<ChatUIMessage>(res, {
@@ -913,7 +929,7 @@ export const createExpressRoutes = async (
                 ...finishTurnMetadata({ totalUsage: part.totalUsage, startedAt: turnStartedAt }),
                 // The public surface is a guest surface even for a signed-in visitor:
                 // the page renders in guest mode, so the data has to follow.
-                ...recalledMemoriesMetadata({ recall: result.recall, agent, isGuest: treatAsGuest(req, user) }),
+                ...recalledMemoriesMetadata({ recall: result.recall, agent, isGuest: isGuestTurn }),
                 // The chat posts the check itself once the stream ends; this
                 // only tells it that it may, and which sources to send.
                 ...claimCheck,

@@ -58,6 +58,8 @@ export type SourceTruncation = {
   sources: number;
   /** Characters of source content that were never indexed. */
   droppedChars: number;
+  /** Names (or ids) of the sources that were truncated. */
+  names: string[];
 };
 
 /** Stemmed content tokens (the caller dedupes into a Set). Language is detected per text. */
@@ -88,7 +90,7 @@ export function indexSourcesWithLimits(
   // manual) cannot outvote the one distinguishing term in the claim. Counted
   // here, with the tokens in hand, rather than per scoring call.
   const documentFrequency = new Map<string, number>();
-  const truncation: SourceTruncation = { sources: 0, droppedChars: 0 };
+  const truncation: SourceTruncation = { sources: 0, droppedChars: 0, names: [] };
 
   for (const source of sources) {
     const full = source.content ?? "";
@@ -96,6 +98,10 @@ export function indexSourcesWithLimits(
     if (full.length > content.length) {
       truncation.sources += 1;
       truncation.droppedChars += full.length - content.length;
+      // Which document, not just how many: a reader cannot act on a count.
+      // Using || instead of ?? to handle empty string names.
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+      truncation.names.push(source.name || source.id);
     }
     if (!content.trim()) continue;
 

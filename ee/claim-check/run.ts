@@ -91,6 +91,36 @@ export const STAGE_FAILURE_ABORT = 0.4;
 /** Paper §D: 3 completions, 2 successes required, for Selection and Disambiguation. */
 const MIN_SUCCESS_RATIO = 2 / 3;
 
+/**
+ * How many truncated source names the note spells out before it says "and N
+ * more", and how long one name may be. Module scope, named, like every other
+ * tuning number in this file — they were inline literals inside the note
+ * builder.
+ */
+const TRUNCATION_NAMES_LISTED = 3;
+const TRUNCATION_NAME_MAX_CHARS = 80;
+
+/**
+ * The truncated sources, formatted for the note a reader sees: whitespace
+ * collapsed, capped at `TRUNCATION_NAME_MAX_CHARS`, quoted so a comma in a
+ * filename cannot read as a separator, and at most
+ * `TRUNCATION_NAMES_LISTED` of them before "and N more".
+ *
+ * The collapse matters because a `name` is arbitrary caller-supplied text:
+ * a newline in one made a single-line note read as two.
+ */
+const formatSourceNames = (names: string[]): string => {
+  const quoted = names.map((name) => {
+    const flat = name.replace(/\s+/g, " ").trim();
+    return `"${flat.length > TRUNCATION_NAME_MAX_CHARS ? flat.slice(0, TRUNCATION_NAME_MAX_CHARS) + "…" : flat}"`;
+  });
+  if (quoted.length <= TRUNCATION_NAMES_LISTED) return quoted.join(", ");
+  return (
+    quoted.slice(0, TRUNCATION_NAMES_LISTED).join(", ") +
+    `, and ${quoted.length - TRUNCATION_NAMES_LISTED} more`
+  );
+};
+
 const chunk = <T,>(items: T[], size: number): T[][] => {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -275,7 +305,7 @@ export async function runClaimCheck(args: {
   // Finding 5: evidence past MAX_CHARS_PER_SOURCE is never searched, so what
   // was dropped has to reach `limits` and `notes` on every return path,
   // including the catch below.
-  let truncation: SourceTruncation = { sources: 0, droppedChars: 0 };
+  let truncation: SourceTruncation = { sources: 0, droppedChars: 0, names: [] };
 
   try {
     const locale = args.locale ?? localeFromText(args.answer);
@@ -506,8 +536,10 @@ export async function runClaimCheck(args: {
       // branching on `status` (as the docs instruct) read a quarter-blind
       // check as clean.
       state.partial = true;
+
       state.notes.push(
-        `${truncation.sources} source(s) were truncated at ${MAX_CHARS_PER_SOURCE} characters; ` +
+        `${truncation.sources} source(s) were truncated at ${MAX_CHARS_PER_SOURCE} characters ` +
+          `(${formatSourceNames(truncation.names)}); ` +
           `${truncation.droppedChars} character(s) of evidence were not searched, so a claim supported only there reads as unsupported`,
       );
     }

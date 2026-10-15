@@ -172,8 +172,12 @@ it("names no memory source when the recall list was withheld from this viewer", 
     recalledMemories: undefined, // what recalledMemoriesMetadata returns for a gated guest
     recallHadItems: true,
   });
-  expect(out.claimCheck?.sources.some((s) => s.type === "memory")).toBe(false);
-  expect(out.claimCheck?.sources.length).toBeGreaterThan(0); // the kb source still counts
+  // The spec (§5) is explicit: a withheld memory list means the turn is
+  // uncovered and "the fragment must stay absent". The answer may rest on a
+  // memory the client cannot send, so there is nothing partial to emit — and
+  // asserting partial omission here is also unsatisfiable, since `out` is `{}`
+  // and `out.claimCheck?.sources` is then `undefined`, not an array.
+  expect(out).toEqual({});
 });
 
 it("still emits for a turn with retrieval alone", () => {
@@ -343,9 +347,15 @@ it("rejects two sources that supply the same id rather than merging them", async
   expect(res.body.detail).toMatch(/duplicate source id/i);
 });
 
-it("rejects an unknown source type", async () => {
-  const { app } = buildApp({});
-  await post(app, { question: "q", answer: "a", sources: [{ content: "x", type: "guesswork" }] }).expect(400);
+// An unknown `type` is IGNORED, not rejected: the field is informational, so
+// a misspelled label must not cost the caller their check. Before this change
+// the schema stripped an unknown key and answered 200 — a bare z.enum here
+// would have turned that into a 400 and broken the compatibility promise.
+it("ignores an unknown source type instead of rejecting the request", async () => {
+  const runCheck = jest.fn().mockResolvedValue(RESULT);
+  const { app } = buildApp({ runCheck });
+  await post(app, { question: "q", answer: "a", sources: [{ content: "x", type: "guesswork" }] }).expect(200);
+  expect(runCheck.mock.calls[0][0].sources).toEqual([{ id: "s1", content: "x" }]);
 });
 
 it("still accepts the Stage 1 shape, id and all", async () => {
@@ -371,7 +381,9 @@ sources: z
     z.object({
       content: z.string(),
       name: z.string().optional(),
-      type: z.enum(SOURCE_TYPES).optional(),
+      // `.catch` keeps the enum as documentation and typing while never
+      // rejecting: an unrecognised label falls back to undefined.
+      type: z.enum(SOURCE_TYPES).optional().catch(undefined),
       id: z.string().min(1).optional(),
     }),
   )

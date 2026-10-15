@@ -35,6 +35,17 @@ export const CLAIM_CHECK_MAX_OUTPUT_TOKENS = 8000;
 
 export type ClaimCheckSource = { id: string; name?: string; content: string };
 
+/**
+ * Every kind of source a request or a manifest can name (Stage 4, spec §3-4).
+ * Declared once here — rather than once in the chat's manifest
+ * (src/exulu/claim-check/finish-metadata.ts) and again in the request schema
+ * (ee/claim-check/routes.ts) — so a type added to one side cannot silently
+ * fail to exist on the other. `"other"` is request-only: the chat's own
+ * manifest always knows exactly which of the five specific kinds it is
+ * naming, and never emits it.
+ */
+export type ClaimCheckSourceType = "knowledge_base" | "document" | "memory" | "web" | "session_item" | "other";
+
 export type Sentence = {
   index: number;
   /** Char offsets into the ORIGINAL answer string; answer.slice(start, end) === text. */
