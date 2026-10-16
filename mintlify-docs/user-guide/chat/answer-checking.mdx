@@ -1,0 +1,101 @@
+---
+title: "Answer checking"
+description: "Read the verification panel under an answer: what the score counts, why 'contradicted' and 'without evidence' are different findings, and when no check appears."
+icon: "circle-check"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+import { EditionBadge } from "/snippets/edition-badge.mdx";
+
+<RightsCallout right="none" flags="The agent's administrator must switch verification on (Agents → Knowledge → Verification). Requires the Enterprise `claim-check` entitlement." />
+
+When verification is on, IMP checks the agent's answer against the sources that answer was built from, and shows the result in a small panel under the answer.
+
+The check runs **after** the answer is finished. It never delays the response and never changes a word of it — the answer you read is the answer the agent wrote, and the panel is a second opinion on it.
+
+## What the panel shows
+
+While the check is running you see **Checking the answer…**. When it finishes, the panel leads with a count:
+
+> **4 of 5 statements supported**
+
+That counts *statements*, not sentences. IMP breaks the answer into individual factual claims — one sentence often carries two — and looks for a passage in the sources that settles each one. Sentences with nothing to verify (an opinion, a question back to you, "Let me know if that helps") are not counted at all; they are neither supported nor a problem.
+
+Next to the count, two badges appear when they apply:
+
+| Badge | Colour | Meaning |
+|---|---|---|
+| **2 contradicted** | red | The sources say something *different*. The answer and the evidence disagree. |
+| **1 without evidence** | amber | No passage in the sources settles this claim — IMP looked and did not find it. |
+
+<Warning>
+These two are deliberately **not** the same finding and never share a colour. "The handbook says 400 volts, the answer says 230" is a contradiction you should act on. "Nothing in the handbook mentions the voltage" means the answer may still be perfectly correct — it just was not backed by the material the agent had. Treating the second as an error would be unfair to the agent; treating it as a pass would be unfair to you.
+</Warning>
+
+The colour of the count itself comes from thresholds your administrator sets: the share of checked statements that are contradicted or without evidence. Below the warn threshold it reads green, from the warn threshold amber, from the alert threshold red.
+
+## Reading the evidence
+
+Expand the panel to see each checked statement with its verdict — **supported**, **contradicted**, or **without evidence** — and the passage IMP matched it against, quoted, with a label saying where that passage came from:
+
+| Label | Source |
+|---|---|
+| **Knowledge base** | A document in one of the agent's knowledge contexts |
+| **Document** | A file the agent opened during this turn |
+| **Memory** | Something the agent remembered about you |
+| **Web page** | A page from an internet search |
+| **Pinned item** | An item you pinned to the conversation |
+| **Source** | Evidence that does not fall into the categories above |
+
+Two markers can appear on a statement:
+
+- **inferred** — the claim is not stated outright in the passage but follows from it.
+- **re-checked** — IMP found no evidence on the first pass, searched the knowledge base again specifically for this claim, and is reporting the second attempt. Your administrator can turn that second search off.
+
+Below the statements, **Notes from the check** collects anything the check wants to tell you about its own run — most often that it stopped early, and why.
+
+## When the score is not a number
+
+Four messages replace the count, and they mean different things:
+
+- **No checkable statements in this answer.** The answer contained nothing factual to verify. Common for a greeting, a clarifying question, or a summary of your own text.
+- **The answer could not be checked in full.** IMP gave up on part of the work — the answer was longer than the configured limit, or none of the evidence turned out to be usable. Nothing is being claimed about your answer either way.
+- **Check incomplete — the score describes only the part of the answer that was checked.** You still get a count, but it covers less than the whole answer. Read the notes for what was left out.
+- **The check could not be completed.** The check itself failed. This says nothing about the answer.
+
+<Note>
+A missing or incomplete score is never silently reported as a bad score. IMP will not show you "0% supported" because it could not read the evidence — that would tell you something false about your own answer.
+</Note>
+
+## When no panel appears at all
+
+Verification is skipped for a whole turn, with no panel, whenever the check could not see everything the answer was built on. Scoring an answer against *part* of its evidence would invent problems that are not there, so IMP withholds the check instead:
+
+- **You attached a file to the conversation.** The agent reads the file's extracted text directly, which the check cannot receive. This applies to the rest of that conversation, not just the one message.
+- **The agent paged through a document** with the document viewer tool.
+- **The agent recalled a memory you are not allowed to see.**
+- **A tool's output was too large and got offloaded,** or arrived in a shape the check cannot read.
+- **The agent used no sources at all** in this turn — there is nothing to check against.
+
+Verification also does not appear when the agent's administrator has not switched it on, when the deployment has no `claim-check` entitlement, or — for external and guest users — unless the administrator has additionally enabled **Also show to external users**. On the public guest surface it does not appear yet.
+
+## What answer checking is not
+
+It checks the answer against **this turn's sources**, not against the world. A claim marked *supported* is supported by the material the agent was given; if that material is wrong or out of date, the check will agree with it.
+
+All sources count equally. A web page and a knowledge-base document carry the same weight — there are no trust tiers, by design. The label tells you where a passage came from so that you can judge it; IMP does not judge it for you.
+
+<EditionBadge edition="ee" /> Answer checking requires an Enterprise Edition license (`claim-check` entitlement). See [Editions](/get-started/editions) for activation details.
+
+---
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Knowledge search" icon="magnifying-glass" href="/building/agents/knowledge-search">
+    Switch verification on for an agent and tune its depth, thresholds, and limits.
+  </Card>
+  <Card title="Claim check API" icon="braces" href="/api-reference/rest/claim-check">
+    Run the same check on your own question, answer, and sources.
+  </Card>
+</Columns>
