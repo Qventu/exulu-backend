@@ -82,6 +82,7 @@ Behaviour specific to external users:
 - **Domain allowlist exemption.** If the deployment is configured with `ALLOWED_EMAIL_DOMAINS`, that allowlist gates internal accounts only. External users are explicitly exempt: any email address is accepted for self-registration regardless of domain.
 - **Redirect out of the internal shell.** If an external user somehow reaches an internal route (e.g. by navigating to `/`), the application layout detects `type="external"` and immediately redirects them to `/public/agents`. They never see the IMP workbench, administration area, or chat picker.
 - **Email verification required before login.** An external account created by self-registration is marked unverified until the visitor completes the OTP email step. An unverified external account cannot sign in with credentials — the authentication layer skips it even on a correct password, preventing pre-registration attacks.
+- **Answer verification is withheld by default.** If the agent has [answer verification](/building/agents/knowledge-search#answer-verification) on, external and guest-surface users still do not see the panel unless **Also show to external users** is enabled in the Verification step — and that setting only takes effect while **Show sources to external users** is on, since the check needs the turn's source ids. Anonymous visitors never see it: the check is keyed to a user id, so for them it could only ever fail.
 
 ## Abuse limits
 

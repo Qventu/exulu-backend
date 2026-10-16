@@ -39,7 +39,7 @@ Results from all sources are merged, boosted (for pinned items and identifier ma
 
 ## Enabling and configuring the tool
 
-Open the agent in the [workbench](/building/agents/workbench) and scroll to the **Knowledge & memory** section. Flip the **Knowledge search** switch to enable the tool. A six-step configuration wizard opens automatically:
+Open the agent in the [workbench](/building/agents/workbench) and scroll to the **Knowledge & memory** section. Flip the **Knowledge search** switch to enable the tool. A seven-step configuration wizard opens automatically:
 
 | Step | What you configure |
 |---|---|
@@ -48,6 +48,7 @@ Open the agent in the [workbench](/building/agents/workbench) and scroll to the 
 | **Vocabulary** | Glossary terms, identifier sets (product names, codes, standards), query-rewrite rules, and a document style hint |
 | **Memory** | How memory entries from the memory knowledge base shape retrieval |
 | **Behavior** | Reranker, result count, fallback threshold, project search, extra instructions, and advanced tuning |
+| **Verification** | Whether finished answers are checked against their sources, and how — see [Answer verification](#answer-verification) below |
 | **Review** | Summary of all settings before applying |
 
 Click **Finish** in the wizard and then **Save** the agent.
@@ -88,6 +89,37 @@ All thirteen options are optional. Omitted options fall back to the defaults sho
 When `max_steps` is `0` or unset, the search tool is not separately capped — the only limit is the agent's overall tool-step budget. Once the `max_steps` budget is spent the search tool is removed from the active tool list for the rest of that turn; the model can still call other tools and will produce a final text answer.
 
 The agent-level budget (configured on the agent form, not in the knowledge-search wizard) governs all tool calls across all tools for one message.
+
+---
+
+## Answer verification
+
+The wizard's **Verification** step switches on a check that runs *after* each finished answer: IMP extracts the answer's factual claims, looks for a passage in that turn's sources that settles each one, and shows the result in a panel under the answer. It never delays or alters the answer. What users see is described in [Answer checking](/user-guide/chat/answer-checking).
+
+This step is the only place in the UI that can enable the feature. It writes the agent's `claim_check` JSON option:
+
+| UI label | Config key | Default | What it does | When to change it |
+|---|---|---|---|---|
+| Enable verification | `enabled` | off | Switches the check on for this agent. Off means no panel and no spend. | Turn on where answers are quoted or acted on, and the extra provider calls per answer are worth it. |
+| Model for verification | `model` | _(empty)_ | LiteLLM model ID for the check's own calls. When empty, the agent's `utility_model` is used, then the agent's own model. | A fast, cheap model is enough — the check reads passages and judges entailment, it does not write prose. |
+| Check depth | `fidelity` | `"fast"` | `"fast"` merges the claim-selection stages and batches sentences. `"paper"` ("Thorough") splits every stage apart and runs one sentence per call. | Leave on Fast. `"paper"` costs roughly an order of magnitude more calls and exists for benchmarking. |
+| Thresholds | `thresholds` | `{ warn: 0.1, alert: 0.3 }` | The **share** (0–1) of checked statements that are contradicted or without evidence at which the panel turns amber, then red. `warn` must stay at or below `alert`. | Raise `warn` for agents whose sources legitimately do not cover everything they are asked. |
+| Re-search when evidence is missing | `reRetrieve` | on | When a claim finds no evidence, the check searches the knowledge base again for that claim specifically before reporting it. Bounded by `caps.maxReRetrievals`. | Turn off to cut retrieval spend; expect more statements reported as *without evidence*. |
+| Also show to external users | `showToExternalUsers` | off | Whether external and guest-surface users get the panel at all. Takes effect only while **Show sources to external users** (Behavior step) is on. | Turn on when external viewers are meant to audit answers themselves. |
+| _(no UI control)_ | `completions` | `1` | How many times each stage is repeated, with majority voting over the results. Integer 1–3. Ignored outside `"paper"` fidelity, because only `"paper"` votes. | Benchmarking only; set through the API. |
+| _(no UI control)_ | `caps` | `{ maxSentences: 120, maxClaims: 200, maxReRetrievals: 10 }` | Per-answer work limits. Sentences past `maxSentences` are reported as `not_checked` with `status: "partial"` rather than silently costing more. | Raise through the API for agents that produce very long answers — and read the warning below first. |
+
+`completions` and `caps` have no control in the wizard but are round-tripped on save, so values you set through the API survive an operator editing other steps.
+
+<Warning>
+`thresholds` are a **share between 0 and 1**, not a percentage. The backend validates the whole `claim_check` blob and, on any validation failure, falls back to the entire schema default — which includes `enabled: false`. So writing `{ "warn": 20 }` through the API does not set a 20% threshold: it silently switches verification off for that agent. The wizard cannot author such a blob, but a hand-edited option can.
+</Warning>
+
+<Note>
+Raising `caps.maxSentences` alone does not give you fuller coverage. Every sentence costs provider calls and the whole check must finish inside `CLAIM_CHECK_TIMEOUT_MS` (default 60 s) or it is cancelled with `504` — after spending whatever it spent. Raise the operator timeout alongside the cap, or the raised cap only moves where the failure happens. The full reasoning, with figures, is on the [claim check API page](/api-reference/rest/claim-check#option-limits).
+</Note>
+
+Verification is also skipped for a whole turn, with no panel, whenever the check could not receive everything the answer rests on — a file attachment in the conversation, the document-viewer tool, a memory the viewer may not see, an offloaded tool output, or no sources at all. Scoring an answer against part of its evidence would report problems that are not there. The per-case list is in [Answer checking](/user-guide/chat/answer-checking#when-no-panel-appears-at-all).
 
 ---
 
