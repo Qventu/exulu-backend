@@ -78,6 +78,18 @@ const getAllExuluVariables = async (): Promise<{
 }
 
 const execAsync = promisify(exec);
+
+/** Dotenv files of the running backend that a sandboxed command must not read. */
+export const backendSecretFiles = (): string[] => {
+    const cwd = process.cwd();
+    const names = ['.env', '.env.local', '.env.production', '.env.production.local'];
+    const paths = new Set<string>();
+    for (const name of names) {
+        paths.add(join(cwd, name));
+        paths.add(join('/app', name));
+    }
+    return [...paths];
+};
 // Sandbox commands can be very long (long deny lists) — bump default buffer.
 const EXEC_MAX_BUFFER = 32 * 1024 * 1024;
 
@@ -595,7 +607,12 @@ export async function createSessionSandbox(
             deniedDomains: [], // todo
         },
         filesystem: {
-            denyRead: ['~'],
+            // The backend's own dotenv file sits under the process cwd (and
+            // /app in the shipped image); a bash command could otherwise
+            // `cat` the database password out of it (seen in an ALGI session
+            // 2026-10-07). Deny it explicitly — the rest of the tree stays
+            // readable for node_modules / skill assets.
+            denyRead: ['~', ...backendSecretFiles()],
             allowRead: [
                 sessionDir,
                 // Allow Node to read globally-installed packages from inside
