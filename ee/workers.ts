@@ -14,6 +14,7 @@ import { refreshContextEmbeddersIfStale } from "@SRC/exulu/hydrate-embedders";
 import type { ExuluEval } from "@SRC/exulu/evals.ts";
 import type { ExuluTool } from "@SRC/exulu/tool.ts";
 import { resolveModel } from "@SRC/exulu/resolve-model.ts";
+import { resolveContextWindow } from "@SRC/exulu/resolve-context-window.ts";
 import { postgresClient } from "@SRC/postgres/client";
 import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { maybePruneJobResults } from "@EE/queues/prune-job-results.ts";
@@ -1600,6 +1601,17 @@ export const processUiMessagesFlow = async ({
 
   const resolvedLanguageModel = resolved.languageModel;
 
+  // Routine runs used to omit the context window, so generateStream fell back
+  // to the 128k default and a Gemini run with ~500k tokens of tool results was
+  // rejected with CONTEXT_COMPACTION_REQUIRED ("of 102,400 usable tokens")
+  // although the model takes 1M. Resolve it like the chat route does.
+  let contextWindow: number | undefined;
+  try {
+    contextWindow = await resolveContextWindow({ modelId: resolved.model.id });
+  } catch (err) {
+    console.warn(`[EXULU] Could not resolve the context window for routine model "${resolved.model.id}"; using the default.`, err);
+  }
+
   // Remove placeholder agent response before sending
   const messagesWithoutPlaceholder = inputMessages.filter(
     (message) => (message.metadata as any)?.type !== "placeholder",
@@ -1712,6 +1724,7 @@ export const processUiMessagesFlow = async ({
               languageModel: resolvedLanguageModel,
               toolConfigs: agent.tools,
               exuluConfig: config,
+              contextWindow,
             });
 
             console.log("[EXULU] consuming stream for agent.");

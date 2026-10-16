@@ -45,10 +45,18 @@ interface IntakeDeps {
 // Keeps the label format the rest of the platform already filters on.
 const workflowRunLabel = (workflowId: string): string => `workflow-run-${workflowId}`;
 
+// Attachment names/sizes are recorded so a "the PDF the customer mentions is
+// not in the session" report can be told apart from "the forward never carried
+// it" — the raw .eml is deleted after intake, so this is the only trace.
 const baseTriggerMetadata = (email: InboundEmail) => ({
   from: email.from.address,
   subject: email.subject,
   message_id: email.messageId,
+  attachments: email.attachments.map((attachment) => ({
+    filename: attachment.filename,
+    content_type: attachment.contentType,
+    size: attachment.content?.length ?? 0,
+  })),
 });
 
 export const resolveTriggerBySecret = async (

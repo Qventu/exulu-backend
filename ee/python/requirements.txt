@@ -67,3 +67,6 @@ google-cloud-aiplatform>=1.38
 python-docx>=1.1
 python-pptx>=1.0
 openpyxl>=3.1
+# Legacy .xls (BIFF) workbooks: pandas.read_excel / xlrd — parse_document converts them via
+# LibreOffice, but skill scripts that open the file themselves need this (ALGI feedback 2026-09-17).
+xlrd>=2.0
