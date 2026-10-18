@@ -212,6 +212,7 @@ const {
   promptFavoritesSchema,
   statisticsSchema,
   transcriptionJobsSchema,
+  sharedArtifactsSchema,
 } = coreSchemas.get();
 
 // One limiter per process, not per request — it tracks in-flight calls and
@@ -310,6 +311,12 @@ export const createExpressRoutes = async (
       statisticsSchema(),
       rbacSchema(),
       transcriptionJobsSchema(),
+      // Shared artifacts (2026-10): listed and favourited from the IMP's
+      // Artifacts page through the generated operations. The table carries
+      // RBAC, so the generic access control applies (public, own, shared with
+      // me / my role / my team); `password_hash` is hidden and never leaves
+      // the resolvers. The bytes still come from /shared-artifacts/:name/content.
+      sharedArtifactsSchema(),
     ],
     contexts ?? [],
     tools,

@@ -427,6 +427,14 @@ const usersSchema: ExuluTableDefinition = {
       type: "json",
     },
     {
+      // Artifacts (2026-10): the shared artifacts a user starred, as a JSON
+      // array of share names — mirrors favourite_projects. Auto-added to
+      // existing DBs by the init-exulu-db column sync; read via userById,
+      // written via usersUpdateOne.
+      name: "favourite_artifacts",
+      type: "json",
+    },
+    {
       // Knowledge: per-user "recently viewed" data items. Ordered JSON array
       // of global item ids ("<contextId>/<itemId>"), most-recent first, capped
       // client-side. Auto-added to existing DBs by the init-exulu-db column
