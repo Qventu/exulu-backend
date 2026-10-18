@@ -126,5 +126,14 @@ export type ExuluTableDefinition = {
     processor?: ExuluContextProcessor;
     fields: ExuluContextFieldDefinition[];
     RBAC?: boolean;
+    /**
+     * "super_admin": the generic GraphQL writes (CreateOne, UpdateOne*,
+     * RemoveOne*, CopyOneById, BulkUpdateRBAC) are reserved for super admins.
+     * For a table whose rows are managed by dedicated routes — shared_artifacts
+     * — the generic rbac write check is wrong: it treats rights_mode "public"
+     * as "any logged-in user may edit", while that value is the sentinel for
+     * public/password shares there.
+     */
+    apiWrites?: "super_admin";
     graphql?: boolean;
   };

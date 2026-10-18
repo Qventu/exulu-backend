@@ -1540,5 +1540,34 @@ export function createMutations(
     return buildTranscriptsSettingsInfo();
   };
 
+  // Tables that reserve their generic writes for super admins (core-schema
+  // `apiWrites: "super_admin"`). validateWriteAccess lets any logged-in user
+  // edit a rights_mode "public" row, which is right for context items and
+  // wrong for shared_artifacts, where "public" is the sentinel for
+  // public/password shares and the share's own REST routes decide who may
+  // change it. Reads stay generic; writes go through those routes.
+  if (table.apiWrites === "super_admin") {
+    for (const key of [
+      `${tableNamePlural}CreateOne`,
+      `${tableNamePlural}CopyOneById`,
+      `${tableNamePlural}UpdateOne`,
+      `${tableNamePlural}UpdateOneById`,
+      `${tableNamePlural}RemoveOneById`,
+      `${tableNamePlural}RemoveOne`,
+      `${tableNamePlural}BulkUpdateRBAC`,
+    ]) {
+      const inner = (mutations as Record<string, any>)[key];
+      if (!inner) continue;
+      (mutations as Record<string, any>)[key] = async (parent: any, args: any, context: any, info: any) => {
+        if (context?.user?.super_admin !== true) {
+          throw new Error(
+            `${table.name.plural} rows are changed through their own API; the generic mutation is reserved for super admins.`,
+          );
+        }
+        return inner(parent, args, context, info);
+      };
+    }
+  }
+
   return mutations;
 }

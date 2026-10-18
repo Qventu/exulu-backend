@@ -952,6 +952,10 @@ const sharedArtifactsSchema: ExuluTableDefinition = {
   // RBAC drives the "regular" auth_mode: rights_mode + the rbac table scope
   // who may view. public/password modes ignore rights_mode.
   RBAC: true,
+  // Generic GraphQL writes are super-admin only: public/password shares carry
+  // rights_mode "public", which the generic write check reads as "anyone may
+  // edit". Creators change their shares through PATCH /shared-artifacts/:name.
+  apiWrites: "super_admin",
   fields: [
     { name: "name", type: "text", index: true, unique: true, required: true },
     { name: "s3key", type: "text", required: true },
