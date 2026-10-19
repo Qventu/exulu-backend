@@ -2,6 +2,11 @@
 
 Everything goes to `${backendOrigin}` with `Authorization: Bearer <token>`.
 GraphQL at `POST /graphql` (`{ query, variables }`); a few REST routes for bytes.
+Outside the viewer (scripts, tests) an org API key works in the same places:
+`x-api-key: sk_…/keyname` (a `Bearer ` prefix is tolerated); see
+`/api-reference/graphql/introduction` in the docs. Full reference of the
+generated operation set: `/api-reference/graphql/conventions` and
+`/api-reference/graphql/dynamic-types`.
 
 ## Discover what exists
 
@@ -107,9 +112,8 @@ query ($session: String!) {
   `{ url, key, method: "PUT" }`; then `PUT` the bytes to `url` with the same
   `Content-Type`. The stored key is the URL's path (bucket first on path-style
   endpoints); the share and context APIs normalise it.
-- Read: `GET /s3/download?key=...` with the Bearer token returns the bytes
-  (ask for the exact route name through the frontend's `lib/api/files.ts` if
-  unsure); for images inside the app, fetch to a `blob:` URL — `img-src` allows it.
+- Read: `GET /s3/download?key=<stored key>` with the Bearer token returns the
+  bytes; for images inside the app, fetch to a `blob:` URL — `img-src` allows it.
 - Shares: `GET /shared-artifacts/<name>/meta` (public metadata),
   `POST /shared-artifacts` (create), `GET /shared-artifacts/<name>/settings`
   and `PATCH /shared-artifacts/<name>` (creator or admin: name, auth_mode,

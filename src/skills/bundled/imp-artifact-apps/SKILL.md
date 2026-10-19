@@ -14,12 +14,35 @@ context, every long-running step a Routine, zero custom backend routes.
 
 Read this file fully, then the reference that matches the step you are on:
 
+- `references/instance-side.md` — what lives in code (ExuluContext, ExuluTool, a code
+  agent, queues) versus in the database (Routine rows, UI agents), and why
 - `references/identity-handshake.md` — who is looking, and how the token is refreshed
 - `references/imp-api.md` — contexts, filters, mutations, routines, agent messages, uploads
 - `references/publishing.md` — share modes, the Artifacts page, the publish script, updates
 - `references/build-setup.md` — Vite single-file build for apps too big for one hand-written file
 - `templates/app.html` — a working skeleton: handshake, client, session-lost banner
 - `scripts/publish-artifact` — upload + publish (or update) from the command line
+
+## The IMP documentation is the authority
+
+This skill carries the practice; the API reference lives in the IMP docs at
+https://docs.intelligence-management-platform.com. Use them whenever a
+signature, option or operation name matters:
+
+- **As an MCP server** (search + read the pages): `https://docs.intelligence-management-platform.com/mcp`
+  (Streamable HTTP, no auth; tools `search_imp_docs` and `query_docs_filesystem_imp_docs`).
+  Claude Code: `claude mcp add --transport http imp-docs https://docs.intelligence-management-platform.com/mcp`.
+  Inside the IMP: connect it to your agent as an MCP tool (docs: `/user-guide/chat/connecting-tools`).
+- **Index for models:** `https://docs.intelligence-management-platform.com/llms.txt`.
+- Pages this skill leans on: `/developers/getting-started`,
+  `/developers/tutorials/defining-contexts`, `/developers/tutorials/custom-tools`,
+  `/developers/tutorials/queues-and-workers`, `/developers/core/exulu-app/configuration`,
+  `/api-reference/graphql/conventions`, `/api-reference/graphql/dynamic-types`,
+  `/api-reference/graphql/routine-runs`, `/building/routines/overview`,
+  `/user-guide/chat/artifacts-and-sharing`, `/administration/api-keys`.
+
+Where this skill and the docs disagree, the docs win; tell the user so the
+skill can be corrected.
 
 ## The contract (non-negotiable)
 
@@ -69,32 +92,39 @@ through it; the refresh is single-flighted on purpose.
    what data it reads and writes. Name the contexts (tables) and the Routines
    involved. If the user is unsure what exists, list the instance's contexts
    through introspection (`references/imp-api.md`, "Discover") and show them.
-2. **Scaffold.** Copy `templates/app.html` for a small app. For anything with
+2. **Decide what lives where** (`references/instance-side.md`). Every table
+   the app needs is an `ExuluContext` in the instance repository; every piece
+   of logic that needs models, files or credentials is an `ExuluTool` with an
+   `action` switch; anything long-running is a Routine row that calls that
+   tool through a code-registered agent with a fixed UUID. Build and deploy
+   those first — the artifact can only compose what the instance exposes.
+   Say plainly when a request needs instance work and a deploy, not just a file.
+3. **Scaffold.** Copy `templates/app.html` for a small app. For anything with
    screens, components or a UI library, set up the Vite single-file build
    (`references/build-setup.md`) and port the template's `identity` and
    `client` modules as-is.
-3. **Model the state.** Put the app's own state (decisions, pins, progress) on
+4. **Model the state.** Put the app's own state (decisions, pins, progress) on
    the row it belongs to, in one JSON field, as a small overlay
    (`{ "<scope>:<id>": { value, by, at } }`), and re-read the row after each
    write. Never keep the only copy in memory.
-4. **Build the screens.** Honest states for every region: connecting, loading,
+5. **Build the screens.** Honest states for every region: connecting, loading,
    empty, error, session lost. Full width of the viewer — no fixed max-width
    that leaves a third of the surface empty. Write the UI in the language the
    instance's users work in. Buttons say what happens; errors say what to do.
-5. **Routines for work that takes time.** The app starts a Routine
+6. **Routines for work that takes time.** The app starts a Routine
    (`runWorkflow`), shows the run, polls `routineRuns` until it settles, then
    re-reads the rows the tool changed. The Routine rows are data: create them
    once per environment (an ops script or SQL), note their ids in the app's
    README, and never hard-code assumptions about their shape beyond the ids.
-6. **Build and check.** The output must be one `.html` file with no external
+7. **Build and check.** The output must be one `.html` file with no external
    `src`, no `type="module"` on the inlined script, and a mount that waits
    for `DOMContentLoaded` (see build-setup).
-7. **Publish.** Artifacts → "New artifact" → upload the file, name the link,
+8. **Publish.** Artifacts → "New artifact" → upload the file, name the link,
    choose "Logged-in users" and the rights scope — or
    `sh scripts/publish-artifact <name> <file>`. Updating is the same script
    with the same name: the share keeps its link and its stars, only the bytes
    change.
-8. **Verify inside the IMP.** Open it from the Artifacts page (not only the
+9. **Verify inside the IMP.** Open it from the Artifacts page (not only the
    share link): the handshake only exists there. Check a write, a Routine run,
    and the session-lost banner (open the app, log out in another tab, click).
 
