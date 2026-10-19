@@ -17,23 +17,21 @@ IMP distinguishes two kinds of agent capability:
 
 ## The Tools & skills section
 
-In the [workbench](/building/agents/workbench), open the **Tools & skills** section. The toolbar has:
-
-- **Search** — filter by name or description ("Search tools by name or description…").
-- **Category filter** — narrow to a single category (default "All categories"). Only categories present on this deployment appear.
-- **Clear filters** (×) — resets search and category together.
-- **Expand all / Collapse all** — open or close every category accordion.
-- **Result count** — "`{n}` tool(s) found" when a filter is active, "`{n}` tool(s) available" when showing all.
-
-Tools are grouped by category in an accordion. Each tool row shows the tool name, description, and an enable toggle.
+The section shows only what the agent has: three groups — **Sub-agents**,
+**Skills** and **Tools** — each with a count, the enabled entries, and an
+**Add …** button. A tool row keeps its configure and info buttons; the switch
+or the remove button takes it off the agent. A group without entries shows
+what the button would add.
 
 ## Enabling a tool
 
-Toggle the switch on a tool row to enable it for this agent. For tools with required parameters, IMP automatically opens the **Configuration** sheet the moment you enable the tool so you can fill in the bindings immediately — the tool stays enabled even if you close the sheet before configuring, but it won't work until all required parameters have values.
-
-<Note>
-A tool that has required parameters but no bindings set will not function at runtime. Check the configuration sheet for any tool the agent uses that produces unexpected errors.
-</Note>
+Click **Add tools** (or **Add sub-agents**, **Add skills**). The picker lists
+the instance's catalogue: search by name, description or category, narrow
+tools by category with the chips, tick what you want, and confirm with
+**Add N**. Entries the agent already has are shown ticked and cannot be added
+twice. When exactly one added tool needs configuration, its configuration
+sheet opens right away; otherwise the rows carry a "needs configuration"
+badge until you fill them in.
 
 ## Per-tool configuration
 
