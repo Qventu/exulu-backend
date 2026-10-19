@@ -427,6 +427,14 @@ const usersSchema: ExuluTableDefinition = {
       type: "json",
     },
     {
+      // Artifacts (2026-10): the shared artifacts a user starred, as a JSON
+      // array of share names — mirrors favourite_projects. Auto-added to
+      // existing DBs by the init-exulu-db column sync; read via userById,
+      // written via usersUpdateOne.
+      name: "favourite_artifacts",
+      type: "json",
+    },
+    {
       // Knowledge: per-user "recently viewed" data items. Ordered JSON array
       // of global item ids ("<contextId>/<itemId>"), most-recent first, capped
       // client-side. Auto-added to existing DBs by the init-exulu-db column
@@ -944,6 +952,10 @@ const sharedArtifactsSchema: ExuluTableDefinition = {
   // RBAC drives the "regular" auth_mode: rights_mode + the rbac table scope
   // who may view. public/password modes ignore rights_mode.
   RBAC: true,
+  // Generic GraphQL writes are super-admin only: public/password shares carry
+  // rights_mode "public", which the generic write check reads as "anyone may
+  // edit". Creators change their shares through PATCH /shared-artifacts/:name.
+  apiWrites: "super_admin",
   fields: [
     { name: "name", type: "text", index: true, unique: true, required: true },
     { name: "s3key", type: "text", required: true },

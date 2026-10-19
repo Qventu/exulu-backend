@@ -1,8 +1,16 @@
-import { type Express, type Request, type Response, type NextFunction } from "express";
+import {
+  type Express,
+  type Request,
+  type Response,
+  type NextFunction } from "express";
 import { requestValidators } from "../validators/requests.ts";
-import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
+import { STATISTICS_TYPE_ENUM,
+  type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { postgresClient } from "../postgres/client.ts";
-import { exportContentType, exportFilename, exportMarkdown, type ExportFormat } from "./markdown-export.ts";
+import { exportContentType,
+  exportFilename,
+  exportMarkdown,
+  type ExportFormat } from "./markdown-export.ts";
 import express from "express";
 import { ApolloServer } from '@apollo/server';
 import cors from "cors";
@@ -25,10 +33,13 @@ import {
   getS3SignedUploadUrl,
   getPresignedUrl,
   type S3FileObject,
-} from "../uppy/index.ts";
-import { extractBundleToS3, extractBundleToVersion, BundleValidationError } from "../skills/bundle-extractor.ts";
+  } from "../uppy/index.ts";
+import { extractBundleToS3,
+  extractBundleToVersion,
+  BundleValidationError } from "../skills/bundle-extractor.ts";
 import { parseSkillFrontmatter } from "../skills/frontmatter.ts";
-import { getPdfPreviewBytes, PreviewRenderError } from "../sessions/pdf-preview-cache.ts";
+import { getPdfPreviewBytes,
+  PreviewRenderError } from "../sessions/pdf-preview-cache.ts";
 import { downloadKeyIntoSandbox } from "../../ee/invoke-skills/create-sandbox.ts";
 import { withGlossary } from "../utils/agent-glossary.ts";
 import { InMemoryLRUCache } from "@apollo/utils.keyvaluecache";
@@ -43,31 +54,45 @@ import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 export const REQUEST_SIZE_LIMIT = "50mb";
 import JSZip from "jszip";
-import { createIdGenerator, type UIMessage } from "ai";
+import { createIdGenerator,
+  type UIMessage } from "ai";
 import type { Project } from "@EXULU_TYPES/models/project";
 import cookieParser from "cookie-parser";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition.ts";
 import type { ExuluTool } from "./tool.ts";
-import { getChunksTableName, getTableName, type ExuluContext } from "./context.ts";
+import { getChunksTableName,
+  getTableName,
+  type ExuluContext } from "./context.ts";
 import type { ExuluEval } from "./evals.ts";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { updateStatistic } from "./statistics.ts";
-import { generateStream, generateSync, saveChat } from "./generate-stream.ts";
+import { generateStream,
+  generateSync,
+  saveChat } from "./generate-stream.ts";
 import { generateSuggestions } from "./suggestions.ts";
-import { resolveModel, ResolveModelError } from "./resolve-model.ts";
-import { isLiteLLMEnabled, waitForLiteLLMReady, LITELLM_UI_PATH } from "./litellm/supervisor.ts";
+import { resolveModel,
+  ResolveModelError } from "./resolve-model.ts";
+import { isLiteLLMEnabled,
+  waitForLiteLLMReady,
+  LITELLM_UI_PATH } from "./litellm/supervisor.ts";
 import { resolveContextWindow } from "./resolve-context-window.ts";
 import { mapStreamErrorMessage } from "./context-budget.ts";
-import { markStreamActive, clearStreamActive, isStreamActive } from "./active-streams.ts";
+import { markStreamActive,
+  clearStreamActive,
+  isStreamActive } from "./active-streams.ts";
 import { resumeRoutineRunIfWaiting } from "@SRC/exulu/routines/run-state";
-import { compactSession, CompactionInsufficientError } from "./compact-session.ts";
+import { compactSession,
+  CompactionInsufficientError } from "./compact-session.ts";
 import { describeRequestError } from "./request-error.ts";
-import { finishTurnMetadata, type ChatUIMessage } from "./turn-metadata.ts";
+import { finishTurnMetadata,
+  type ChatUIMessage } from "./turn-metadata.ts";
 import { recalledMemoriesMetadata } from "./memory/recalled-metadata.ts";
 import { claimCheckStreamMetadata } from "./claim-check/finish-metadata.ts";
-import { isPublicSurface, treatAsGuest } from "./public-surface.ts";
+import { isPublicSurface,
+  treatAsGuest } from "./public-surface.ts";
 import { recordMemoryUsage } from "./memory/usage.ts";
-import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
+import { transcribeAudio,
+  TranscriptionError } from "./transcribe.ts";
 import { transcriptionClient } from "./transcription/client.ts";
 import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts";
 import { registerTranscriptExportRoute } from "./transcription/export-route.ts";
@@ -81,32 +106,40 @@ import {
   saveClaimCheck as storeClaimCheck,
   listClaimChecks as listStoredClaimChecks,
   findClaimCheck as findStoredClaimCheck,
-} from "./claim-check/store.ts";
-import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
+  } from "./claim-check/store.ts";
+import { liveRecordingEnabled,
+  liveRecordingService } from "./transcription/live-recording.ts";
 import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
 import { transcriptionService } from "./transcription/service.ts";
-import { testSource, type TranscriptionSource } from "./transcription/source-test.ts";
+import { testSource,
+  type TranscriptionSource } from "./transcription/source-test.ts";
 import { findLiteLLMModel } from "./litellm/catalog.ts";
-import { synthesizeSpeech, SpeechError } from "./speech.ts";
+import { synthesizeSpeech,
+  SpeechError } from "./speech.ts";
 import {
   generateImage,
   editImage,
   ImageGenerationError,
-} from "./image-generation.ts";
+  } from "./image-generation.ts";
 import {
   parseImageGenerationModels,
   type ImageGenerationModel,
-} from "./litellm/parse-image-models.ts";
+  } from "./litellm/parse-image-models.ts";
 import { resolve as resolvePath } from "node:path";
 import { RBACResolver } from "@EE/rbac-resolver.ts";
-import { buildTags, createTaggedFetch, budgetTagFor, type BudgetEntityType } from "./tags.ts";
-import { tagInfo, tagDelete, type BudgetDuration } from "./litellm/admin-client.ts";
+import { buildTags,
+  createTaggedFetch,
+  budgetTagFor,
+  type BudgetEntityType } from "./tags.ts";
+import { tagInfo,
+  tagDelete,
+  type BudgetDuration } from "./litellm/admin-client.ts";
 import { LiteLLMAdminError } from "./litellm/env.ts";
 import { isLiteLLMPassthroughPathAllowed } from "./litellm/passthrough-allowlist.ts";
 import {
   getTagDailyActivity,
   listTagsByPrefix,
-} from "./litellm/activity-client.ts";
+  } from "./litellm/activity-client.ts";
 import {
   provisionDefaultUserBudget,
   getUserBudgetView,
@@ -116,13 +149,16 @@ import {
   parseResetAt,
   invalidateBudgetCaches,
   type BudgetSettings,
-} from "./litellm/budget-service.ts";
-import { getMyUsageView, resolveUsageWindow } from "./litellm/usage-view.ts";
+  } from "./litellm/budget-service.ts";
+import { getMyUsageView,
+  resolveUsageWindow } from "./litellm/usage-view.ts";
 import multer from "multer";
-import { queues as ExuluQueues, global_queues } from "@EE/queues/queues";
+import { queues as ExuluQueues,
+  global_queues } from "@EE/queues/queues";
 import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { redisClient } from "@SRC/redis/client.ts";
-import { createRoutineWebhookHandler, routineWebhookRateLimitExceeded } from "./email-inbound/webhook.ts";
+import { createRoutineWebhookHandler,
+  routineWebhookRateLimitExceeded } from "./email-inbound/webhook.ts";
 import { resolveTriggerBySecret } from "./email-inbound/intake.ts";
 import { decrypt } from "@SRC/exulu/auth/credential-store.ts";
 import { clearSessionCurrentTask } from "./task-description.ts";
@@ -133,9 +169,13 @@ import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 import { handleOauthCallback } from "./auth/callback-handler.ts";
 import { handleCredentialSubmit } from "./auth/submit-handler.ts";
-import { handleCredentialList, handleCredentialDelete } from "./auth/manage-handlers.ts";
+import { handleCredentialList,
+  handleCredentialDelete } from "./auth/manage-handlers.ts";
 import { OAUTH_CALLBACK_PATH } from "./auth/flow.ts";
-import { recallEnabled, recallApiBaseUrl, recallApiKey, RECALL_NOT_CONFIGURED_MESSAGE } from "./recall/env.ts";
+import { recallEnabled,
+  recallApiBaseUrl,
+  recallApiKey,
+  RECALL_NOT_CONFIGURED_MESSAGE } from "./recall/env.ts";
 import { verifyRecallRequest } from "./recall/verify.ts";
 import { recallService } from "./recall/service.ts";
 import { handleRBACUpdate } from "@EE/rbac-update.ts";
@@ -150,6 +190,9 @@ import {
   deriveFilename,
   contentHeadersFor,
   publicMetaFor,
+  canManageShare,
+  validateUpdateInput,
+  planShareUpdate,
 } from "./shared-artifacts.ts";
 import { publicAgentView, evaluateGuestChatAccess } from "./public-agents.ts";
 import {
@@ -212,6 +255,7 @@ const {
   promptFavoritesSchema,
   statisticsSchema,
   transcriptionJobsSchema,
+  sharedArtifactsSchema,
 } = coreSchemas.get();
 
 // One limiter per process, not per request — it tracks in-flight calls and
@@ -310,6 +354,12 @@ export const createExpressRoutes = async (
       statisticsSchema(),
       rbacSchema(),
       transcriptionJobsSchema(),
+      // Shared artifacts (2026-10): listed and favourited from the IMP's
+      // Artifacts page through the generated operations. The table carries
+      // RBAC, so the generic access control applies (public, own, shared with
+      // me / my role / my team); `password_hash` is hidden and never leaves
+      // the resolvers. The bytes still come from /shared-artifacts/:name/content.
+      sharedArtifactsSchema(),
     ],
     contexts ?? [],
     tools,
@@ -5133,7 +5183,7 @@ export const createExpressRoutes = async (
     })));
   });
 
-  // Delete a share (creator only). Removes RBAC entries before deleting the row.
+  // Delete a share (creator or super admin). Removes RBAC entries before deleting the row.
   app.delete("/shared-artifacts/:name", async (req: Request, res: Response) => {
     const { db } = await postgresClient();
     const auth = await requestValidators.authenticate(req);
@@ -5146,13 +5196,104 @@ export const createExpressRoutes = async (
       res.status(404).json({ detail: "Not found." });
       return;
     }
-    if (row.created_by !== auth.user.id) {
+    if (!canManageShare(row, auth.user)) {
       res.status(403).json({ detail: "You can only delete your own share links." });
       return;
     }
     await db("rbac").where({ entity: "shared_artifact", target_resource_id: row.id }).delete();
     await db("shared_artifacts").where({ id: row.id }).delete();
     res.status(204).end();
+  });
+
+  // The editable settings of a share (creator or super admin): what the
+  // sharing dialog needs, including the rbac scope. Never the password hash.
+  app.get("/shared-artifacts/:name/settings", async (req: Request, res: Response) => {
+    const { db } = await postgresClient();
+    const auth = await requestValidators.authenticate(req);
+    if (!auth.user?.id) {
+      res.status(401).json({ detail: "Authentication required." });
+      return;
+    }
+    const row = await getSharedArtifactByName(db, req.params.name ?? "");
+    if (!row) {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    if (!canManageShare(row, auth.user)) {
+      res.status(403).json({ detail: "You can only manage your own share links." });
+      return;
+    }
+    const rbac: any[] = await db("rbac")
+      .where({ entity: "shared_artifact", target_resource_id: row.id })
+      .select("*");
+    res.json({
+      name: row.name,
+      auth_mode: row.auth_mode,
+      expires_at: row.expires_at ?? null,
+      rights_mode: row.rights_mode ?? null,
+      content_type: row.content_type ?? null,
+      created_by: row.created_by ?? null,
+      rbac: {
+        users: rbac.filter((r) => r.access_type === "User").map((r) => ({ id: r.user_id, rights: r.rights })),
+        roles: rbac.filter((r) => r.access_type === "Role").map((r) => ({ id: r.role_id, rights: r.rights })),
+        teams: rbac.filter((r) => r.access_type === "Team").map((r) => ({ id: r.team_id, rights: r.rights })),
+      },
+    });
+  });
+
+  // Change a share (creator or super admin): name, auth_mode (+ password),
+  // expiry, and for regular mode the rights scope. Mirrors the create
+  // validation; see validateUpdateInput / planShareUpdate.
+  app.patch("/shared-artifacts/:name", async (req: Request, res: Response) => {
+    const { db } = await postgresClient();
+    const auth = await requestValidators.authenticate(req);
+    if (!auth.user?.id) {
+      res.status(401).json({ detail: "Authentication required." });
+      return;
+    }
+    const row = await getSharedArtifactByName(db, req.params.name ?? "");
+    if (!row) {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    if (!canManageShare(row, auth.user)) {
+      res.status(403).json({ detail: "You can only change your own share links." });
+      return;
+    }
+    const input = (req.body ?? {}) as Record<string, any>;
+    const now = new Date();
+    const valid = validateUpdateInput(input, row, now);
+    if (!valid.ok) {
+      res.status(400).json({ detail: valid.message });
+      return;
+    }
+    const newHash = input.password ? await hashSharePassword(String(input.password)) : null;
+    const patch = planShareUpdate(input, row, newHash, now);
+    if (typeof patch.name === "string" && patch.name !== row.name) {
+      const taken = await getSharedArtifactByName(db, patch.name);
+      if (taken) {
+        res.status(409).json({ detail: "That share name is already taken." });
+        return;
+      }
+    }
+    const [updated] = await db("shared_artifacts").where({ id: row.id }).update(patch).returning("*");
+    if (patch.auth_mode === "regular") {
+      if (input.rbac && typeof input.rbac === "object") {
+        const existing: any[] = await db("rbac")
+          .where({ entity: "shared_artifact", target_resource_id: row.id })
+          .select("*");
+        await handleRBACUpdate(db, "shared_artifact", row.id, input.rbac, existing);
+      }
+    } else {
+      // public/password shares ignore rbac; drop stale scope rows.
+      await db("rbac").where({ entity: "shared_artifact", target_resource_id: row.id }).delete();
+    }
+    res.json({
+      name: updated.name,
+      auth_mode: updated.auth_mode,
+      expires_at: updated.expires_at ?? null,
+      rights_mode: updated.rights_mode ?? null,
+    });
   });
 
   // Create a share link. Authed as the real user; RBAC scoping for regular mode.

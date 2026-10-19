@@ -5,6 +5,9 @@ import {
   slugifyShareName,
   isExpired,
   validateCreateInput,
+  validateUpdateInput,
+  planShareUpdate,
+  canManageShare,
   hashSharePassword,
   verifySharePassword,
   contentHeadersFor,
@@ -223,3 +226,79 @@ describe("publicMetaFor", () => {
 // is no grant to authorize or parse. The retained rejection of the field at
 // create time is still covered by the
 // `validateCreateInput — grant_viewer_identity` block above.
+
+describe("canManageShare", () => {
+  test("the creator may manage", () => {
+    expect(canManageShare({ created_by: 7 }, { id: 7 })).toBe(true);
+  });
+  test("a super admin may manage anyone's share", () => {
+    expect(canManageShare({ created_by: 7 }, { id: 2, super_admin: true })).toBe(true);
+  });
+  test("another user may not", () => {
+    expect(canManageShare({ created_by: 7 }, { id: 2, super_admin: false })).toBe(false);
+  });
+  test("a share without a creator is super-admin only", () => {
+    expect(canManageShare({ created_by: null }, { id: 2 })).toBe(false);
+  });
+});
+
+describe("validateUpdateInput", () => {
+  const now = new Date("2026-10-19T12:00:00Z");
+  const regular = { name: "a", auth_mode: "regular", password_hash: null, rights_mode: "private", created_by: 1 };
+  const pw = { ...regular, auth_mode: "password", password_hash: "$2a$10$hash", rights_mode: "public" };
+  test("an empty patch is fine", () => {
+    expect(validateUpdateInput({}, regular, now)).toEqual({ ok: true });
+  });
+  test("switching to password mode needs a password", () => {
+    expect(validateUpdateInput({ auth_mode: "password" }, regular, now)).toEqual({
+      ok: false,
+      message: "A password is required for password mode.",
+    });
+  });
+  test("a password share keeps its password when none is given", () => {
+    expect(validateUpdateInput({ expires_at: null }, pw, now)).toEqual({ ok: true });
+  });
+  test("rejects an unknown auth_mode", () => {
+    expect(validateUpdateInput({ auth_mode: "magic" }, regular, now).ok).toBe(false);
+  });
+  test("rejects a past expiry and an invalid date", () => {
+    expect(validateUpdateInput({ expires_at: "2020-01-01T00:00:00Z" }, regular, now).ok).toBe(false);
+    expect(validateUpdateInput({ expires_at: "yesterday" }, regular, now).ok).toBe(false);
+  });
+  test("rejects a name without url-safe characters", () => {
+    expect(validateUpdateInput({ name: "***" }, regular, now).ok).toBe(false);
+  });
+  test("rejects an unknown rights_mode", () => {
+    expect(validateUpdateInput({ rights_mode: "friends" }, regular, now).ok).toBe(false);
+  });
+});
+
+describe("planShareUpdate", () => {
+  const now = new Date("2026-10-19T12:00:00Z");
+  const regular = { name: "a", auth_mode: "regular", password_hash: null, rights_mode: "users", created_by: 1 };
+  const pw = { ...regular, auth_mode: "password", password_hash: "$old", rights_mode: "public" };
+  test("renames through the slug", () => {
+    expect(planShareUpdate({ name: "My Report (final)" }, regular, null, now).name).toBe("my-report-final");
+  });
+  test("keeps a regular share's rights_mode when the patch does not name one", () => {
+    const patch = planShareUpdate({ expires_at: null }, regular, null, now);
+    expect(patch.rights_mode).toBe("users");
+    expect(patch.expires_at).toBeNull();
+    expect(patch.password_hash).toBeNull();
+  });
+  test("leaving password mode drops the hash and resets rights_mode to the sentinel", () => {
+    const patch = planShareUpdate({ auth_mode: "public" }, pw, null, now);
+    expect(patch.password_hash).toBeNull();
+    expect(patch.rights_mode).toBe("public");
+  });
+  test("a new password replaces the hash; none keeps it", () => {
+    expect(planShareUpdate({ password: "x" }, pw, "$new", now).password_hash).toBe("$new");
+    expect(planShareUpdate({}, pw, null, now).password_hash).toBe("$old");
+  });
+  test("entering regular mode from a password share starts private", () => {
+    expect(planShareUpdate({ auth_mode: "regular" }, pw, null, now).rights_mode).toBe("private");
+  });
+  test("stamps updatedAt", () => {
+    expect(planShareUpdate({}, regular, null, now).updatedAt).toBe(now);
+  });
+});
