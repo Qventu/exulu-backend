@@ -27,6 +27,7 @@ import { JOB_STATUS_ENUM, TERMINAL_JOB_STATES } from "@EXULU_TYPES/enums/jobs";
 import type { UIMessage } from "ai";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
 import { createKbEditorPickerTool } from "@SRC/templates/tools/context-write-tools";
+import { createSkillAuthorPickerTool } from "@SRC/templates/tools/skill-author-tools";
 import { GraphQLDate } from "@SRC/graphql/types";
 import { resolveAvailableQueues } from "@SRC/graphql/available-queues";
 import { getRequestedFields } from "@SRC/graphql/resolvers/utils";
@@ -3182,6 +3183,8 @@ type EmbeddingModelOption {
       // getEnabledTools skips this id and the runtime expands the stored entry
       // into per-context create/update tools.
       allTools.push(createKbEditorPickerTool());
+      // Same pattern for skill authoring: a config-only picker entry.
+      allTools.push(createSkillAuthorPickerTool());
     }
 
     // Apply search filter

@@ -24,6 +24,8 @@ import { createMemoryTools } from "@SRC/exulu/memory/tools";
 import { checkMemoryBase } from "@SRC/exulu/memory/memory-base";
 import { isMemoryToolId, type MemoryDecision } from "@SRC/exulu/memory/decisions";
 import { collectKbWriteTools } from "./context-write-tools";
+import { collectSkillAuthorTools } from "./skill-author-tools";
+import type { SkillDecision } from "@SRC/exulu/skills/decisions";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
@@ -200,6 +202,8 @@ export const convertExuluToolsToAiSdkTools = async (
   sessionOwnerId?: number | string,
   /** Approved memory cards → edits keyed by toolCallId (spec §3.2). */
   memoryDecisions?: Map<string, MemoryDecision>,
+  /** Approved skill cards → the user's name/description/visibility choices, keyed by toolCallId. */
+  skillDecisions?: Map<string, SkillDecision>,
 ): Promise<Record<string, Tool>> => {
   if (!currentTools) return {};
 
@@ -300,6 +304,13 @@ export const convertExuluToolsToAiSdkTools = async (
   for (const kbWriteTool of collectKbWriteTools(agent, contexts, { sessionOwnerId })) {
     if (!disabled.has(kbWriteTool.id)) {
       currentTools.push(kbWriteTool);
+    }
+  }
+  // Skill authoring (skill_list / skill_read / skill_create / skill_update),
+  // expanded from the agent's skill_author config entry.
+  for (const skillTool of collectSkillAuthorTools(agent)) {
+    if (!disabled.has(skillTool.id)) {
+      currentTools.push(skillTool);
     }
   }
 
@@ -623,6 +634,7 @@ export const convertExuluToolsToAiSdkTools = async (
                 sessionItems: sessionItems,
                 memory: memoryItems,
                 memoryDecision: memoryDecisions?.get(options?.toolCallId ?? ""),
+                skillDecision: skillDecisions?.get(options?.toolCallId ?? ""),
                 req: req,
                 // Convert config to object format if a config object
                 // is available, after we added the .value property

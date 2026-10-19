@@ -6,6 +6,7 @@ import type { User } from "@EXULU_TYPES/models/user.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { KB_EDITOR_TOOL_ID } from "@SRC/templates/tools/kb-editor-config";
+import { SKILL_AUTHOR_TOOL_ID } from "@SRC/templates/tools/skill-author-config";
 import { createAgentTool } from "@SRC/exulu/agent-as-tool";
 
 export const getEnabledTools = async (
@@ -30,6 +31,10 @@ export const getEnabledTools = async (
             role: user?.role?.id,
             model: undefined,
           });
+        }
+        if (id === SKILL_AUTHOR_TOOL_ID) {
+          // Config-only entry, expanded into the skill tools at runtime.
+          return null;
         }
         if (id === KB_EDITOR_TOOL_ID) {
           // Config-only entry: it is expanded into per-context write tools in

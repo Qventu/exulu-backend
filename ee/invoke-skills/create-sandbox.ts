@@ -464,6 +464,30 @@ async function resolvePythonVenvPath(): Promise<string | undefined> {
     }
 }
 
+/**
+ * Re-installs the given skills into an existing session sandbox regardless of
+ * the versions already present — the "reload skills" action after a skill was
+ * created or updated in the same conversation. Without a sandbox for the
+ * session there is nothing to refresh: the next turn builds one from scratch.
+ */
+export async function refreshSessionSkills(
+    sessionId: string,
+    skills: SkillRef[],
+    config: ExuluConfig,
+): Promise<{ refreshed: number; sandbox: boolean }> {
+    const cached = sandboxCache.get(sessionId)
+    if (!cached) return { refreshed: 0, sandbox: false }
+    const skillsDirectory = join(cached.handle.sessionDir, 'skills')
+    let refreshed = 0
+    for (const skill of skills) {
+        await rm(join(skillsDirectory, skill.name), { recursive: true, force: true })
+        await downloadSkill(skill, skillsDirectory, config)
+        cached.installedSkills.set(skill.id, skill.current_version)
+        refreshed++
+    }
+    return { refreshed, sandbox: true }
+}
+
 export async function createSessionSandbox(
     sessionId: string,
     skills: SkillRef[],

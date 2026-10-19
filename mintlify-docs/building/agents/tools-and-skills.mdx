@@ -89,6 +89,36 @@ The KB editor enforces multiple independent gates before any write reaches the d
 4. **Schema exclusions** — the following are never exposed in the tool schema: `uuid` (reference fields), `calculated` fields, fields marked `editable: false`, and `hidden` fields. Reserved internal parameter names are also excluded.
 5. **Files only from the session** — a `file` field takes the name of a file from the conversation's session files. The platform checks the field's allowed types, copies the object into the user's own upload storage (the same shape the upload dialog produces), and stores that key; the knowledge base's processor and embeddings then run as they do for an upload from the UI. The agent cannot attach a file by URL or by path.
 
+## Skill author
+
+The **Skill author** is a built-in tool in the **default** category. Enabling
+it lets the agent turn a procedure the user just completed into a skill in the
+instance's library, or publish a new version of a skill the user may write.
+The agent gets four tools: `skill_list` and `skill_read` (what exists),
+`skill_create` and `skill_update`. Its configuration has three switches:
+**Create**, **Update**, and **Skip approval**.
+
+A system-prompt block comes with the tool. It tells the agent to offer a skill
+only after complex, multi-step work that is likely to recur — typically work
+that produced files, documents, code or a structured analysis, or a
+multi-step retrieval the user runs regularly — and never for a single question
+against a knowledge base or a one-off correction, which belongs in memory.
+
+Creating or updating a skill shows a card in the chat, like a memory
+proposal: the user can change the name and the description, sees the files
+the agent proposes, chooses who may use the skill (private, public, or a
+scope of users, roles or teams), and — when they may edit the current agent —
+ticks **Enable it on this agent**. Nothing is written before they confirm.
+After a successful create or update the card offers **Reload skills**, which
+re-installs the agent's skills into the live sandbox so the new version is
+usable in the same conversation; otherwise it loads with the next turn.
+
+<Note>
+An update always publishes a new version: unchanged files carry over, the
+files in the proposal replace or add, and listed paths are removed. Earlier
+versions stay available on the skill's page.
+</Note>
+
 ## Sub-agents as tools
 
 When **sub-agent orchestration** is enabled on this deployment, other agents appear in the Tools & skills section under the **Agents** category. Enabling an agent-as-tool means the current agent can call the sub-agent during a conversation — for example, routing specialized questions to a domain expert agent.

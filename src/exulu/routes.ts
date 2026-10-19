@@ -167,6 +167,7 @@ import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
 import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
+import { refreshSessionSkills } from "@EE/invoke-skills/create-sandbox";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 import { handleOauthCallback } from "./auth/callback-handler.ts";
 import { handleCredentialSubmit } from "./auth/submit-handler.ts";
@@ -4712,6 +4713,41 @@ export const createExpressRoutes = async (
    * frontend can render previews (image, PDF) without a second round trip
    * per file.
    */
+  /**
+   * POST /sessions/:sessionId/skills/reload
+   * Re-installs the session agent's enabled skills into the live sandbox —
+   * the "reload skills" action of the skill card after a skill was created
+   * or updated in this conversation. The next turn would pick a changed
+   * version up anyway; this makes it immediate and explicit.
+   */
+  app.post("/sessions/:sessionId/skills/reload", async (req: Request, res: Response) => {
+    const sessionId = req.params.sessionId;
+    if (!sessionId) {
+      res.status(400).json({ detail: "Missing sessionId in path." });
+      return;
+    }
+    if (!config.fileUploads) {
+      res.status(500).json({ detail: "File uploads are not configured." });
+      return;
+    }
+    const authed = await loadSessionFilesAuth(req, res, sessionId, "read");
+    if (!authed) return;
+    const agentId = (authed.session as any)?.agent;
+    const agent = agentId ? await exuluApp.get().agent(agentId) : null;
+    if (!agent) {
+      res.status(404).json({ detail: "The session's agent was not found." });
+      return;
+    }
+    try {
+      const skills = await getEnabledSkills(agent, []);
+      const outcome = await refreshSessionSkills(sessionId, skills, config);
+      res.json({ ...outcome, skills: skills.map((s) => ({ id: s.id, name: s.name, version: s.current_version })) });
+    } catch (err) {
+      console.error("[SKILLS] reload failed", err);
+      res.status(500).json({ detail: "Could not reload the skills." });
+    }
+  });
+
   app.get("/sessions/:sessionId/files", async (req: Request, res: Response) => {
     const sessionId = req.params.sessionId;
     if (!sessionId) {
