@@ -128,6 +128,32 @@ through it; the refresh is single-flighted on purpose.
    share link): the handshake only exists there. Check a write, a Routine run,
    and the session-lost banner (open the app, log out in another tab, click).
 
+## Inside the IMP sandbox (an IMP agent with the file sandbox)
+
+You are inside it when the working directory is under `/tmp/exulu-sessions/`
+and this skill sits at `skills/imp-artifact-apps/`. That sandbox has **no
+network**: no `npm install`, no fetching a library to inline, no publish
+script. What works and what to do instead:
+
+- **Build a no-build app.** Start from `templates/app.html`, write plain
+  HTML/CSS/JS, keep everything in one file. Libraries only through a
+  `<script src="https://cdn.jsdelivr.net/npm/<pkg>@<version>/...">` tag — the
+  one CDN the IMP's CSP allows. React or Preact work that way without JSX
+  (`React.createElement`, or `htm`); say so in the file's header comment.
+  A compiled Vite/React project is not possible here; tell the user that it
+  needs a local agent (Claude Code with `imp install imp-artifact-apps`).
+- **Check what you can.** `node --check` on the script body (write it to a
+  `.js` file first), and read your HTML once more for an unclosed tag.
+- **Write the file to the session root** (not under `skills/`), e.g.
+  `./<name>.html`. It appears in the session files panel.
+- **Hand off the publishing.** Tell the user: open the session files panel,
+  choose Share on the file, pick "Logged-in users" (the app needs the
+  identity handshake), set who may open it, and the link is
+  `/artifacts/<name>`; the Artifacts page lists it afterwards. Do not run
+  `scripts/publish-artifact` here; it has nothing to reach.
+- **Updates** go the same way: write the file again, the user re-shares it
+  or replaces it from the Artifacts page.
+
 ## Rules learned the hard way
 
 - Register the `message` listener **before** posting the first identity
