@@ -56,11 +56,11 @@ describe("createContextWriteTools", () => {
     expect(tool.id.length).toBeLessThanOrEqual(80);
   });
 
-  it("excludes file, uuid, calculated and non-editable fields from schemas; includes date as string", () => {
+  it("excludes uuid, calculated and non-editable fields from schemas; includes date as string and file as a session file name", () => {
     const [createTool, updateTool] = createContextWriteTools(makeContext(), { create: true, update: true }, false);
     for (const keys of [shapeKeys(createTool), shapeKeys(updateTool)]) {
-      expect(keys).toEqual(expect.arrayContaining(["price", "category", "specs", "released_at"]));
-      expect(keys).not.toEqual(expect.arrayContaining(["manual", "legacy_ref", "score", "audit_note", "fts", "field"]));
+      expect(keys).toEqual(expect.arrayContaining(["price", "category", "specs", "released_at", "manual"]));
+      expect(keys).not.toEqual(expect.arrayContaining(["legacy_ref", "score", "audit_note", "fts", "field", "manual_s3key"]));
     }
     expect(shapeKeys(createTool)).toEqual(expect.arrayContaining(["name", "description", "tags", "external_id"]));
     expect(shapeKeys(updateTool)).toEqual(expect.arrayContaining(["id", "external_id"]));
@@ -260,5 +260,77 @@ describe("createKbEditorPickerTool", () => {
     expect(picker.type).toBe("function");
     expect(picker.config.map((c) => c.name)).toEqual(["knowledge_bases", "skip_approval"]);
     expect(picker.config.map((c) => c.type)).toEqual(["json", "boolean"]);
+  });
+});
+
+describe("file fields (session files)", () => {
+  const uploads = { fileUploads: { s3Bucket: "b", s3prefix: "imp" } } as any;
+  const fileContext = (allowed?: string[]) =>
+    makeContext({
+      fields: [
+        { name: "price", type: "number" },
+        { name: "manual", type: "file", ...(allowed ? { allowedFileTypes: allowed } : {}) },
+      ],
+    });
+  const run = async (params: Record<string, unknown>, context: any, copyObject = jest.fn(async () => {})) => {
+    const [tool] = createContextWriteTools(context, { create: true, update: false }, false, { copyObject });
+    const result = await (tool.tool.execute as any)(
+      { user, exuluConfig: uploads, sessionID: "sess-1", ...params },
+      { toolCallId: "t", messages: [] },
+    );
+    return { result, context, copyObject };
+  };
+
+  it("copies the session file to the user's upload prefix and stores the key in the _s3key column", async () => {
+    const { result, context, copyObject } = await run({ name: "Manual", manual: "guide.pdf" }, fileContext());
+    expect(copyObject).toHaveBeenCalledTimes(1);
+    const [source, dest, cfg] = (copyObject as jest.Mock).mock.calls[0];
+    expect(source).toBe("imp/user_7/sessions/sess-1/guide.pdf");
+    expect(dest).toMatch(/^imp\/user_7\/[0-9a-f-]{36}-_EXULU_guide\.pdf$/);
+    expect(cfg).toBe(uploads);
+    const written = (context.createItem as jest.Mock).mock.calls[0][0];
+    expect(written.manual_s3key).toBe(dest);
+    expect(written.manual).toBeUndefined();
+    expect(result.result).toContain("new-1");
+  });
+
+  it("reads the file from the session owner's prefix when the session is shared", async () => {
+    const copyObject = jest.fn(async () => {});
+    const [tool] = createContextWriteTools(fileContext(), { create: true, update: false }, false, { copyObject, sessionOwnerId: 3 });
+    await (tool.tool.execute as any)({ user, exuluConfig: uploads, sessionID: "sess-1", name: "M", manual: "a.pdf" }, { toolCallId: "t", messages: [] });
+    expect((copyObject as jest.Mock).mock.calls[0][0]).toBe("imp/user_3/sessions/sess-1/a.pdf");
+    expect((copyObject as jest.Mock).mock.calls[0][1]).toMatch(/^imp\/user_7\//);
+  });
+
+  it("rejects a name with a path, a disallowed type, and a file the session does not have", async () => {
+    const pathy = await run({ name: "M", manual: "../secret.pdf" }, fileContext());
+    expect(pathy.copyObject).not.toHaveBeenCalled();
+    expect(pathy.result.result).toContain("bare file name");
+
+    const wrongType = await run({ name: "M", manual: "notes.txt" }, fileContext([".pdf", ".docx"]));
+    expect(wrongType.copyObject).not.toHaveBeenCalled();
+    expect(wrongType.result.result).toContain(".pdf, .docx");
+
+    const missing = await run({ name: "M", manual: "gone.pdf" }, fileContext(), jest.fn(async () => { throw new Error("NoSuchKey"); }));
+    expect(missing.context.createItem).not.toHaveBeenCalled();
+    expect(missing.result.result).toContain("not among this session's files");
+  });
+
+  it("needs file uploads to be configured", async () => {
+    const [tool] = createContextWriteTools(fileContext(), { create: true, update: false }, false, { copyObject: jest.fn() });
+    const result = await (tool.tool.execute as any)({ user, exuluConfig: {}, sessionID: "s", name: "M", manual: "a.pdf" }, { toolCallId: "t", messages: [] });
+    expect(result.result).toContain("not configured");
+  });
+
+  it("leaves the file alone on update when the field is omitted", async () => {
+    const context = fileContext();
+    context.getItem.mockResolvedValue({ id: "item-1" });
+    writeGate.mockResolvedValue(true);
+    const copyObject = jest.fn(async () => {});
+    const [tool] = createContextWriteTools(context, { create: false, update: true }, false, { copyObject });
+    await (tool.tool.execute as any)({ user, exuluConfig: uploads, sessionID: "s", id: "item-1", price: 2 }, { toolCallId: "t", messages: [] });
+    expect(copyObject).not.toHaveBeenCalled();
+    const patch = (context.updateItem as jest.Mock).mock.calls[0][0];
+    expect(patch).toEqual({ price: 2, id: "item-1" });
   });
 });
