@@ -1,0 +1,104 @@
+#!/bin/sh
+# publish-artifact — upload a single-file app (or any file) and publish it as an
+# IMP artifact, or replace the bytes behind an artifact of the same name that
+# you own (the link and the viewers' stars survive).
+#
+# Reads base_url / backend / api_key from ~/.config/imp/skills.json — the file
+# the IMP installer writes (curl -fsSL <base_url>/api/skills/install.sh | sh) —
+# exactly like the `imp` skills helper. The key never enters the conversation.
+#
+# usage: sh publish-artifact <name> <file>
+#          [--access regular|public|password] [--password <pw>]
+#          [--rights private|public|users|roles|teams] [--expires-days <n>]
+set -eu
+CONFIG_FILE="$HOME/.config/imp/skills.json"
+die() { printf 'publish-artifact: %s\n' "$*" >&2; exit 1; }
+json_str() { sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$2" | head -n1; }
+
+[ $# -ge 2 ] || die "usage: publish-artifact <name> <file> [--access regular|public|password] [--password <pw>] [--rights private|public|users|roles|teams] [--expires-days <n>]"
+NAME="$1"; FILE="$2"; shift 2
+ACCESS=regular; PASSWORD=""; RIGHTS=private; EXPIRES_DAYS=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --access) ACCESS="$2"; shift 2 ;;
+    --password) PASSWORD="$2"; shift 2 ;;
+    --rights) RIGHTS="$2"; shift 2 ;;
+    --expires-days) EXPIRES_DAYS="$2"; shift 2 ;;
+    *) die "unknown option: $1" ;;
+  esac
+done
+[ -f "$FILE" ] || die "no such file: $FILE"
+printf '%s' "$NAME" | grep -Eq '^[a-z0-9][a-z0-9._-]{0,62}$' || die "name must be a slug: lowercase letters, digits, . _ - (max 63)"
+case "$ACCESS" in regular|public|password) ;; *) die "--access must be regular, public or password" ;; esac
+case "$RIGHTS" in private|public|users|roles|teams) ;; *) die "--rights must be private, public, users, roles or teams" ;; esac
+[ "$ACCESS" != password ] || [ -n "$PASSWORD" ] || die "--password is required with --access password"
+
+[ -f "$CONFIG_FILE" ] || die "not configured — run: curl -fsSL <base_url>/api/skills/install.sh | sh"
+BASE_URL="$(json_str base_url "$CONFIG_FILE")"
+BACKEND="$(json_str backend "$CONFIG_FILE")"
+API_KEY="$(json_str api_key "$CONFIG_FILE")"
+[ -n "$API_KEY" ] || die "config has no api_key"
+if [ -z "$BACKEND" ]; then
+  [ -n "$BASE_URL" ] || die "config has no backend and no base_url"
+  BACKEND="$(curl -fsSL "$BASE_URL/api/config" | sed -n 's/.*"backend"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+  [ -n "$BACKEND" ] || die "could not resolve backend from $BASE_URL/api/config"
+fi
+BACKEND="$(printf '%s' "$BACKEND" | sed 's:/*$::')"
+# The share routes read x-api-key (with or without "Bearer"); the upload-sign
+# route reads a raw exulu-api-key for API keys (sk_…/name) or an Authorization
+# bearer for a personal JWT. Send what each route needs.
+case "$API_KEY" in
+  */*) AUTH_HDR="exulu-api-key: $API_KEY" ;;
+  *)   AUTH_HDR="authorization: Bearer $API_KEY" ;;
+esac
+api() { m="$1"; p="$2"; shift 2; curl -fsS -X "$m" "$BACKEND$p" -H "x-api-key: Bearer $API_KEY" -H "$AUTH_HDR" "$@"; }
+
+BASENAME="$(basename "$FILE")"
+case "$(printf '%s' "$BASENAME" | tr '[:upper:]' '[:lower:]')" in
+  *.html|*.htm) CT="text/html" ;;
+  *.pdf) CT="application/pdf" ;;
+  *.png) CT="image/png" ;;
+  *.jpg|*.jpeg) CT="image/jpeg" ;;
+  *.gif) CT="image/gif" ;;
+  *.webp) CT="image/webp" ;;
+  *.svg) CT="image/svg+xml" ;;
+  *.md) CT="text/markdown" ;;
+  *.csv) CT="text/csv" ;;
+  *.json) CT="application/json" ;;
+  *.txt) CT="text/plain" ;;
+  *.pptx) CT="application/vnd.openxmlformats-officedocument.presentationml.presentation" ;;
+  *.xlsx) CT="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ;;
+  *.docx) CT="application/vnd.openxmlformats-officedocument.wordprocessingml.document" ;;
+  *) CT="application/octet-stream" ;;
+esac
+
+# 1. a presigned PUT under your own storage prefix
+SIGN="$(api POST /s3/sign -H 'content-type: application/json' --data "{\"filename\":\"$BASENAME\",\"type\":\"$CT\"}")" || die "sign failed"
+URL="$(printf '%s' "$SIGN" | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+[ -n "$URL" ] || die "sign returned no url: $SIGN"
+# The stored key is the URL's path (bucket first on path-style endpoints); the backend normalises and decodes it.
+S3KEY="$(printf '%s' "$URL" | sed -E 's#^[a-z]+://[^/]+/##; s#\?.*$##')"
+
+# 2. the bytes
+curl -fsS -X PUT "$URL" -H "content-type: $CT" --upload-file "$FILE" > /dev/null || die "upload failed"
+
+# 3. the share: an existing one you own is re-pointed, otherwise created
+EXP=null
+if [ -n "$EXPIRES_DAYS" ]; then
+  EXP="\"$(date -u -v+"${EXPIRES_DAYS}"d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "+${EXPIRES_DAYS} days" +%Y-%m-%dT%H:%M:%SZ)\""
+fi
+if api GET "/shared-artifacts/$NAME/settings" > /dev/null 2>&1; then
+  api PATCH "/shared-artifacts/$NAME" -H 'content-type: application/json' \
+    --data "{\"s3key\":\"$S3KEY\",\"content_type\":\"$CT\"}" > /dev/null || die "update failed"
+  printf 'updated: %s now serves %s\n' "$NAME" "$BASENAME"
+else
+  PW=""; [ "$ACCESS" = password ] && PW=",\"password\":\"$PASSWORD\""
+  RM=""; [ "$ACCESS" = regular ] && RM=",\"rights_mode\":\"$RIGHTS\""
+  api POST /shared-artifacts -H 'content-type: application/json' \
+    --data "{\"s3key\":\"$S3KEY\",\"name\":\"$NAME\",\"auth_mode\":\"$ACCESS\",\"expires_at\":$EXP,\"content_type\":\"$CT\"$PW$RM}" > /dev/null \
+    || die "publish failed (409 = the name belongs to someone else)"
+  printf 'published: %s (%s, %s)\n' "$NAME" "$ACCESS" "$RIGHTS"
+fi
+FRONT="${BASE_URL:-$BACKEND}"
+printf 'share link:  %s/artifacts/%s\n' "$FRONT" "$NAME"
+printf 'in the IMP:  %s/artifacts/open/%s\n' "$FRONT" "$NAME"

@@ -54,6 +54,7 @@ import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 export const REQUEST_SIZE_LIMIT = "50mb";
 import JSZip from "jszip";
+import { seedBundledSkills } from "../skills/bundled.ts";
 import { createIdGenerator,
   type UIMessage } from "ai";
 import type { Project } from "@EXULU_TYPES/models/project";
@@ -193,6 +194,7 @@ import {
   canManageShare,
   validateUpdateInput,
   planShareUpdate,
+  ownsObjectKey,
 } from "./shared-artifacts.ts";
 import { publicAgentView, evaluateGuestChatAccess } from "./public-agents.ts";
 import {
@@ -3638,6 +3640,14 @@ export const createExpressRoutes = async (
    * is embedded as TypeScript string constants (no loose files in dist).
    * NOTE: This literal path must remain BEFORE /skills/registry to avoid param capture.
    */
+  // The skills bundled with the backend (src/skills/bundled/**) go into this
+  // instance's skill library once, as public registry entries; a changed
+  // bundle becomes a new version. Idempotent, and never blocks the boot.
+  void (async () => {
+    const { db } = await postgresClient();
+    await seedBundledSkills({ db, config });
+  })().catch((err) => console.error("[SKILLS] seeding the bundled skills failed", err));
+
   app.get("/skills/agent/bootstrap", async (_req: Request, res: Response) => {
     try {
       const zip = new JSZip();
@@ -5232,6 +5242,7 @@ export const createExpressRoutes = async (
       expires_at: row.expires_at ?? null,
       rights_mode: row.rights_mode ?? null,
       content_type: row.content_type ?? null,
+      s3key: row.s3key,
       created_by: row.created_by ?? null,
       rbac: {
         users: rbac.filter((r) => r.access_type === "User").map((r) => ({ id: r.user_id, rights: r.rights })),
@@ -5266,6 +5277,13 @@ export const createExpressRoutes = async (
     if (!valid.ok) {
       res.status(400).json({ detail: valid.message });
       return;
+    }
+    if (input.s3key !== undefined) {
+      input.s3key = normalizeS3Key(String(input.s3key), config.fileUploads?.s3Bucket ?? "");
+      if (!ownsObjectKey(input.s3key, auth.user, config.fileUploads?.s3prefix)) {
+        res.status(403).json({ detail: "You can only point a share at a file you uploaded yourself." });
+        return;
+      }
     }
     const newHash = input.password ? await hashSharePassword(String(input.password)) : null;
     const patch = planShareUpdate(input, row, newHash, now);

@@ -8,6 +8,7 @@ import {
   validateUpdateInput,
   planShareUpdate,
   canManageShare,
+  ownsObjectKey,
   hashSharePassword,
   verifySharePassword,
   contentHeadersFor,
@@ -300,5 +301,38 @@ describe("planShareUpdate", () => {
   });
   test("stamps updatedAt", () => {
     expect(planShareUpdate({}, regular, null, now).updatedAt).toBe(now);
+  });
+});
+
+describe("ownsObjectKey", () => {
+  test("the caller's own prefix, with and without the general prefix", () => {
+    expect(ownsObjectKey("user_7/abc-_EXULU_app.html", { id: 7 })).toBe(true);
+    expect(ownsObjectKey("imp/user_7/abc-_EXULU_app.html", { id: 7 }, "imp")).toBe(true);
+    expect(ownsObjectKey("imp/user_7/abc-_EXULU_app.html", { id: 7 }, "imp/")).toBe(true);
+  });
+  test("someone else's prefix, or no user prefix at all, is refused", () => {
+    expect(ownsObjectKey("user_8/x.html", { id: 7 })).toBe(false);
+    expect(ownsObjectKey("shared-artifacts/x/index.html", { id: 7 })).toBe(false);
+    expect(ownsObjectKey("imp/user_8/x.html", { id: 7 }, "imp")).toBe(false);
+  });
+  test("API-key callers own user_api/, super admins own everything", () => {
+    expect(ownsObjectKey("user_api/x.html", { id: 26, type: "api" })).toBe(true);
+    expect(ownsObjectKey("user_26/x.html", { id: 26, type: "api" })).toBe(false);
+    expect(ownsObjectKey("shared-artifacts/x/index.html", { id: 7, super_admin: true })).toBe(true);
+  });
+});
+
+describe("validateUpdateInput / planShareUpdate with s3key", () => {
+  const now = new Date("2026-10-19T12:00:00Z");
+  const row = { name: "a", auth_mode: "regular", password_hash: null, rights_mode: "public", created_by: 1 };
+  test("rejects an empty s3key", () => {
+    expect(validateUpdateInput({ s3key: " " }, row, now).ok).toBe(false);
+  });
+  test("re-points the share and keeps everything else", () => {
+    const patch = planShareUpdate({ s3key: "user_1/new.html", content_type: "text/html" }, row, null, now);
+    expect(patch.s3key).toBe("user_1/new.html");
+    expect(patch.content_type).toBe("text/html");
+    expect(patch.auth_mode).toBe("regular");
+    expect(patch.rights_mode).toBe("public");
   });
 });
