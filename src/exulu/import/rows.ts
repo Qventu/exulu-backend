@@ -15,15 +15,26 @@ export type BatchAccess = {
   teams?: Array<{ id: string; rights: "read" | "write" }>;
 };
 
+/** Non-empty `id` wins over non-empty `external_id`; neither means create. */
+function tentativeAction(cells: Record<string, ImportCell>): "create" | "update" {
+  const id = cells.id?.value;
+  if (typeof id === "string" && id !== "") return "update";
+  const externalId = cells.external_id?.value;
+  if (typeof externalId === "string" && externalId !== "") return "update";
+  return "create";
+}
+
 /**
  * Coerce every mapped cell in a CSV data row and collect its errors.
  *
- * A required field with a blank raw value (never mapped, or mapped but
- * empty) reports `required:<field>`; a cell that coerced with an error
- * reports `<field>:<code>`. Required-ness is not action-aware here -- the
- * row's eventual create/update classification is decided later (see
- * rowAction), after lookup, so a required field missing from the row is
- * always an error at this stage.
+ * A cell that coerced with an error reports `<field>:<code>`. A required
+ * field reports `required:<field>` when the row is a create (derived from
+ * its own `id`/`external_id` cells, the same rule as `rowAction`), or when
+ * the column is mapped but blank; an unmapped required column is allowed on
+ * an update row -- a CSV that only touches a subset of columns does not need
+ * to re-supply every required field for rows it merely updates. Mirrors the
+ * frontend's `validateRow` (`mustHaveValue = action === "create" || cell !==
+ * undefined`).
  */
 export function buildRow(
   index: number,
@@ -41,10 +52,12 @@ export function buildRow(
     rowCells[fieldName] = coerceValue(field, cells[i] ?? "");
   }
 
+  const action = tentativeAction(rowCells);
   const errors: string[] = [];
   for (const f of fields) {
     const cell = rowCells[f.name];
-    if (f.required && (cell === undefined || cell.raw.trim() === "")) {
+    const mustHaveValue = action === "create" || cell !== undefined;
+    if (f.required && mustHaveValue && (cell === undefined || cell.raw.trim() === "")) {
       errors.push(`required:${f.name}`);
       continue;
     }

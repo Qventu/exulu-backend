@@ -66,8 +66,25 @@ describe("buildRow / rowIsValid / rowAction / buildCreateInput / buildUpdateInpu
     });
   });
 
-  it("flags a required field that was never mapped at all", () => {
+  it("allows an unmapped required column on an update row (only touched columns need to be present)", () => {
+    // external_id is mapped and set -> this row is a tentative update; name
+    // is not mapped at all, so it is not this CSV's concern.
     const row = buildRow(9, ["X9"], ["external_id"], fields);
+    expect(rowAction(row)).toEqual({ action: "update", by: "external_id", key: "X9" });
+    expect(rowIsValid(row)).toBe(true);
+    expect(row.errors).toEqual([]);
+  });
+
+  it("flags an unmapped required column on a create row (no id/external_id present)", () => {
+    const row = buildRow(10, ["2"], ["qty"], fields);
+    expect(rowAction(row)).toEqual({ action: "create" });
+    expect(rowIsValid(row)).toBe(false);
+    expect(row.errors).toEqual(["required:name"]);
+  });
+
+  it("still flags a mapped-but-blank required column on an update row", () => {
+    const row = buildRow(11, ["", "X5", "3"], ["name", "external_id", "qty"], fields);
+    expect(rowAction(row)).toEqual({ action: "update", by: "external_id", key: "X5" });
     expect(rowIsValid(row)).toBe(false);
     expect(row.errors).toEqual(["required:name"]);
   });
