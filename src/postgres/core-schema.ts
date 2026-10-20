@@ -1019,6 +1019,47 @@ const contextPresetsSchema: ExuluTableDefinition = {
   ],
 };
 
+// UI-only grouping of knowledge contexts for the IMP's folder view (the
+// contexts themselves are unchanged; a folder just lists their ids). Writes
+// are admin-only, the same apiWrites pattern as shared_artifacts: any
+// authenticated user may read the folder list, but only a super admin may
+// create, rename, reorder, or delete a folder through the generic mutations.
+const contextFoldersSchema: ExuluTableDefinition = {
+  type: "context_folders",
+  name: {
+    plural: "context_folders",
+    singular: "context_folder",
+  },
+  RBAC: false,
+  apiWrites: "super_admin",
+  fields: [
+    {
+      name: "name",
+      type: "text",
+      required: true,
+      index: true,
+    },
+    {
+      name: "description",
+      type: "text",
+    },
+    {
+      name: "icon",
+      type: "text",
+    },
+    {
+      name: "sort_order",
+      type: "number",
+      default: 0,
+    },
+    {
+      name: "context_ids",
+      type: "json",
+      required: true,
+    },
+  ],
+};
+
 export const addCoreFields = (schema: ExuluTableDefinition): ExuluTableDefinition => {
   schema.fields.forEach((field) => {
     if (field.type === "file") {
@@ -1129,6 +1170,7 @@ export const coreSchemas = {
       contextProjectionsSchema: (): ExuluTableDefinition => addCoreFields(contextProjectionsSchema),
       contextMapTopicsSchema: (): ExuluTableDefinition => addCoreFields(contextMapTopicsSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
+      contextFoldersSchema: (): ExuluTableDefinition => addCoreFields(contextFoldersSchema),
       sharedArtifactsSchema: (): ExuluTableDefinition => addCoreFields(sharedArtifactsSchema),
       transcriptionJobsSchema: (): ExuluTableDefinition => addCoreFields(transcriptionJobsSchema),
       imageGenerationsSchema: (): ExuluTableDefinition => addCoreFields(imageGenerationsSchema),

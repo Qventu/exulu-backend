@@ -147,6 +147,26 @@ describe("context_map_topics", () => {
   });
 });
 
+describe("context_folders schema", () => {
+  test("is registered with the expected shape", () => {
+    const schema = coreSchemas.get().contextFoldersSchema();
+    expect(schema.name.plural).toBe("context_folders");
+    expect(schema.name.singular).toBe("context_folder");
+    expect(schema.apiWrites).toBe("super_admin");
+    expect(schema.RBAC).toBeFalsy();
+    const fieldNames = schema.fields.map((f) => f.name);
+    expect(fieldNames.slice(0, 5)).toEqual(["name", "description", "icon", "sort_order", "context_ids"]);
+    const nameField = schema.fields.find((f) => f.name === "name");
+    expect(nameField?.required).toBe(true);
+    expect(nameField?.index).toBe(true);
+    const contextIdsField = schema.fields.find((f) => f.name === "context_ids");
+    expect(contextIdsField?.type).toBe("json");
+    expect(contextIdsField?.required).toBe(true);
+    const sortOrderField = schema.fields.find((f) => f.name === "sort_order");
+    expect(sortOrderField?.default).toBe(0);
+  });
+});
+
 describe("claim_checks table", () => {
   // No `buildSchemas` helper exists here — coreSchemas.get() reads the
   // licence straight off EXULU_ENTERPRISE_LICENSE (see ee/entitlements.ts),
