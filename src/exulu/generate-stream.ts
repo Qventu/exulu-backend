@@ -44,6 +44,8 @@ import { recallMemories } from "./memory/recall";
 import { isPublicSurface } from "./public-surface";
 import { previousUserTexts } from "./memory/recall-query";
 import { collectMemoryDecisions } from "./memory/decisions";
+import { collectSkillDecisions } from "./skills/decisions";
+import { parseSkillAuthorConfig, SKILL_AUTHOR_PROMPT } from "../templates/tools/skill-author-config";
 import type { RecallCollector } from "./memory/recall-collector";
 import { recordMemoryUsage } from "./memory/usage";
 import { randomUUID } from "node:crypto";
@@ -403,6 +405,12 @@ export const generateSync = async ({
 
     if (memoryContext) {
         system += "\n\n" + memoryContext;
+    }
+
+    // Skill authoring: the hint that keeps skill proposals to complex,
+    // recurring, multi-step work (never a single question or correction).
+    if (parseSkillAuthorConfig(agent?.tools as any).enabled) {
+        system += "\n\n" + SKILL_AUTHOR_PROMPT;
     }
 
     // Convert BEFORE deciding citation instructions: convert injects tools
@@ -977,6 +985,7 @@ ${skillsList}
     console.log("[EXULU] Skills", currentSkills?.map(x => x.name));
 
     const memoryDecisions = collectMemoryDecisions(messages);
+    const skillDecisions = collectSkillDecisions(messages);
     const tools = await convertExuluToolsToAiSdkTools(
         currentTools,
         currentSkills,
@@ -997,6 +1006,7 @@ ${skillsList}
         disabledTools,
         sessionOwnerId,
         memoryDecisions,
+        skillDecisions,
     )
     console.log("[EXULU] Converted tools", Object.keys(tools));
 

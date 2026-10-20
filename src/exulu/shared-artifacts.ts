@@ -71,6 +71,9 @@ export const validateCreateInput = (
 
 export type UpdateShareInput = {
   name?: string;
+  /** Re-point the share at another stored object (normalised by the route; must be the caller's own upload). */
+  s3key?: string;
+  content_type?: string | null;
   auth_mode?: string;
   password?: string;
   expires_at?: string | null;
@@ -124,7 +127,30 @@ export const validateUpdateInput = (
   if (input.rights_mode !== undefined && !RIGHTS_MODES.has(input.rights_mode)) {
     return { ok: false, message: "rights_mode must be private, users, roles, teams, or public." };
   }
+  if (input.s3key !== undefined && (typeof input.s3key !== "string" || !input.s3key.trim())) {
+    return { ok: false, message: "s3key must be a non-empty string." };
+  }
   return { ok: true };
+};
+
+/**
+ * A share may only be re-pointed at an object its caller uploaded: a key under
+ * their own `user_<id>/` prefix (`user_api/` for API-key callers) once the
+ * instance's general prefix is stripped. Super admins may point anywhere.
+ * Without this, a share could be aimed at any object in the bucket and the
+ * content route would serve it.
+ */
+export const ownsObjectKey = (
+  key: string,
+  user: { id: number; super_admin?: boolean | null; type?: string | null },
+  s3prefix?: string | null,
+): boolean => {
+  if (user.super_admin === true) return true;
+  let k = key.replace(/^\/+/, "");
+  const prefix = (s3prefix ?? "").replace(/\/+$/, "");
+  if (prefix && k.startsWith(prefix + "/")) k = k.slice(prefix.length + 1);
+  const owner = user.type === "api" ? "api" : String(user.id);
+  return k.startsWith(`user_${owner}/`);
 };
 
 /**
@@ -142,6 +168,8 @@ export const planShareUpdate = (
   const mode = input.auth_mode ?? row.auth_mode;
   const patch: Record<string, unknown> = { auth_mode: mode, updatedAt: now };
   if (input.name !== undefined) patch.name = slugifyShareName(input.name);
+  if (input.s3key !== undefined) patch.s3key = input.s3key;
+  if (input.content_type !== undefined) patch.content_type = input.content_type;
   patch.password_hash = mode === "password" ? (newPasswordHash ?? row.password_hash) : null;
   if (input.expires_at !== undefined) patch.expires_at = input.expires_at;
   if (mode === "regular") {

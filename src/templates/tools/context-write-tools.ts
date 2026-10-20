@@ -3,6 +3,10 @@ import type { Item } from "@EXULU_TYPES/models/item";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { ExuluTool } from "@SRC/exulu/tool";
 import { z, type ZodSchema } from "zod";
+import { randomUUID } from "node:crypto";
+import type { ExuluConfig } from "@SRC/exulu/app/index.ts";
+import { sessionFilePrefix } from "@SRC/exulu/session-files";
+import { copyS3Object } from "@SRC/uppy/index";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { checkItemWriteAccess } from "@SRC/utils/check-item-write-access";
 import { KB_EDITOR_TOOL_ID, parseKbEditorConfig, type KbWritePermissions } from "./kb-editor-config";
@@ -12,6 +16,20 @@ import { KB_EDITOR_TOOL_ID, parseKbEditorConfig, type KbWritePermissions } from 
 const MAX_CONTEXT_SEGMENT = 68;
 
 type WriteMode = "create" | "update";
+
+/**
+ * A `file` field as the tool exposes it: the model passes the bare name of a
+ * session file under the field's own name; the write stores the copied
+ * object's key in the `<name>_s3key` column, exactly as the UI's uploader does.
+ */
+type FileField = { input: string; column: string; allowed: string[] };
+
+export type WriteToolDeps = {
+  /** The session's owner when the session is shared — session files live under the owner's prefix. */
+  sessionOwnerId?: number | string;
+  /** Injectable for tests; defaults to the S3 copy. */
+  copyObject?: (sourceKey: string, destKey: string, config: ExuluConfig) => Promise<void>;
+};
 
 // Keys the AI-SDK execute wrapper injects into tool inputs at runtime
 // (convert-exulu-tools-to-ai-sdk-tools.ts). A context field with one of
@@ -29,9 +47,10 @@ const RESERVED_INPUT_KEYS = new Set([
 const buildWriteSchema = (
   context: ExuluContext,
   mode: WriteMode,
-): { shape: Record<string, ZodSchema>; contentKeys: string[] } => {
+): { shape: Record<string, ZodSchema>; contentKeys: string[]; fileFields: FileField[] } => {
   const shape: Record<string, ZodSchema> = {};
   const contentKeys: string[] = [];
+  const fileFields: FileField[] = [];
 
   const addContent = (key: string, schema: ZodSchema, required: boolean) => {
     shape[key] = required && mode === "create" ? schema : schema.optional();
@@ -58,10 +77,27 @@ const buildWriteSchema = (
   }
 
   for (const field of context.fields ?? []) {
-    if (field.type === "file" || field.type === "uuid") continue;
+    if (field.type === "uuid") continue;
     if (field.calculated === true || field.editable === false) continue;
     if (field.hidden === true) continue;
     if (RESERVED_INPUT_KEYS.has(field.name)) continue;
+
+    if (field.type === "file") {
+      // Exposed under the logical name; stored under the `_s3key` column.
+      const allowed = (field.allowedFileTypes ?? []).map((ext: string) => ext.toLowerCase());
+      const column = `${field.name}_s3key`;
+      const allowedNote = allowed.length ? ` Allowed types: ${allowed.join(", ")}.` : "";
+      shape[field.name] = (field.required === true && mode === "create"
+        ? z.string()
+        : z.string().optional()
+      ).describe(
+        `The ${field.name} file: the bare name of a file from this session's files (as listed there, no path).${allowedNote}` +
+          (mode === "update" ? " Omit to keep the current file." : ""),
+      );
+      contentKeys.push(column);
+      fileFields.push({ input: field.name, column, allowed });
+      continue;
+    }
 
     let schema: ZodSchema;
     switch (field.type) {
@@ -95,7 +131,62 @@ const buildWriteSchema = (
     addContent(field.name, schema, field.required === true);
   }
 
-  return { shape, contentKeys };
+  return { shape, contentKeys, fileFields };
+};
+
+const BARE_FILENAME = /^[^/\\]+$/;
+
+/**
+ * Turns every file-field input into a stored object key: validates the name
+ * and the type, copies the session file to the user's upload prefix under the
+ * `<uuid>-_EXULU_<name>` shape the UI's uploader produces, and sets the
+ * `_s3key` column. The copy is what makes the knowledge-base object outlive
+ * the session. Returns an error message for the model, or undefined.
+ */
+export const attachSessionFiles = async (
+  params: Record<string, any>,
+  fileFields: FileField[],
+  deps: WriteToolDeps,
+): Promise<string | undefined> => {
+  const wanted = fileFields.filter((f) => typeof params[f.input] === "string" && params[f.input].trim() !== "");
+  if (wanted.length === 0) return undefined;
+  const { user, sessionID, exuluConfig } = params as {
+    user?: { id: number; type?: string };
+    sessionID?: string;
+    exuluConfig?: ExuluConfig;
+  };
+  const uploads = exuluConfig?.fileUploads;
+  if (!uploads?.s3Bucket) {
+    return "File uploads are not configured on this instance, so files cannot be attached to items.";
+  }
+  if (!sessionID) {
+    return "Files can only be attached from a chat session's files.";
+  }
+  const copy = deps.copyObject ?? copyS3Object;
+  const general = uploads.s3prefix ? `${uploads.s3prefix.replace(/\/+$/, "")}/` : "";
+  const owner = user?.type === "api" ? "api" : user?.id;
+  for (const field of wanted) {
+    const name = String(params[field.input]).trim();
+    if (!BARE_FILENAME.test(name) || name === "." || name === "..") {
+      return `"${name}" is not a session file name. Pass the bare file name exactly as listed in the session files, without a path.`;
+    }
+    const dot = name.lastIndexOf(".");
+    const ext = dot >= 0 ? name.slice(dot).toLowerCase() : "";
+    if (field.allowed.length && !field.allowed.includes(ext)) {
+      return `"${name}" has type "${ext || "none"}", but the ${field.input} field only accepts ${field.allowed.join(", ")}.`;
+    }
+    const sourceKey = `${sessionFilePrefix(deps.sessionOwnerId ?? owner ?? "api", sessionID, uploads.s3prefix)}${name}`;
+    const destKey = `${general}user_${owner}/${randomUUID()}-_EXULU_${name}`;
+    try {
+      await copy(sourceKey, destKey, exuluConfig!);
+    } catch (error) {
+      console.error(`[EXULU] KB editor: copying session file "${name}" failed`, error);
+      return `"${name}" is not among this session's files. Upload it to the session (or ask the user to attach it) and try again.`;
+    }
+    params[field.column] = destKey;
+    delete params[field.input];
+  }
+  return undefined;
 };
 
 // Case-insensitive canonicalization against enumValues. Returns an error
@@ -139,19 +230,21 @@ export const createContextWriteTools = (
   context: ExuluContext,
   perms: KbWritePermissions,
   skipApproval: boolean,
+  deps: WriteToolDeps = {},
 ): ExuluTool[] => {
   const tools: ExuluTool[] = [];
   const segment = sanitizeName(context.id).slice(0, MAX_CONTEXT_SEGMENT);
   const contextLabel = context.description ? ` ${context.description}` : "";
 
   if (perms.create) {
-    const { shape, contentKeys } = buildWriteSchema(context, "create");
+    const { shape, contentKeys, fileFields } = buildWriteSchema(context, "create");
+    const fileNote = fileFields.length ? " File fields take the name of a file from this session's files." : "";
     tools.push(
       new ExuluTool({
         id: `create_${segment}_item`,
         name: `Create ${context.name} item`,
         category: "knowledge_base_editing",
-        description: `Create a new item in the "${context.name}" knowledge base.${contextLabel}`,
+        description: `Create a new item in the "${context.name}" knowledge base.${contextLabel}${fileNote}`,
         type: "function",
         inputSchema: z.object(shape),
         config: [],
@@ -165,6 +258,10 @@ export const createContextWriteTools = (
             const enumError = canonicalizeEnumFields(context, params);
             if (enumError) {
               return { result: enumError };
+            }
+            const fileError = await attachSessionFiles(params, fileFields, deps);
+            if (fileError) {
+              return { result: fileError };
             }
             const item = pickContent(params, contentKeys);
             // createItem does not stamp the creator itself; created_by is a
@@ -198,7 +295,8 @@ export const createContextWriteTools = (
   }
 
   if (perms.update) {
-    const { shape, contentKeys } = buildWriteSchema(context, "update");
+    const { shape, contentKeys, fileFields } = buildWriteSchema(context, "update");
+    const fileNote = fileFields.length ? " File fields take the name of a file from this session's files; omit them to keep the current file." : "";
     // Same message for "row missing" and "no write access" so the tool can't
     // be used to probe for rows the user can't see.
     const NOT_FOUND = `Item not found in "${context.name}" or you don't have write access to it.`;
@@ -209,7 +307,7 @@ export const createContextWriteTools = (
         category: "knowledge_base_editing",
         description:
           `Update an existing item in the "${context.name}" knowledge base. ` +
-          `Provide the item's id (or external_id) plus only the fields to change; omitted fields keep their values.`,
+          `Provide the item's id (or external_id) plus only the fields to change; omitted fields keep their values.${fileNote}`,
         type: "function",
         inputSchema: z.object(shape),
         config: [],
@@ -236,6 +334,10 @@ export const createContextWriteTools = (
             const enumError = canonicalizeEnumFields(context, params);
             if (enumError) {
               return { result: enumError };
+            }
+            const fileError = await attachSessionFiles(params, fileFields, deps);
+            if (fileError) {
+              return { result: fileError };
             }
             const patch = pickContent(params, contentKeys);
             if (Object.keys(patch).length === 0) {
@@ -284,8 +386,8 @@ export const createKbEditorPickerTool = (): ExuluTool =>
     name: "Knowledge base editor",
     category: "default",
     description:
-      "Let this agent create or update items in selected knowledge bases during chat. " +
-      "Configure per knowledge base whether the agent may create and/or update items.",
+      "Let this agent create or update items in selected knowledge bases during chat, including attaching " +
+      "files from the session's files to file fields. Configure per knowledge base whether the agent may create and/or update items.",
     type: "function",
     inputSchema: z.object({}),
     config: [
@@ -311,6 +413,7 @@ export const createKbEditorPickerTool = (): ExuluTool =>
 export const collectKbWriteTools = (
   agent: ExuluAgent | undefined,
   contexts: ExuluContext[] | undefined,
+  deps: WriteToolDeps = {},
 ): ExuluTool[] => {
   if (!agent?.tools || !contexts?.length) {
     return [];
@@ -325,7 +428,7 @@ export const collectKbWriteTools = (
     if (!context) {
       continue;
     }
-    tools.push(...createContextWriteTools(context, perms, config.skipApproval));
+    tools.push(...createContextWriteTools(context, perms, config.skipApproval, deps));
   }
   return tools;
 };

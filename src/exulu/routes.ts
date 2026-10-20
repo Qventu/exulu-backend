@@ -54,6 +54,7 @@ import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 export const REQUEST_SIZE_LIMIT = "50mb";
 import JSZip from "jszip";
+import { seedBundledSkills } from "../skills/bundled.ts";
 import { createIdGenerator,
   type UIMessage } from "ai";
 import type { Project } from "@EXULU_TYPES/models/project";
@@ -166,6 +167,7 @@ import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
 import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
+import { refreshSessionSkills } from "@EE/invoke-skills/create-sandbox";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 import { handleOauthCallback } from "./auth/callback-handler.ts";
 import { handleCredentialSubmit } from "./auth/submit-handler.ts";
@@ -193,6 +195,7 @@ import {
   canManageShare,
   validateUpdateInput,
   planShareUpdate,
+  ownsObjectKey,
 } from "./shared-artifacts.ts";
 import { publicAgentView, evaluateGuestChatAccess } from "./public-agents.ts";
 import {
@@ -3638,6 +3641,14 @@ export const createExpressRoutes = async (
    * is embedded as TypeScript string constants (no loose files in dist).
    * NOTE: This literal path must remain BEFORE /skills/registry to avoid param capture.
    */
+  // The skills bundled with the backend (src/skills/bundled/**) go into this
+  // instance's skill library once, as public registry entries; a changed
+  // bundle becomes a new version. Idempotent, and never blocks the boot.
+  void (async () => {
+    const { db } = await postgresClient();
+    await seedBundledSkills({ db, config });
+  })().catch((err) => console.error("[SKILLS] seeding the bundled skills failed", err));
+
   app.get("/skills/agent/bootstrap", async (_req: Request, res: Response) => {
     try {
       const zip = new JSZip();
@@ -4702,6 +4713,41 @@ export const createExpressRoutes = async (
    * frontend can render previews (image, PDF) without a second round trip
    * per file.
    */
+  /**
+   * POST /sessions/:sessionId/skills/reload
+   * Re-installs the session agent's enabled skills into the live sandbox —
+   * the "reload skills" action of the skill card after a skill was created
+   * or updated in this conversation. The next turn would pick a changed
+   * version up anyway; this makes it immediate and explicit.
+   */
+  app.post("/sessions/:sessionId/skills/reload", async (req: Request, res: Response) => {
+    const sessionId = req.params.sessionId;
+    if (!sessionId) {
+      res.status(400).json({ detail: "Missing sessionId in path." });
+      return;
+    }
+    if (!config.fileUploads) {
+      res.status(500).json({ detail: "File uploads are not configured." });
+      return;
+    }
+    const authed = await loadSessionFilesAuth(req, res, sessionId, "read");
+    if (!authed) return;
+    const agentId = (authed.session as any)?.agent;
+    const agent = agentId ? await exuluApp.get().agent(agentId) : null;
+    if (!agent) {
+      res.status(404).json({ detail: "The session's agent was not found." });
+      return;
+    }
+    try {
+      const skills = await getEnabledSkills(agent, []);
+      const outcome = await refreshSessionSkills(sessionId, skills, config);
+      res.json({ ...outcome, skills: skills.map((s) => ({ id: s.id, name: s.name, version: s.current_version })) });
+    } catch (err) {
+      console.error("[SKILLS] reload failed", err);
+      res.status(500).json({ detail: "Could not reload the skills." });
+    }
+  });
+
   app.get("/sessions/:sessionId/files", async (req: Request, res: Response) => {
     const sessionId = req.params.sessionId;
     if (!sessionId) {
@@ -5232,6 +5278,7 @@ export const createExpressRoutes = async (
       expires_at: row.expires_at ?? null,
       rights_mode: row.rights_mode ?? null,
       content_type: row.content_type ?? null,
+      s3key: row.s3key,
       created_by: row.created_by ?? null,
       rbac: {
         users: rbac.filter((r) => r.access_type === "User").map((r) => ({ id: r.user_id, rights: r.rights })),
@@ -5266,6 +5313,13 @@ export const createExpressRoutes = async (
     if (!valid.ok) {
       res.status(400).json({ detail: valid.message });
       return;
+    }
+    if (input.s3key !== undefined) {
+      input.s3key = normalizeS3Key(String(input.s3key), config.fileUploads?.s3Bucket ?? "");
+      if (!ownsObjectKey(input.s3key, auth.user, config.fileUploads?.s3prefix)) {
+        res.status(403).json({ detail: "You can only point a share at a file you uploaded yourself." });
+        return;
+      }
     }
     const newHash = input.password ? await hashSharePassword(String(input.password)) : null;
     const patch = planShareUpdate(input, row, newHash, now);

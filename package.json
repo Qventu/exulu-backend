@@ -25,6 +25,8 @@
   "scripts": {
     "preinstall": "node -e \"if (process.version !== 'v22.18.0') { console.error('❌ Wrong Node.js version. Expected v22.18.0, got ' + process.version); process.exit(1); }\"",
     "postinstall": "node scripts/postinstall.cjs",
+    "generate:bundled-skills": "tsx scripts/generate-bundled-skills.ts",
+    "prebuild": "npm run generate:bundled-skills",
     "build": "tsup",
     "dev": "npm link && tsup --watch",
     "prepare": "husky",

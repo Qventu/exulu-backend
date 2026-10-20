@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My IMP app</title>
+<style>
+  :root { color-scheme: light; --fg: #141414; --mute: #6b6b6b; --bg: #ffffff; --line: #e6e6e6; --accent: #1f5eff; --warn-bg: #fff7ed; --warn-fg: #9a3412; --warn-line: #fed7aa; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg); }
+  .app { display: flex; flex-direction: column; height: 100%; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0; }
+  header .who { margin-left: auto; color: var(--mute); }
+  .banner { padding: 10px 16px; background: var(--warn-bg); color: var(--warn-fg); border-bottom: 1px solid var(--warn-line); }
+  .banner[hidden] { display: none; }
+  main { flex: 1; min-height: 0; overflow: auto; padding: 16px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--mute); font-weight: 600; }
+  button { font: inherit; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: #fff; cursor: pointer; }
+  button:hover { background: #f5f5f5; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .mute { color: var(--mute); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1 id="title">My IMP app</h1>
+    <span class="who" id="who">Connecting to the IMP …</span>
+  </header>
+  <div class="banner" id="banner" hidden></div>
+  <main id="main"><p class="mute" id="status">Waiting for the IMP to confirm who you are …</p></main>
+</div>
+<script>
+(function () {
+  "use strict";
+  var V = 1;
+
+  /* ---------------------------------------------------------------------
+   * identity — the artifact's half of the handshake (see references/identity-handshake.md)
+   * ------------------------------------------------------------------- */
+  function asGrant(d) {
+    if (!d || d.type !== "exulu:identity:grant" || d.v !== V) return null;
+    if (typeof d.token !== "string" || typeof d.backendOrigin !== "string") return null;
+    if (typeof d.user !== "object" || d.user === null) return null;
+    return { token: d.token, backendOrigin: d.backendOrigin, user: d.user };
+  }
+  function isDenied(d) { return !!d && d.type === "exulu:identity:denied" && d.v === V; }
+
+  // One refresh round-trip on the established port. Callers single-flight this.
+  function refreshOver(port) {
+    return new Promise(function (resolve) {
+      var done = false;
+      function settle(r) { if (!done) { done = true; clearTimeout(timer); resolve(r); } }
+      var timer = setTimeout(function () { settle({ ok: false, reason: "timeout" }); }, 10000);
+      port.onmessage = function (e) {
+        var g = asGrant(e.data);
+        if (g) return settle({ ok: true, grant: g });
+        if (isDenied(e.data)) settle({ ok: false, reason: String(e.data.reason) });
+      };
+      port.postMessage({ type: "exulu:identity:refresh", v: V });
+    });
+  }
+
+  function requestIdentity(timeoutMs, retryMs) {
+    return new Promise(function (resolve, reject) {
+      var settled = false, port = null, retry = null;
+      function stop() { clearTimeout(timer); if (retry) clearInterval(retry); window.removeEventListener("message", onMessage); }
+      function finish(fn) { if (settled) return; settled = true; stop(); fn(); }
+      var timer = setTimeout(function () { finish(function () { reject(new Error("No answer from the IMP (identity timeout).")); }); }, timeoutMs);
+      function onPort(e) {
+        var g = asGrant(e.data);
+        if (g) return finish(function () { resolve({ grant: g, refresh: function () { return refreshOver(port); } }); });
+        if (isDenied(e.data)) finish(function () { reject(new Error("Identity denied: " + String(e.data.reason))); });
+      }
+      function onMessage(e) {
+        if (!e.data || e.data.type !== "exulu:identity:channel" || e.data.v !== V) return;
+        var p = e.ports && e.ports[0];
+        if (!p) return;
+        port = p;
+        p.onmessage = onPort;
+        if (p.start) p.start();
+      }
+      // Listener FIRST (the parent answers once per frame load), then ask and
+      // keep asking: the parent's listener appears only after the IMP page hydrated.
+      window.addEventListener("message", onMessage);
+      function ask() { window.parent.postMessage({ type: "exulu:identity:request", v: V }, "*"); }
+      ask();
+      retry = setInterval(function () { if (!settled) ask(); }, retryMs);
+    });
+  }
+
+  // Development only: opened as the top window with #backend=…&token=… in the URL.
+  function devSession() {
+    if (window.parent !== window) return null;
+    var h = {};
+    location.hash.replace(/^#/, "").split("&").forEach(function (kv) {
+      var i = kv.indexOf("="); if (i > 0) h[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1));
+    });
+    if (!h.backend || !h.token) return null;
+    return { grant: { token: h.token, backendOrigin: h.backend.replace(/\/+$/, ""), user: { email: null, name: "dev" } },
+             refresh: function () { return Promise.resolve({ ok: false, reason: "no refresh in dev mode" }); } };
+  }
+
+  /* ---------------------------------------------------------------------
+   * client — GraphQL over the grant, one refresh per auth failure, single-flighted
+   * ------------------------------------------------------------------- */
+  function SessionLost(message) { this.name = "SessionLost"; this.message = message || "Session expired. Please reload the IMP tab."; }
+  SessionLost.prototype = Object.create(Error.prototype);
+
+  function isAuthFailure(status, body) {
+    if (status === 401) return true;
+    if (status !== 500) return false;
+    var errs = body && body.errors;
+    return Array.isArray(errs) && errs.some(function (e) { return e && typeof e.message === "string" && e.message.indexOf("Context creation failed") >= 0; });
+  }
+
+  function createClient(session) {
+    var grant = session.grant, refreshing = null;
+    function once(query, variables) {
+      return fetch(grant.backendOrigin + "/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer " + grant.token },
+        body: JSON.stringify({ query: query, variables: variables || {} })
+      }).then(function (r) { return r.json().catch(function () { return null; }).then(function (body) { return { status: r.status, body: body }; }); });
+    }
+    function unwrap(r) {
+      if (r.status >= 400) throw new Error("GraphQL HTTP " + r.status);
+      var errs = r.body && r.body.errors;
+      if (errs && errs.length) throw new Error(errs.map(function (e) { return e.message; }).join("; "));
+      return r.body.data;
+    }
+    function request(query, variables) {
+      return once(query, variables).then(function (r) {
+        if (!isAuthFailure(r.status, r.body)) return unwrap(r);
+        if (!refreshing) {
+          refreshing = session.refresh().then(function (res) {
+            refreshing = null;
+            if (!res.ok) throw new SessionLost();
+            grant = res.grant;
+          }, function (err) { refreshing = null; throw err; });
+        }
+        return refreshing.then(function () { return once(query, variables); }).then(function (r2) {
+          if (isAuthFailure(r2.status, r2.body)) throw new SessionLost();
+          return unwrap(r2);
+        });
+      });
+    }
+    return {
+      request: request,
+      origin: function () { return grant.backendOrigin; },
+      token: function () { return grant.token; },
+      user: grant.user
+    };
+  }
+
+  /* ---------------------------------------------------------------------
+   * app — replace render() with your screens; keep the states
+   * ------------------------------------------------------------------- */
+  var el = { who: document.getElementById("who"), banner: document.getElementById("banner"), main: document.getElementById("main") };
+  function showBanner(text) { el.banner.textContent = text; el.banner.hidden = false; }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]; }); }
+
+  // Set to a context id (e.g. "tenders") to list its newest rows as a smoke test.
+  var DEMO_CONTEXT = null;
+
+  function render(client) {
+    el.who.textContent = client.user.name || client.user.email || "signed in";
+    if (!DEMO_CONTEXT) {
+      el.main.innerHTML = '<p>Connected to <code>' + esc(client.origin()) + '</code>. Replace <code>render()</code> with your screens.</p>';
+      return;
+    }
+    el.main.innerHTML = '<p class="mute">Loading …</p>';
+    var q = "query ($limit: Int) { " + DEMO_CONTEXT + "_itemsPagination(limit: $limit, page: 1, sort: { field: \"createdAt\", direction: DESC }) { pageInfo { itemCount } items { id name createdAt } } }";
+    client.request(q, { limit: 20 }).then(function (data) {
+      var page = data[DEMO_CONTEXT + "_itemsPagination"];
+      if (!page.items.length) { el.main.innerHTML = '<p class="mute">No rows you can read in <code>' + esc(DEMO_CONTEXT) + '</code>.</p>'; return; }
+      el.main.innerHTML = '<p class="mute">' + page.pageInfo.itemCount + ' rows</p><table><thead><tr><th>Name</th><th>Created</th><th>Id</th></tr></thead><tbody>' +
+        page.items.map(function (r) { return '<tr><td>' + esc(r.name) + '</td><td>' + esc(String(r.createdAt).slice(0, 10)) + '</td><td><code>' + esc(r.id) + '</code></td></tr>'; }).join("") +
+        '</tbody></table>';
+    }).catch(fail);
+  }
+
+  function fail(err) {
+    if (err instanceof SessionLost) { showBanner(err.message); return; }
+    el.main.innerHTML = '<p>Something went wrong: ' + esc(err && err.message ? err.message : err) + '</p>';
+  }
+
+  function start() {
+    var dev = devSession();
+    (dev ? Promise.resolve(dev) : requestIdentity(10000, 300)).then(function (session) {
+      var client = createClient(session);   // ONE client per page
+      render(client);
+    }).catch(function (err) {
+      el.who.textContent = "not signed in";
+      el.main.innerHTML = '<p>This app could not confirm who you are: ' + esc(err.message) + '</p><p class="mute">Reload the IMP tab. If it persists, the artifact was not published for logged-in users.</p>';
+    });
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
+})();
+</script>
+</body>
+</html>

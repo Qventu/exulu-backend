@@ -17,23 +17,21 @@ IMP distinguishes two kinds of agent capability:
 
 ## The Tools & skills section
 
-In the [workbench](/building/agents/workbench), open the **Tools & skills** section. The toolbar has:
-
-- **Search** — filter by name or description ("Search tools by name or description…").
-- **Category filter** — narrow to a single category (default "All categories"). Only categories present on this deployment appear.
-- **Clear filters** (×) — resets search and category together.
-- **Expand all / Collapse all** — open or close every category accordion.
-- **Result count** — "`{n}` tool(s) found" when a filter is active, "`{n}` tool(s) available" when showing all.
-
-Tools are grouped by category in an accordion. Each tool row shows the tool name, description, and an enable toggle.
+The section shows only what the agent has: three groups — **Sub-agents**,
+**Skills** and **Tools** — each with a count, the enabled entries, and an
+**Add …** button. A tool row keeps its configure and info buttons; the switch
+or the remove button takes it off the agent. A group without entries shows
+what the button would add.
 
 ## Enabling a tool
 
-Toggle the switch on a tool row to enable it for this agent. For tools with required parameters, IMP automatically opens the **Configuration** sheet the moment you enable the tool so you can fill in the bindings immediately — the tool stays enabled even if you close the sheet before configuring, but it won't work until all required parameters have values.
-
-<Note>
-A tool that has required parameters but no bindings set will not function at runtime. Check the configuration sheet for any tool the agent uses that produces unexpected errors.
-</Note>
+Click **Add tools** (or **Add sub-agents**, **Add skills**). The picker lists
+the instance's catalogue: search by name, description or category, narrow
+tools by category with the chips, tick what you want, and confirm with
+**Add N**. Entries the agent already has are shown ticked and cannot be added
+twice. When exactly one added tool needs configuration, its configuration
+sheet opens right away; otherwise the rows carry a "needs configuration"
+badge until you fill them in.
 
 ## Per-tool configuration
 
@@ -66,7 +64,7 @@ You can reopen the configuration sheet at any time by clicking the **Configure**
 
 ## Knowledge base editor
 
-The **Knowledge base editor** is a built-in tool in the **default** category. Enabling it lets the agent create and update items in selected knowledge bases during chat.
+The **Knowledge base editor** is a built-in tool in the **default** category. Enabling it lets the agent create and update items in selected knowledge bases during chat, including attaching documents from the session files to file fields.
 
 When you enable the tool, IMP opens a custom configuration sheet instead of the standard parameter form. The sheet lists every knowledge context in the deployment; check a context to grant the agent write access to it. For each checked context, two switches appear:
 
@@ -88,7 +86,38 @@ The KB editor enforces multiple independent gates before any write reaches the d
 1. **Explicit per-context opt-in** — a context is writable only if the agent's configuration sheet explicitly enables it with at least one of Create or Update.
 2. **Row-level write access** — for update calls, the platform checks whether the active user has write access to that specific item (matching the item's `rights_mode` — public, private, users, roles, or teams). Items the user cannot write are silently reported as not found to avoid probing.
 3. **Guest refusal** — write tools require an authenticated user. Anonymous guest sessions receive a hard refusal; no DB call is made.
-4. **Schema exclusions** — the following field types are never exposed in the tool schema: `file`, `uuid` (reference fields), `calculated` fields, fields marked `editable: false`, and `hidden` fields. Reserved internal parameter names are also excluded.
+4. **Schema exclusions** — the following are never exposed in the tool schema: `uuid` (reference fields), `calculated` fields, fields marked `editable: false`, and `hidden` fields. Reserved internal parameter names are also excluded.
+5. **Files only from the session** — a `file` field takes the name of a file from the conversation's session files. The platform checks the field's allowed types, copies the object into the user's own upload storage (the same shape the upload dialog produces), and stores that key; the knowledge base's processor and embeddings then run as they do for an upload from the UI. The agent cannot attach a file by URL or by path.
+
+## Skill author
+
+The **Skill author** is a built-in tool in the **default** category. Enabling
+it lets the agent turn a procedure the user just completed into a skill in the
+instance's library, or publish a new version of a skill the user may write.
+The agent gets four tools: `skill_list` and `skill_read` (what exists),
+`skill_create` and `skill_update`. Its configuration has three switches:
+**Create**, **Update**, and **Skip approval**.
+
+A system-prompt block comes with the tool. It tells the agent to offer a skill
+only after complex, multi-step work that is likely to recur — typically work
+that produced files, documents, code or a structured analysis, or a
+multi-step retrieval the user runs regularly — and never for a single question
+against a knowledge base or a one-off correction, which belongs in memory.
+
+Creating or updating a skill shows a card in the chat, like a memory
+proposal: the user can change the name and the description, sees the files
+the agent proposes, chooses who may use the skill (private, public, or a
+scope of users, roles or teams), and — when they may edit the current agent —
+ticks **Enable it on this agent**. Nothing is written before they confirm.
+After a successful create or update the card offers **Reload skills**, which
+re-installs the agent's skills into the live sandbox so the new version is
+usable in the same conversation; otherwise it loads with the next turn.
+
+<Note>
+An update always publishes a new version: unchanged files carry over, the
+files in the proposal replace or add, and listed paths are removed. Earlier
+versions stay available on the skill's page.
+</Note>
 
 ## Sub-agents as tools
 
