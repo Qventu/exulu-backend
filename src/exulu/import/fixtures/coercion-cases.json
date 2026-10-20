@@ -60,5 +60,19 @@
     "field": { "name": "f", "type": "shortText" },
     "raw": "  spaced  ",
     "expect": { "value": "  spaced  " }
-  }
+  },
+
+  {
+    "field": { "name": "f", "type": "json" },
+    "raw": "{\"a\":1}",
+    "expect": { "value": "{\"a\":1}" }
+  },
+  { "field": { "name": "f", "type": "json" }, "raw": "{nope", "expect": { "error": "json" } },
+
+  {
+    "field": { "name": "f", "type": "uuid" },
+    "raw": "123e4567-e89b-12d3-a456-426614174000",
+    "expect": { "value": "123e4567-e89b-12d3-a456-426614174000" }
+  },
+  { "field": { "name": "f", "type": "uuid" }, "raw": "nope", "expect": { "error": "uuid" } }
 ]

@@ -19,13 +19,13 @@ function err(raw: string, code: string, params?: Record<string, string>): Import
  * Coerce a raw CSV cell to the field's value type. Never throws -- invalid
  * input comes back as a cell with `error` set and `value: null`.
  *
- * Ported from frontend/lib/import/coerce.ts, scoped to the types this server
- * path imports: number, boolean, enum, date, and the textual types. File
- * cells are excluded entirely -- importFieldsFor never produces a field of
- * type "file" here, since there is no local file to upload against a
- * streamed server-side import. Any other field type (json, uuid, and future
- * types) degrades to a plain text passthrough, same as the frontend does for
- * types it does not recognize.
+ * Ported from frontend/lib/import/coerce.ts. The server validates exactly as
+ * the browser preview does (same outcomes, same error codes) for every type
+ * except "file": file cells are excluded entirely, since importFieldsFor
+ * never produces a field of type "file" here -- there is no local file to
+ * upload against a streamed server-side import. Any other, truly unknown
+ * field type degrades to a plain text passthrough, same as the frontend does
+ * for types it does not recognize.
  */
 export function coerceValue(field: ImportField, raw: string): ImportCell {
   const trimmed = raw.trim();
@@ -69,6 +69,19 @@ export function coerceValue(field: ImportField, raw: string): ImportCell {
       return Number.isNaN(Date.parse(trimmed))
         ? err(raw, "date")
         : { raw, value: new Date(trimmed).toISOString() };
+    }
+    case "json": {
+      try {
+        JSON.parse(trimmed);
+        return { raw, value: trimmed };
+      } catch {
+        return err(raw, "json");
+      }
+    }
+    case "uuid": {
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)
+        ? { raw, value: trimmed }
+        : err(raw, "uuid");
     }
     default:
       return { raw, value: raw };
