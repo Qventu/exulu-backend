@@ -189,4 +189,75 @@ describe("runImport", () => {
     expect(d.uploadErrorReport).not.toHaveBeenCalled();
     expect(result.errorReportKey).toBeNull();
   });
+
+  it("fix 1: a throwing canWrite fails only that row; the run completes with the message in the error report", async () => {
+    const csv = "name,external_id,qty\nGood,G1,1\nThrows,T1,2\n";
+    const existing = (id: string, externalId: string): ExistingRow => ({
+      id,
+      external_id: externalId,
+      rights_mode: "public",
+      created_by: null,
+    });
+    const d = deps(csv, {
+      lookupExisting: jest.fn(async () => [existing("id-G1", "G1"), existing("id-T1", "T1")]),
+      canWrite: jest.fn((row: ExistingRow) => {
+        if (row.id === "id-T1") throw new Error("canWrite boom");
+        return true;
+      }),
+    });
+
+    const result = await runImport(d);
+
+    expect(result.failed).toBe(1);
+    expect(result.updated).toBe(1);
+    expect(d.updateItem).toHaveBeenCalledTimes(1);
+    expect(d.uploadErrorReport).toHaveBeenCalledWith(expect.stringContaining("canWrite boom"));
+  });
+
+  it("fix 1: a throwing lookupExisting fails every row of that chunk; the next chunk still runs", async () => {
+    const csv = "name,external_id,qty\nA,X1,1\nB,X2,2\nC,X3,3\nD,X4,4\n";
+    let calls = 0;
+    const lookupExisting = jest.fn(async () => {
+      calls++;
+      if (calls === 1) throw new Error("db down");
+      return [];
+    });
+    const d = deps(csv, { chunkRows: 2, lookupExisting });
+
+    const result = await runImport(d);
+
+    expect(result.failed).toBe(2);
+    expect(result.created).toBe(2);
+    expect(d.createItem).toHaveBeenCalledTimes(2);
+    expect(d.uploadErrorReport).toHaveBeenCalledWith(expect.stringContaining("db down"));
+  });
+
+  it("fix 2: caps retained error lines at maxErrorLines, adding a truncation marker and flag", async () => {
+    const csv = "name,external_id,qty\nR1,E1,abc\nR2,E2,abc\nR3,E3,abc\nR4,E4,abc\n";
+    const d = deps(csv, { maxErrorLines: 2 });
+
+    const result = await runImport(d);
+
+    expect(result.invalid).toBe(4);
+    expect(result.errorReportTruncated).toBe(true);
+    expect(d.uploadErrorReport).toHaveBeenCalledWith(
+      "﻿name,external_id,qty,import_error\nR1,E1,abc,qty:number\nR2,E2,abc,qty:number\n…,,,truncated: 2 more rows not listed",
+    );
+  });
+
+  it("fix 3: does not consult isCancelRequested after the trailing partial chunk", async () => {
+    const csv = "name,external_id,qty\nA,,1\nB,,2\nC,,3\nD,,4\nE,,5\n";
+    let calls = 0;
+    const isCancelRequested = jest.fn(async () => {
+      calls++;
+      return calls >= 3;
+    });
+    const d = deps(csv, { chunkRows: 2, isCancelRequested });
+
+    const result = await runImport(d);
+
+    expect(result.processed).toBe(5);
+    expect(result.cancelled).toBe(false);
+    expect(isCancelRequested).toHaveBeenCalledTimes(2);
+  });
 });

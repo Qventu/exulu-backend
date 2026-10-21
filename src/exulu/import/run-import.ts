@@ -26,6 +26,8 @@ export type RunImportResult = ProgressMetadata & {
   durationMs: number;
   errorReportKey: string | null;
   cancelled: boolean;
+  /** True when more rows were flagged than `maxErrorLines` retained -- the report ends with a `truncated: N more rows not listed` marker line. */
+  errorReportTruncated: boolean;
 };
 
 /**
@@ -55,6 +57,8 @@ export type RunImportDeps = {
   progressIntervalMs?: number;
   /** Carried straight into `ProgressMetadata.total`; `null` when the caller does not know the row count up front. */
   total?: number | null;
+  /** Overrides `IMPORT_MAX_ERROR_LINES` -- mainly for tests. */
+  maxErrorLines?: number;
 };
 
 const ABORT_MESSAGES: Record<"NO_MAPPABLE_COLUMNS" | "EMPTY_FILE", string> = {
@@ -72,6 +76,9 @@ export class ImportAbort extends Error {
 const DEFAULT_CHUNK_ROWS = 500;
 const DEFAULT_CONCURRENCY = 8;
 const DEFAULT_PROGRESS_INTERVAL_MS = 10_000;
+
+/** Cap on retained error-report lines: beyond this, errors are still counted but not kept in memory. */
+export const IMPORT_MAX_ERROR_LINES = 50_000;
 
 /** Internal signal thrown from `onRow` to stop the parser right after a cancellation is observed. */
 class RunCancelled extends Error {}
@@ -122,6 +129,7 @@ export async function runImport(deps: RunImportDeps): Promise<RunImportResult> {
   const chunkRows = deps.chunkRows ?? DEFAULT_CHUNK_ROWS;
   const concurrency = deps.concurrency ?? DEFAULT_CONCURRENCY;
   const progressIntervalMs = deps.progressIntervalMs ?? DEFAULT_PROGRESS_INTERVAL_MS;
+  const maxErrorLines = deps.maxErrorLines ?? IMPORT_MAX_ERROR_LINES;
   const startedAt = now();
 
   const metadata: ProgressMetadata = {
@@ -138,13 +146,19 @@ export async function runImport(deps: RunImportDeps): Promise<RunImportResult> {
   let headerCells: string[] = [];
   let byIndex: Array<string | null> = [];
   const errorLines: string[] = [];
+  let truncatedErrorCount = 0;
   const seenIds = new Set<string>();
   const seenExternalIds = new Set<string>();
   let buffer: BufferedRow[] = [];
   let lastTickAt = startedAt;
 
+  /** Retains up to `maxErrorLines`; beyond the cap, errors still count in the metadata but are not kept in memory. */
   function pushErrorLine(cells: string[], message: string): void {
-    errorLines.push(csvLine([...cells, message]));
+    if (errorLines.length < maxErrorLines) {
+      errorLines.push(csvLine([...cells, message]));
+    } else {
+      truncatedErrorCount++;
+    }
   }
 
   async function runCreate(row: ImportRow, cells: string[]): Promise<void> {
@@ -158,7 +172,15 @@ export async function runImport(deps: RunImportDeps): Promise<RunImportResult> {
   }
 
   async function runUpdate(existing: ExistingRow, row: ImportRow, cells: string[]): Promise<void> {
-    if (!deps.canWrite(existing)) {
+    let allowed: boolean;
+    try {
+      allowed = deps.canWrite(existing);
+    } catch (e) {
+      metadata.failed++;
+      pushErrorLine(cells, e instanceof Error ? e.message : String(e));
+      return;
+    }
+    if (!allowed) {
       metadata.failed++;
       pushErrorLine(cells, "no write access");
       return;
@@ -179,34 +201,58 @@ export async function runImport(deps: RunImportDeps): Promise<RunImportResult> {
     const toUpdate: Array<{ row: ImportRow; by: "id" | "external_id"; key: string; cells: string[] }> = [];
 
     for (const { index, cells } of chunk) {
-      const row = buildRow(index, cells, byIndex, deps.fields);
       metadata.processed++;
-      if (!rowIsValid(row)) {
-        metadata.invalid++;
-        pushErrorLine(cells, row.errors.join("; "));
-        continue;
+      // buildRow/rowAction are caller-supplied-data-driven but still fallible (e.g. an
+      // unexpected field shape) -- a throw here fails just this row, not the whole run.
+      try {
+        const row = buildRow(index, cells, byIndex, deps.fields);
+        if (!rowIsValid(row)) {
+          metadata.invalid++;
+          pushErrorLine(cells, row.errors.join("; "));
+          continue;
+        }
+        const action = rowAction(row);
+        if (action.action === "create") {
+          toCreate.push({ row, cells });
+          continue;
+        }
+        // Duplicate keys within one import: a later row reusing an id/external_id
+        // already seen in this run is invalid, not written.
+        const seen = action.by === "id" ? seenIds : seenExternalIds;
+        if (seen.has(action.key)) {
+          metadata.invalid++;
+          pushErrorLine(cells, `duplicateKey:${action.by}`);
+          continue;
+        }
+        seen.add(action.key);
+        toUpdate.push({ row, by: action.by, key: action.key, cells });
+      } catch (e) {
+        metadata.failed++;
+        pushErrorLine(cells, e instanceof Error ? e.message : String(e));
       }
-      const action = rowAction(row);
-      if (action.action === "create") {
-        toCreate.push({ row, cells });
-        continue;
-      }
-      // Duplicate keys within one import: a later row reusing an id/external_id
-      // already seen in this run is invalid, not written.
-      const seen = action.by === "id" ? seenIds : seenExternalIds;
-      if (seen.has(action.key)) {
-        metadata.invalid++;
-        pushErrorLine(cells, `duplicateKey:${action.by}`);
-        continue;
-      }
-      seen.add(action.key);
-      toUpdate.push({ row, by: action.by, key: action.key, cells });
     }
 
     const ids = toUpdate.filter((u) => u.by === "id").map((u) => u.key);
     const externalIds = toUpdate.filter((u) => u.by === "external_id").map((u) => u.key);
-    const existingRows =
-      ids.length > 0 || externalIds.length > 0 ? await deps.lookupExisting(ids, externalIds) : [];
+
+    let existingRows: ExistingRow[];
+    try {
+      existingRows =
+        ids.length > 0 || externalIds.length > 0 ? await deps.lookupExisting(ids, externalIds) : [];
+    } catch (e) {
+      // A lookup failure for this chunk means none of its would-be-written rows can be
+      // classified hit/miss -- fail them all with the message and let the next chunk run.
+      const message = e instanceof Error ? e.message : String(e);
+      for (const { cells } of toCreate) {
+        metadata.failed++;
+        pushErrorLine(cells, message);
+      }
+      for (const u of toUpdate) {
+        metadata.failed++;
+        pushErrorLine(u.cells, message);
+      }
+      return;
+    }
     const byId = new Map(existingRows.map((r) => [r.id, r] as const));
     const byExternalId = new Map(
       existingRows.filter((r) => r.external_id != null).map((r) => [r.external_id as string, r] as const),
@@ -267,19 +313,24 @@ export async function runImport(deps: RunImportDeps): Promise<RunImportResult> {
     throw new ImportAbort("EMPTY_FILE");
   }
 
+  // The trailing partial chunk is the last thing to read -- there is nothing left to
+  // stop, so cancellation is not consulted again after it (ruling: the run completes).
   if (!cancelled && buffer.length > 0) {
     const chunk = buffer;
     buffer = [];
     await processChunk(chunk);
     await tick();
-    if (await deps.isCancelRequested()) {
-      cancelled = true;
-    }
   }
 
+  const errorReportTruncated = truncatedErrorCount > 0;
   let errorReportKey: string | null = null;
-  if (errorLines.length > 0) {
-    const csv = "﻿" + [csvLine([...headerCells, "import_error"]), ...errorLines].join("\n");
+  if (errorLines.length > 0 || errorReportTruncated) {
+    const lines = [csvLine([...headerCells, "import_error"]), ...errorLines];
+    if (errorReportTruncated) {
+      const markerPadding = Array(Math.max(headerCells.length - 1, 0)).fill("");
+      lines.push(csvLine(["…", ...markerPadding, `truncated: ${truncatedErrorCount} more rows not listed`]));
+    }
+    const csv = "﻿" + lines.join("\n");
     errorReportKey = await deps.uploadErrorReport(csv);
   }
 
@@ -293,5 +344,6 @@ export async function runImport(deps: RunImportDeps): Promise<RunImportResult> {
     durationMs: now() - startedAt,
     errorReportKey,
     cancelled,
+    errorReportTruncated,
   };
 }
