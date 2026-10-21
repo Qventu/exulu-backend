@@ -201,7 +201,7 @@ function parseMetadata(value: unknown): Record<string, any> {
  * already in the column, everything else (notably `cancelRequested`, set by
  * the Cancel mutation outside the run loop) is left untouched.
  */
-function mergeMetadataRaw(db: any, patch: Record<string, unknown>): unknown {
+export function mergeMetadataRaw(db: any, patch: Record<string, unknown>): unknown {
   return db.raw("coalesce(metadata, '{}'::jsonb) || ?::jsonb", [JSON.stringify(patch)]);
 }
 

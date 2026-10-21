@@ -783,6 +783,8 @@ export function createSDL(
       mutationDefs += `
     ${tableNameSingular}GenerateChunks(where: [Filter${tableNameSingularUpperCaseFirst}], limit: Int): ${tableNameSingular}GenerateChunksReturnPayload
     ${tableNameSingular}ExecuteSource(source: ID!, inputs: JSON!): ${tableNameSingular}ExecuteSourceReturnPayload
+    ${tableNameSingular}StartImport(input: StartImportInput!): StartImportPayload
+    ${tableNameSingular}CancelImport(jobResultId: ID!): CancelImportPayload
     ${tableNameSingular}DeleteChunks(where: [Filter${tableNameSingularUpperCaseFirst}], limit: Int): ${tableNameSingular}DeleteChunksReturnPayload
     ${tableNameSingular}BackfillEntities(onlyStale: Boolean, limit: Int): ${tableNameSingular}EntityBackfillPayload
     ${tableNameSingular}PurgeEntityType(type: String!): ${tableNameSingular}EntityPurgePayload
@@ -822,6 +824,39 @@ export function createSDL(
         message: String!
         jobs: [String!]
         items: [String!]
+    }
+
+    input StartImportMappingInput {
+        header: String!
+        fieldName: String
+    }
+
+    input StartImportAccessInput {
+        rights_mode: String!
+        users: JSON
+        roles: JSON
+        teams: JSON
+    }
+
+    input StartImportOptionsInput {
+        skipEmbeddings: Boolean
+    }
+
+    input StartImportInput {
+        s3Key: String!
+        fileName: String!
+        mapping: [StartImportMappingInput!]
+        access: StartImportAccessInput!
+        options: StartImportOptionsInput
+        totalRows: Int
+    }
+
+    type StartImportPayload {
+        jobResultId: ID!
+    }
+
+    type CancelImportPayload {
+        ok: Boolean!
     }
 
     type ${tableNameSingular}ProcessItemFieldReturnPayload {
