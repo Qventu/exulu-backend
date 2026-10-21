@@ -16,6 +16,7 @@ import { checkLicense } from "@EE/entitlements";
 export const global_queues = {
   eval_runs: "eval_runs",
   email_intake: "email_intake",
+  import: "import",
 };
 
 // Used for workflows and embedders

@@ -42,6 +42,11 @@ import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
 import { casJobResultState, parseRunMetadata, upsertWorkflowRunStart } from "@SRC/exulu/routines/run-state.ts";
 import { findLiteLLMModel } from "@SRC/exulu/litellm/catalog.ts";
 import { computeRunCostUsd } from "@SRC/exulu/routines/run-cost.ts";
+import { getS3ObjectStream } from "@SRC/uppy";
+import { runImport, ImportAbort } from "@SRC/exulu/import/run-import.ts";
+import { buildWorkerDeps } from "@SRC/exulu/import/worker-deps.ts";
+import { importFieldsFor } from "@SRC/exulu/import/mapping.ts";
+import type { ImportJobData } from "@EXULU_TYPES/queue-config.ts";
 
 /**
  * Session-backed runs persist messages at each step boundary, so retries must
@@ -209,9 +214,9 @@ export const createWorkers = async (
           type: bullmqJob.data.type,
         });
 
-        // For long-running processor jobs, set up progress heartbeat to prevent stalling
+        // For long-running processor/import jobs, set up progress heartbeat to prevent stalling
         let progressInterval: NodeJS.Timeout | undefined;
-        if (bullmqJob.data.type === "processor") {
+        if (bullmqJob.data.type === "processor" || bullmqJob.data.type === "import") {
           // Update progress every 25 seconds to keep the job alive
           // This prevents BullMQ from marking the job as stalled during long-running operations
           progressInterval = setInterval(async () => {
@@ -1107,6 +1112,131 @@ export const createWorkers = async (
                   items,
                 },
               };
+            }
+
+            if (data.type === "import") {
+              console.log("[EXULU] running a server-side bulk import job.", bullmqJob.name);
+
+              if (!data.jobResultId) {
+                throw new Error(`No jobResultId set for import job ${bullmqJob.id}.`);
+              }
+              if (!data.context) {
+                throw new Error(`No context id set for import job ${bullmqJob.id}.`);
+              }
+              // Narrowed, exact shape of this job type's data (types/queue-config.ts)
+              // now that the two required fields above are confirmed present.
+              const importData: ImportJobData = {
+                type: "import",
+                jobResultId: data.jobResultId,
+                context: data.context,
+                user: data.user,
+                role: data.role,
+              };
+              const jobResultId = importData.jobResultId;
+
+              // The StartImport mutation (Task 5) inserts this row (state
+              // "waiting", job_id = its own id) before enqueuing -- load it by
+              // jobResultId (== job_id == bullmqJob.id) for its trigger_metadata
+              // (s3Key/mapping/access/options/user) and current metadata.
+              const row = await db
+                .from("job_results")
+                .where({ id: jobResultId })
+                .first();
+              if (!row) {
+                throw new Error(
+                  `job_results row ${jobResultId} not found for import job ${bullmqJob.id}.`,
+                );
+              }
+
+              // Moves the row to "active" (CAS-free: the row is keyed by
+              // job_id, owned by this one worker pickup).
+              await upsertJobStart(db, bullmqJob, row.label, "import");
+
+              const context = contexts.find((c) => c.id === importData.context);
+              if (!context) {
+                throw new Error(`Context ${importData.context} not found in the registry.`);
+              }
+
+              const triggerMetadata = parseRunMetadata(row.trigger_metadata) as {
+                s3Key?: string;
+                fileName?: string;
+                mapping?: any;
+                access?: any;
+                options?: { skipEmbeddings?: boolean };
+                user?: { id: number; super_admin?: boolean; role?: unknown };
+              };
+              if (!triggerMetadata.s3Key) {
+                throw new Error(
+                  `No s3Key recorded on job_results row ${jobResultId} for import job.`,
+                );
+              }
+              if (!triggerMetadata.access) {
+                throw new Error(
+                  `No batch access recorded on job_results row ${jobResultId} for import job.`,
+                );
+              }
+
+              // trigger_metadata.user is a snapshot of the acting user (id,
+              // super_admin, role) taken at StartImport time -- the top-level
+              // importData.user/importData.role on the BullMQ job are plain
+              // ids/strings and do not carry super_admin, which canWrite needs.
+              const importUser =
+                triggerMetadata.user ?? { id: Number(importData.user), role: importData.role };
+              if (!importUser.id) {
+                throw new Error(`No acting user recorded for import job ${bullmqJob.id}.`);
+              }
+
+              // trigger_metadata.s3Key arrives in the frontend's "bucket/key"
+              // form (same as uploadFile's return value) -- getS3ObjectStream
+              // wants the bare key.
+              const bareS3Key = triggerMetadata.s3Key.slice(triggerMetadata.s3Key.indexOf("/") + 1);
+              const stream = await getS3ObjectStream(bareS3Key, config);
+
+              try {
+                const deps = buildWorkerDeps({
+                  db,
+                  config,
+                  context,
+                  contextId: importData.context,
+                  jobResultId,
+                  stream,
+                  fields: importFieldsFor(context.fields),
+                  mapping: triggerMetadata.mapping,
+                  access: triggerMetadata.access,
+                  options: triggerMetadata.options ?? {},
+                  user: importUser,
+                  log: (m: string) => console.log(`[EXULU] import ${jobResultId}: ${m}`),
+                });
+
+                const result = await runImport(deps);
+
+                if (result.cancelled) {
+                  // The completed handler's CAS only fires `WHERE state =
+                  // "active"` -- flip to "cancelled" here first so that CAS
+                  // no longer matches and the row's state stays "cancelled"
+                  // instead of being overwritten back to "completed".
+                  await casJobResultState(
+                    db,
+                    row.id,
+                    [JOB_STATUS_ENUM.active],
+                    JOB_STATUS_ENUM.cancelled,
+                  );
+                }
+
+                return { result, metadata: result };
+              } catch (error: unknown) {
+                if (error instanceof ImportAbort) {
+                  console.error(`[EXULU] import ${jobResultId} aborted: ${error.code}`);
+                }
+                throw error;
+              } finally {
+                // The worker owns the S3 stream's lifecycle -- csv-stream.ts
+                // only forwards a source error into the parser, it never
+                // destroys the source itself. Safe to call unconditionally:
+                // a stream already ended (full read) or already destroyed
+                // (prior error) is a no-op.
+                stream.destroy();
+              }
             }
 
             if (data.type === "email_intake") {

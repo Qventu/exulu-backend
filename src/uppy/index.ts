@@ -296,6 +296,34 @@ export const getS3ObjectContent = async (
 };
 
 /**
+ * Open a Node readable stream onto an S3 object, for large files that must
+ * not be buffered fully into memory (the server-side CSV bulk import --
+ * src/exulu/import/run-import.ts streams rows off this instead of loading
+ * the whole upload via getS3ObjectContent/getS3ObjectBytes). The caller owns
+ * the returned stream's lifecycle (destroy it on cancel/error) -- the return
+ * type keeps `destroy` alongside the plain NodeJS.ReadableStream surface so
+ * callers can tear it down without a cast.
+ */
+export const getS3ObjectStream = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<NodeJS.ReadableStream & { destroy: (error?: Error) => void }> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const bucket = config.fileUploads.s3Bucket;
+  const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+  const response = await client.send(command);
+  if (!response.Body) {
+    throw new Error(`Empty body for S3 key: ${key}`);
+  }
+  // In the Node.js runtime (as opposed to a browser/edge runtime), the AWS
+  // SDK v3 always resolves GetObjectCommand's Body to a Node Readable.
+  return response.Body as unknown as NodeJS.ReadableStream & { destroy: (error?: Error) => void };
+};
+
+/**
  * Fetch the ETag for an S3 object via HeadObject. Used as a cache key for
  * derived artefacts like the LibreOffice-rendered PDF preview — the ETag
  * changes whenever the object content changes, so cached derivations

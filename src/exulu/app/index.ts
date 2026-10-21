@@ -331,6 +331,20 @@ export class ExuluApp {
         5,
         300,
       );
+      // Server-side bulk import (CSV -> items): one job at a time, one
+      // context's import running per worker slot -- a bulk import already
+      // runs its own bounded concurrency pool internally (run-import.ts), so
+      // the queue just serializes whole import runs. 6h timeout covers a
+      // large file streamed + chunk-processed end to end.
+      ExuluQueues.register(
+        global_queues.import,
+        {
+          worker: 1,
+          queue: 1,
+        },
+        1,
+        6 * 3600,
+      );
 
       if (queues?.length) {
         // Custom provided queues
