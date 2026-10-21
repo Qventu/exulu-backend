@@ -18,6 +18,8 @@ import { finalizeRequestedFields } from "../utilities/sanitize-and-hydrate-field
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { deleteAgentSessionData } from "@SRC/exulu/routines/run-state.ts";
 import { queues as ExuluQueues } from "@EE/queues/queues";
+import { registerImportQueue } from "@EE/queues/import-queue";
+import { startImport, cancelImport, StartImportError } from "@SRC/exulu/import/start-import";
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
@@ -1173,6 +1175,113 @@ export function createMutations(
         jobs,
         items,
       };
+    };
+    // Any authenticated user may start/cancel a server-side bulk import for
+    // this context -- no super_admin gate (unlike ExecuteSource above):
+    // per-row write checks happen in the worker (worker-deps.ts's canWrite),
+    // not here. Both mutations share the same "import" queue handle, built
+    // once here rather than duplicating the { add, getJob } adapter in each
+    // resolver.
+    //
+    // Only `ExuluQueues.register(...)` itself throws the missing-licence
+    // error (ee/queues/queues.ts, a synchronous throw, reached here through
+    // registerImportQueue) -- that's the only failure QUEUES_NOT_LICENSED
+    // should ever mask. `.use()` throws
+    // separately (e.g. no Redis server configured, or a connection timeout)
+    // and must surface as-is: swallowing a real Redis outage behind
+    // "QUEUES_NOT_LICENSED" would send an operator chasing a licensing
+    // problem that doesn't exist.
+    const getImportQueue = async () => {
+      let registered;
+      try {
+        registered = registerImportQueue();
+      } catch (error: unknown) {
+        throw new Error("QUEUES_NOT_LICENSED");
+      }
+
+      let importQueue;
+      try {
+        importQueue = await registered.use();
+      } catch (error: unknown) {
+        console.error("[EXULU] import queue unavailable", error);
+        throw error;
+      }
+
+      return {
+        add: (name: string, data: unknown, opts: unknown) => importQueue.queue.add(name, data, opts as any),
+        getJob: (id: string) => importQueue.queue.getJob(id),
+      };
+    };
+    mutations[`${tableNameSingular}StartImport`] = async (_, args, context, info) => {
+      if (!context.user) {
+        throw new Error("NOT_AUTHORIZED");
+      }
+      // `ExuluTableDefinition.id` is optional (only context-backed tables
+      // carry one); startImport needs a real context id to key the gate,
+      // trigger_metadata and the item table off.
+      if (!table.id) {
+        throw new Error("CONTEXT_NOT_FOUND");
+      }
+
+      const queue = await getImportQueue();
+
+      try {
+        return await startImport(
+          {
+            db: context.db,
+            config,
+            queue,
+            user: context.user,
+            // Mirrors ExecuteSource's own `exists` lookup above, as a
+            // predicate rather than a one-shot find (start-import.ts needs
+            // it before it knows the id is even valid).
+            contextExists: (id: string) => contexts.some((c) => c.id === id),
+          },
+          {
+            contextId: table.id,
+            s3Key: args.input.s3Key,
+            fileName: args.input.fileName,
+            mapping: args.input.mapping,
+            access: args.input.access,
+            options: args.input.options,
+            // Runs-view provenance (same rule as the workflow-run resolver
+            // at src/graphql/schemas/index.ts:1964): API-key callers get
+            // "api", everyone else (UI session) gets "ui".
+            trigger: context.user.type === "api" ? "api" : "ui",
+            totalRows: args.input.totalRows,
+          },
+        );
+      } catch (error: unknown) {
+        if (error instanceof StartImportError) {
+          throw new Error(error.code);
+        }
+        throw error;
+      }
+    };
+    mutations[`${tableNameSingular}CancelImport`] = async (_, args, context, info) => {
+      if (!context.user) {
+        throw new Error("NOT_AUTHORIZED");
+      }
+
+      const queue = await getImportQueue();
+
+      try {
+        return await cancelImport(
+          {
+            db: context.db,
+            config,
+            queue,
+            user: context.user,
+            contextExists: (id: string) => contexts.some((c) => c.id === id),
+          },
+          args.jobResultId,
+        );
+      } catch (error: unknown) {
+        if (error instanceof StartImportError) {
+          throw new Error(error.code);
+        }
+        throw error;
+      }
     };
     mutations[`${tableNameSingular}GenerateChunks`] = async (_, args, context, info) => {
       // Dont need to validate write access here, as we limit it to super admin only.
