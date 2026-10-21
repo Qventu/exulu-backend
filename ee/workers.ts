@@ -1180,7 +1180,7 @@ export const createWorkers = async (
                 fileName?: string;
                 mapping?: any;
                 access?: any;
-                options?: { skipEmbeddings?: boolean };
+                options?: { skipEmbeddings?: boolean; delimiter?: string };
                 user?: unknown;
               };
               if (!triggerMetadata.s3Key) {

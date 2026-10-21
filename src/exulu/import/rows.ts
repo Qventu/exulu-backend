@@ -112,12 +112,28 @@ function cellValues(row: ImportRow): Record<string, unknown> {
   return input;
 }
 
-/** The grant payload `handleRBACUpdate` (ee/rbac-update.ts) expects. */
+/**
+ * The grant payload `handleRBACUpdate` (ee/rbac-update.ts) expects: all three
+ * lists always present and always arrays. `handleRBACUpdate` destructures
+ * them with `= []` defaults, and a default does NOT apply to `null` -- so a
+ * `null` list reaching it throws `null.map is not a function` and fails every
+ * create row of a grant-mode import.
+ */
 export type RbacGrantInput = {
-  users?: BatchAccess["users"];
-  roles?: BatchAccess["roles"];
-  teams?: BatchAccess["teams"];
+  users: NonNullable<BatchAccess["users"]>;
+  roles: NonNullable<BatchAccess["roles"]>;
+  teams: NonNullable<BatchAccess["teams"]>;
 };
+
+/**
+ * Coerces one grant list to an array. The lists arrive from GraphQL `JSON`
+ * fields (`StartImportAccessInput.users/roles/teams`), where `null` is an
+ * ordinary value -- the operator notes' own example sends exactly that -- and
+ * an API caller can send anything at all.
+ */
+export function asGrantList<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
 
 /**
  * The batch's grant payload, for grant-based modes only (`private` and
@@ -138,7 +154,15 @@ export function rbacGrantsFor(access: BatchAccess): RbacGrantInput | undefined {
     access.rights_mode === "roles" ||
     access.rights_mode === "teams";
   if (!hasGrants) return undefined;
-  return { users: access.users, roles: access.roles, teams: access.teams };
+  // Normalised a second time (startImport already does it before storing the
+  // batch in trigger_metadata): this is the last point before the grants
+  // reach handleRBACUpdate, and a row of an import started before that
+  // normalisation existed would otherwise still carry a stored `null`.
+  return {
+    users: asGrantList(access.users),
+    roles: asGrantList(access.roles),
+    teams: asGrantList(access.teams),
+  };
 }
 
 /**

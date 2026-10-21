@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ExuluConfig } from "@SRC/exulu/app/index";
 import { serializeError } from "@SRC/utils/serialize-error";
 import type { ColumnMapping } from "./mapping";
+import { asGrantList } from "./rows";
 import type { BatchAccess } from "./rows";
 import { mergeMetadataRaw, parseMetadata } from "./worker-deps";
 import type { ImportUser } from "./worker-deps";
@@ -68,6 +69,7 @@ export class StartImportError extends Error {
       | "IMPORT_S3_KEY_OUTSIDE_BUCKET"
       | "IMPORT_S3_KEY_NOT_ALLOWED"
       | "INVALID_RIGHTS_MODE"
+      | "INVALID_DELIMITER"
       | "IMPORT_NOT_FOUND"
       | "NOT_AUTHORIZED",
   ) {
@@ -96,6 +98,28 @@ export async function startImport(
 
   if (!VALID_RIGHTS_MODES.includes(args.access.rights_mode)) {
     throw new StartImportError("INVALID_RIGHTS_MODE");
+  }
+
+  // The grant lists come in as GraphQL `JSON`, so `null` (what the operator
+  // notes' own example sends for the lists a batch does not use) and any
+  // other non-array shape are both possible. Normalise once, here, so
+  // trigger_metadata only ever stores arrays: handleRBACUpdate's `= []`
+  // destructuring defaults do not cover `null`, and a stored `null` would
+  // make it throw on `null.map(...)` and fail every create row of a
+  // users/roles/teams import.
+  const access: BatchAccess = {
+    ...args.access,
+    users: asGrantList(args.access.users),
+    roles: asGrantList(args.access.roles),
+    teams: asGrantList(args.access.teams),
+  };
+
+  // csv-parse rejects a delimiter that is not exactly one character
+  // (CSV_INVALID_OPTION_DELIMITER) -- but only once the worker has the file
+  // open, which would mark the whole run failed after the upload. Refuse it
+  // here instead, before anything is written or enqueued.
+  if (args.options?.delimiter != null && args.options.delimiter.length !== 1) {
+    throw new StartImportError("INVALID_DELIMITER");
   }
 
   // s3Key arrives in the frontend's "bucket/key" form (uploadFile's return
@@ -158,7 +182,7 @@ export async function startImport(
       s3Key: args.s3Key,
       fileName: args.fileName,
       mapping: args.mapping,
-      access: args.access,
+      access,
       options: args.options,
       user: userSnapshot,
     }),

@@ -276,6 +276,52 @@ describe("startImport", () => {
     const triggerMetadata = JSON.parse(calls["insert"]![0]![0].trigger_metadata);
     expect(triggerMetadata.options).toEqual({ skipEmbeddings: true, delimiter: ";" });
   });
+
+  it("N1: stores the batch's grant lists as arrays, whatever null/non-array shape arrived", async () => {
+    const { deps, calls } = makeDeps({}, { first: undefined });
+    await startImport(deps, {
+      ...baseArgs,
+      access: { rights_mode: "users", users: [{ id: 3, rights: "write" }], roles: null } as any,
+    });
+    const triggerMetadata = JSON.parse(calls["insert"]![0]![0].trigger_metadata);
+    expect(triggerMetadata.access).toEqual({
+      rights_mode: "users",
+      users: [{ id: 3, rights: "write" }],
+      roles: [],
+      teams: [],
+    });
+  });
+
+  it("N1: stores empty arrays for a grant-mode batch whose lists are all absent", async () => {
+    const { deps, calls } = makeDeps({}, { first: undefined });
+    await startImport(deps, { ...baseArgs, access: { rights_mode: "roles" } });
+    const triggerMetadata = JSON.parse(calls["insert"]![0]![0].trigger_metadata);
+    expect(triggerMetadata.access).toEqual({
+      rights_mode: "roles",
+      users: [],
+      roles: [],
+      teams: [],
+    });
+  });
+
+  it("N3: refuses a delimiter that is not exactly one character, before any insert or enqueue", async () => {
+    for (const delimiter of ["", ";;", "\t\t"]) {
+      const { deps, calls, queue } = makeDeps({}, { first: undefined });
+      await expect(
+        startImport(deps, { ...baseArgs, options: { delimiter } }),
+      ).rejects.toMatchObject({ code: "INVALID_DELIMITER" });
+      expect(calls["insert"]).toBeUndefined();
+      expect(queue.add).not.toHaveBeenCalled();
+    }
+  });
+
+  it("N3: accepts a single-character delimiter", async () => {
+    const { deps, calls } = makeDeps({}, { first: undefined });
+    await expect(
+      startImport(deps, { ...baseArgs, options: { delimiter: ";" } }),
+    ).resolves.toEqual({ jobResultId: "job-1" });
+    expect(calls["insert"]).toHaveLength(1);
+  });
 });
 
 describe("cancelImport", () => {

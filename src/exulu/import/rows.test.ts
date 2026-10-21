@@ -88,9 +88,26 @@ describe("buildRow / rowIsValid / rowAction / buildCreateInput / buildUpdateInpu
       }),
     ).toEqual({ users: [{ id: 1, rights: "write" }], roles: [], teams: [] });
     expect(rbacGrantsFor({ rights_mode: "roles", roles: [{ id: "r1", rights: "read" }] })).toEqual({
-      users: undefined,
+      users: [],
       roles: [{ id: "r1", rights: "read" }],
-      teams: undefined,
+      teams: [],
+    });
+  });
+
+  it("N1: normalises null/undefined/non-array grant lists to arrays (handleRBACUpdate maps them)", () => {
+    expect(
+      rbacGrantsFor({
+        rights_mode: "users",
+        users: [{ id: 1, rights: "write" }],
+        roles: null,
+        teams: undefined,
+      } as any),
+    ).toEqual({ users: [{ id: 1, rights: "write" }], roles: [], teams: [] });
+
+    expect(rbacGrantsFor({ rights_mode: "teams", users: "nope", teams: null } as any)).toEqual({
+      users: [],
+      roles: [],
+      teams: [],
     });
   });
 

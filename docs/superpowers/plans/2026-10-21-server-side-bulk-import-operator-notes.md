@@ -168,18 +168,23 @@ Notes:
   `teams`, `public` (`VALID_RIGHTS_MODES`, `src/exulu/import/start-import.ts`)
   or the call fails with `INVALID_RIGHTS_MODE`. This access is applied only
   to newly **created** rows; updated rows keep their existing access
-  unchanged.
+  unchanged. `access.users`/`roles`/`teams` are `JSON` lists of
+  `{ id, rights }`; `null` or an omitted list is fine and is normalised to
+  an empty array before being stored (the grant writer maps over all three).
 - **`options.delimiter`**, if supplied, is used verbatim by the CSV parser.
   Omitted, the delimiter is **sniffed from the header line**: the most
   frequent of `,` `;` `\t` `|` outside quotes wins, with `,` as the default
   and tie-break (`sniffDelimiter`, `src/exulu/import/csv-stream.ts`). A
   `;`-delimited export (the German/Swiss Excel default) therefore imports
-  without any extra input.
+  without any extra input. A supplied delimiter must be exactly one
+  character, or the call fails with `INVALID_DELIMITER` before anything is
+  written.
 - **`totalRows`**, if supplied by the caller (e.g. the wizard's chunked
   count), seeds `job_results.metadata.total` and is carried through the run
-  as the progress denominator; omitted (or `0`), `metadata.total` stays
-  `null` throughout and only `processed` is meaningful until the run
-  finishes.
+  as the progress denominator. Omitted, the row is still *seeded* with
+  `total: 0` at insert time; the first progress tick replaces that with
+  `null` (the run has no row count of its own) and it stays `null`, so only
+  `processed` is meaningful until the run finishes.
 - The call returns `{ jobResultId }` — this is both the `job_results.id` to
   poll and the BullMQ job id (`jobId: jobResultId` on enqueue), so cancel and
   the progress query both key off the same value.
@@ -273,6 +278,7 @@ reaches a GraphQL client as the error message.
 | `IMPORT_S3_KEY_OUTSIDE_BUCKET` | `s3Key`'s bucket segment does not equal `config.fileUploads.s3Bucket`. | Upload/copy the file into the platform bucket and pass that key. |
 | `IMPORT_S3_KEY_NOT_ALLOWED` | The key is inside the platform bucket but under another user's `user_<id>/` prefix, and the caller is neither a super admin nor an API key (same predicate as `GET /s3/download`, `src/uppy/index.ts`). | Upload the file under your own prefix (or a shared one), or call as a super admin / API key. |
 | `INVALID_RIGHTS_MODE` | `access.rights_mode` is not one of `private`, `users`, `roles`, `teams`, `public`. | Fix the `access.rights_mode` value. |
+| `INVALID_DELIMITER` | `options.delimiter` was supplied but is not exactly one character (csv-parse would reject it as `CSV_INVALID_OPTION_DELIMITER` mid-run, after the upload). | Pass a single character, or omit it and let the header line be sniffed. |
 | `IMPORT_NOT_FOUND` | `CancelImport`'s `jobResultId` matches no `job_results` row, or matches a row whose `type` is not `"import"`. | Check the id; it may have been typo'd, pruned, or belong to another job type. |
 | `NOT_AUTHORIZED` | Either: no authenticated user on the request (`StartImport`/`CancelImport` both require `context.user`); or (`CancelImport` only) the caller is neither the import's starter nor a super admin. | Authenticate, or have the starter / a super admin cancel instead. |
 | `QUEUES_NOT_LICENSED` | `ExuluQueues.register(...)` for the `import` queue threw — only happens when `checkLicense()["queues"]` is false, i.e. `EXULU_ENTERPRISE_LICENSE` missing/invalid. A genuine Redis connectivity error from `.use()` is deliberately **not** mapped to this code and surfaces as-is. | Set a valid `EXULU_ENTERPRISE_LICENSE`. If the error is something else (Redis down/unreachable), fix Redis, not the licence. |

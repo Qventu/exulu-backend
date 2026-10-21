@@ -524,6 +524,22 @@ describe("buildWorkerDeps", () => {
     expect(handleRBACUpdateSpy).toHaveBeenCalledWith(db, "ctx_items", "new-item-1", { users, roles, teams }, []);
   });
 
+  it("N1: a null grant list still reaches handleRBACUpdate as an array it can map over", async () => {
+    const { deps, db } = build({
+      access: { rights_mode: "users", users: [{ id: 3, rights: "write" }], roles: null } as any,
+    });
+
+    await deps.createItem({ name: "Shoe", rights_mode: "users" });
+
+    expect(handleRBACUpdateSpy).toHaveBeenCalledWith(
+      db,
+      "ctx_items",
+      "new-item-1",
+      { users: [{ id: 3, rights: "write" }], roles: [], teams: [] },
+      [],
+    );
+  });
+
   it("C2: writes no grants for private or public batches, and none on an update", async () => {
     for (const rights_mode of ["private", "public"] as const) {
       const { deps } = build({ access: { rights_mode } });
