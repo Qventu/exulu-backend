@@ -92,31 +92,63 @@ export function rowAction(
   return { action: "create" };
 }
 
-/** `id` is matching metadata only -- it is never sent to a create/update mutation. */
+/**
+ * `id` is matching metadata only -- it is never sent to a create/update
+ * mutation.
+ *
+ * A blank `external_id` cell is dropped rather than written: a textual blank
+ * coerces to `""` (coerce.ts, frontend parity, kept for every other text
+ * field) but `external_id` is declared `.unique()` on item tables, so the
+ * *second* created row with a blank cell would hit a unique violation, and an
+ * `id`-matched update would blank (or collide with) an existing row's key.
+ */
 function cellValues(row: ImportRow): Record<string, unknown> {
   const input: Record<string, unknown> = {};
   for (const [name, cell] of Object.entries(row.cells)) {
     if (name === "id") continue;
+    if (name === "external_id" && (cell.value == null || cell.value === "")) continue;
     input[name] = cell.value;
   }
   return input;
 }
 
+/** The grant payload `handleRBACUpdate` (ee/rbac-update.ts) expects. */
+export type RbacGrantInput = {
+  users?: BatchAccess["users"];
+  roles?: BatchAccess["roles"];
+  teams?: BatchAccess["teams"];
+};
+
 /**
- * Create-mutation input: the mapped values plus the batch's rights_mode
- * (always sent) and RBAC grants (only for grant-based modes -- private and
- * public carry no grant list).
+ * The batch's grant payload, for grant-based modes only (`private` and
+ * `public` carry no grant list, so they get `undefined` and no grant write).
+ *
+ * Deliberately NOT part of `buildCreateInput`'s output: item tables have no
+ * `RBAC` column (grants live in the shared `rbac` table, written by
+ * `handleRBACUpdate`), and `context.createItem` inserts exactly the keys it
+ * is handed -- an `RBAC` key on the column input makes Postgres reject every
+ * create row with `column "RBAC" ... does not exist`. The create path pairs
+ * `buildCreateInput` (columns) with this accessor (grants), the same split
+ * the `CreateOne` resolver makes when it pulls `input.RBAC` off before the
+ * insert and calls `handleRBACUpdate` after it.
  */
-export function buildCreateInput(row: ImportRow, access: BatchAccess): Record<string, unknown> {
-  const input = cellValues(row);
-  input.rights_mode = access.rights_mode;
+export function rbacGrantsFor(access: BatchAccess): RbacGrantInput | undefined {
   const hasGrants =
     access.rights_mode === "users" ||
     access.rights_mode === "roles" ||
     access.rights_mode === "teams";
-  if (hasGrants) {
-    input.RBAC = { users: access.users, roles: access.roles, teams: access.teams };
-  }
+  if (!hasGrants) return undefined;
+  return { users: access.users, roles: access.roles, teams: access.teams };
+}
+
+/**
+ * Create-mutation input: the mapped values plus the batch's rights_mode
+ * (always sent). Real item columns only -- the batch's grants travel
+ * separately, via `rbacGrantsFor`.
+ */
+export function buildCreateInput(row: ImportRow, access: BatchAccess): Record<string, unknown> {
+  const input = cellValues(row);
+  input.rights_mode = access.rights_mode;
   return input;
 }
 

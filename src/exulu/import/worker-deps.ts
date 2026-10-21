@@ -1,13 +1,25 @@
 import { getTableName } from "@SRC/exulu/table-names";
 import { uploadFile } from "@SRC/uppy";
+import { handleRBACUpdate } from "@EE/rbac-update.ts";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import type { ExuluConfig } from "@SRC/exulu/app/index";
 import type { ColumnMapping, ImportField } from "./mapping";
+import { rbacGrantsFor } from "./rows";
 import type { BatchAccess } from "./rows";
 import type { ExistingRow, ProgressMetadata, RunImportDeps, RunImportResult } from "./run-import";
 
-/** The acting user for an import run, as carried on RunImportDeps.user. */
-export type ImportUser = { id: number; super_admin?: boolean; role?: unknown; team?: unknown };
+/**
+ * The acting user for an import run, as carried on RunImportDeps.user.
+ * `type` is the authentication kind ("api" for an API-key caller) -- the
+ * s3Key prefix check in start-import.ts needs it, mirroring `/s3/download`.
+ */
+export type ImportUser = {
+  id: number;
+  super_admin?: boolean;
+  type?: string;
+  role?: unknown;
+  team?: unknown;
+};
 
 /**
  * One grant row from the shared `rbac` table (ee/rbac-update.ts), as attached
@@ -136,6 +148,10 @@ async function selectItemsBy(
  * would make Postgres reject the whole query ("invalid input syntax for
  * type uuid"), failing every row in the chunk instead of just the one with
  * the bad id. `external_id` is a plain text column and stays unfiltered.
+ *
+ * A filtered-out id therefore reaches the run loop as a *miss*, which
+ * run-import.ts counts `failed` with "id not found" (never a create) -- so
+ * dropping it here loses nothing but the pointless query.
  */
 export async function lookupExisting(
   db: any,
@@ -271,7 +287,13 @@ export async function uploadErrorReport(
   return uploadFile(buffer, fileName, config, { contentType: "text/csv" }, user, undefined, true);
 }
 
-/** The minimal context surface buildWorkerDeps needs (not the full ExuluContext). */
+/**
+ * The minimal context surface buildWorkerDeps needs (not the full
+ * ExuluContext). `createItem`'s resolved value is narrowed to the one part
+ * this module reads -- `{ item: { id } }`, the row ExuluContext.createItem
+ * returns from its `.returning("id")` insert -- because the new item's id is
+ * what the grant write has to address.
+ */
 export type ImportContext = {
   createItem: (
     item: Record<string, unknown>,
@@ -280,7 +302,7 @@ export type ImportContext = {
     role?: string,
     upsert?: boolean,
     generateEmbeddingsOverwrite?: boolean,
-  ) => Promise<unknown>;
+  ) => Promise<{ item?: { id?: unknown } } | undefined>;
   updateItem: (
     item: Record<string, unknown>,
     config: ExuluConfig,
@@ -300,9 +322,11 @@ export type BuildWorkerDepsInput = {
   fields: ImportField[];
   mapping?: ColumnMapping[];
   access: BatchAccess;
-  options: { skipEmbeddings?: boolean };
+  options: { skipEmbeddings?: boolean; delimiter?: string };
   user: ImportUser;
   log?: (m: string) => void;
+  /** The row's known row count (`job_results.metadata.total`), for the progress denominator. */
+  total?: number | null;
 };
 
 /**
@@ -322,6 +346,13 @@ export function buildWorkerDeps(input: BuildWorkerDepsInput): RunImportDeps {
   // otherwise leaving it `undefined` so the context's own calculateVectors
   // configuration decides.
   const generateEmbeddingsOverwrite = options.skipEmbeddings ? false : undefined;
+  // The batch's grants, resolved once: `undefined` for private/public (no
+  // grant list exists, so nothing is written per row).
+  const rbac = rbacGrantsFor(access);
+  // A seeded total of 0 (startImport's default when the caller supplied no
+  // totalRows) means "unknown", not "zero rows" -- run-import must then keep
+  // reporting `total: null` rather than overwriting the stored value.
+  const total = typeof input.total === "number" && input.total > 0 ? input.total : undefined;
 
   return {
     stream,
@@ -331,13 +362,41 @@ export function buildWorkerDeps(input: BuildWorkerDepsInput): RunImportDeps {
     options,
     user,
     log,
+    total,
     lookupExisting: (ids, externalIds) => lookupExisting(db, tableName, ids, externalIds),
     canWrite: (existing) => canWrite(existing, user),
     createItem: async (itemInput) => {
-      await context.createItem(itemInput, config, user.id, roleId, false, generateEmbeddingsOverwrite);
+      // `created_by` exactly as the CreateOne resolver sets it
+      // (src/graphql/mutations/index.ts: `delete input.created_by` then
+      // `input.created_by = context.user.id`, hence last here too, so a
+      // mapped column can never spoof it) -- context.createItem never sets
+      // it, and applyAccessControl admits a row only when it is public,
+      // created_by the reader, or granted; a `private` row with created_by
+      // NULL is invisible to its own author.
+      //
+      // `RBAC` is stripped rather than forwarded: item tables have no such
+      // column (grants live in the shared `rbac` table), so any grant payload
+      // that reached the insert would fail the row outright.
+      const { RBAC: _droppedRbacColumn, ...columns } = itemInput;
+      const created = await context.createItem(
+        { ...columns, created_by: user.id },
+        config,
+        user.id,
+        roleId,
+        false,
+        generateEmbeddingsOverwrite,
+      );
+      // Grants only on create (update rows keep their existing access) --
+      // same call shape as CreateOne's post-insert handleRBACUpdate, whose
+      // `entityName` for an items context is the table name (`<ctx>_items`).
+      const createdId = created?.item?.id;
+      if (rbac && typeof createdId === "string") {
+        await handleRBACUpdate(db, tableName, createdId, rbac, []);
+      }
     },
     // buildUpdateInput (rows.ts) never carries an id/rights_mode/RBAC -- the
     // target's id is threaded in here, same as the GraphQL updateOne path.
+    // `created_by` is deliberately left untouched on an update.
     updateItem: async (id, itemInput) => {
       await context.updateItem({ id, ...itemInput }, config, user.id, roleId, generateEmbeddingsOverwrite);
     },

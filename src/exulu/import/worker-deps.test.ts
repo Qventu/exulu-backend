@@ -4,9 +4,17 @@ const uploadFileSpy = jest.fn(async () => "test-bucket/imports/ctx-1/job-1-error
 jest.mock("@SRC/uppy", () => ({
   uploadFile: (...args: any[]) => uploadFileSpy(...args),
 }));
+// The grant writer the create closure must call after a create (C2) -- mocked
+// the same way every other suite that touches it does
+// (src/graphql/mutations/create-rights-mode.test.ts).
+const handleRBACUpdateSpy = jest.fn(async () => undefined);
+jest.mock("@EE/rbac-update.ts", () => ({
+  handleRBACUpdate: (...args: any[]) => handleRBACUpdateSpy(...args),
+}));
 
 import knexFactory from "knex";
 import {
+  buildWorkerDeps,
   canWrite,
   finalizeCancelled,
   isCancelRequested,
@@ -14,10 +22,12 @@ import {
   uploadErrorReport,
   writeProgress,
 } from "./worker-deps";
+import type { BuildWorkerDepsInput } from "./worker-deps";
 import type { ExistingRow, RunImportResult } from "./run-import";
 
 beforeEach(() => {
   uploadFileSpy.mockClear();
+  handleRBACUpdateSpy.mockClear();
 });
 
 // Connectionless real knex instance (same pattern as
@@ -406,5 +416,165 @@ describe("uploadErrorReport", () => {
     expect(customBucket).toBeUndefined();
     expect(global).toBe(true);
     expect(key).toBe("test-bucket/imports/ctx-1/job-1-errors.csv");
+  });
+});
+
+// The one seam the branch never tested: buildWorkerDeps' create/update
+// closures against a fake `context` whose createItem accepts only the real
+// item-table column set (no `RBAC` column exists on item tables -- grants
+// live in the shared `rbac` table) and reports back what it was handed.
+describe("buildWorkerDeps", () => {
+  const config = { fileUploads: {} } as any;
+
+  /** Item-table columns an items context really has (src/exulu/context.ts createItemsTable) + this fixture's custom field. */
+  const REAL_COLUMNS = new Set([
+    "id",
+    "external_id",
+    "name",
+    "description",
+    "tags",
+    "rights_mode",
+    "created_by",
+    "qty",
+  ]);
+
+  function fakeContext() {
+    const createCalls: any[][] = [];
+    const updateCalls: any[][] = [];
+    const context = {
+      createItem: async (...args: any[]) => {
+        createCalls.push(args);
+        // The real createItem inserts exactly the keys it is given, so a key
+        // that is not a column is a Postgres error, not a silent no-op.
+        for (const key of Object.keys(args[0] ?? {})) {
+          if (!REAL_COLUMNS.has(key)) {
+            throw new Error(`column "${key}" of relation "ctx_items" does not exist`);
+          }
+        }
+        return { item: { id: "new-item-1" } };
+      },
+      updateItem: async (...args: any[]) => {
+        updateCalls.push(args);
+        for (const key of Object.keys(args[0] ?? {})) {
+          if (!REAL_COLUMNS.has(key)) {
+            throw new Error(`column "${key}" of relation "ctx_items" does not exist`);
+          }
+        }
+        return { item: { id: args[0]?.id } };
+      },
+    };
+    return { context, createCalls, updateCalls };
+  }
+
+  function build(overrides: Partial<BuildWorkerDepsInput> = {}) {
+    const { context, createCalls, updateCalls } = fakeContext();
+    const db: any = jest.fn(() => ({}));
+    const input: BuildWorkerDepsInput = {
+      db,
+      config,
+      context,
+      contextId: "ctx",
+      jobResultId: "job-1",
+      stream: { on: () => undefined, pipe: () => undefined } as any,
+      fields: [],
+      access: { rights_mode: "private" },
+      options: {},
+      user: { id: 7, role: "role-1" },
+      ...overrides,
+    };
+    return { deps: buildWorkerDeps(input), createCalls, updateCalls, db };
+  }
+
+  it("C1: sets created_by on the create input and never on an update", async () => {
+    const { deps, createCalls, updateCalls } = build();
+
+    await deps.createItem({ name: "Shoe", rights_mode: "private" });
+    await deps.updateItem("item-9", { name: "Shoe" });
+
+    expect(createCalls[0]![0]).toEqual({ created_by: 7, name: "Shoe", rights_mode: "private" });
+    expect(updateCalls[0]![0]).toEqual({ id: "item-9", name: "Shoe" });
+    expect(updateCalls[0]![0]).not.toHaveProperty("created_by");
+  });
+
+  it("C2: strips RBAC before createItem so only real columns reach the insert", async () => {
+    const { deps, createCalls } = build({
+      access: { rights_mode: "users", users: [{ id: 3, rights: "write" }], roles: [], teams: [] },
+    });
+
+    await deps.createItem({
+      name: "Shoe",
+      rights_mode: "users",
+      // A stray grant payload on the column input must never reach the insert.
+      RBAC: { users: [{ id: 3, rights: "write" }] },
+    });
+
+    expect(createCalls[0]![0]).not.toHaveProperty("RBAC");
+    expect(createCalls[0]![0]).toEqual({ created_by: 7, name: "Shoe", rights_mode: "users" });
+  });
+
+  it("C2: writes the batch's grants with handleRBACUpdate after each create, for grant-based modes", async () => {
+    const users = [{ id: 3, rights: "write" as const }];
+    const roles = [{ id: "role-9", rights: "read" as const }];
+    const teams: Array<{ id: string; rights: "read" | "write" }> = [];
+    const { deps, db } = build({ access: { rights_mode: "users", users, roles, teams } });
+
+    await deps.createItem({ name: "Shoe", rights_mode: "users" });
+
+    expect(handleRBACUpdateSpy).toHaveBeenCalledTimes(1);
+    expect(handleRBACUpdateSpy).toHaveBeenCalledWith(db, "ctx_items", "new-item-1", { users, roles, teams }, []);
+  });
+
+  it("C2: writes no grants for private or public batches, and none on an update", async () => {
+    for (const rights_mode of ["private", "public"] as const) {
+      const { deps } = build({ access: { rights_mode } });
+      await deps.createItem({ name: "Shoe", rights_mode });
+      expect(handleRBACUpdateSpy).not.toHaveBeenCalled();
+    }
+
+    const { deps } = build({
+      access: { rights_mode: "users", users: [{ id: 3, rights: "write" }] },
+    });
+    await deps.updateItem("item-9", { name: "Shoe" });
+    expect(handleRBACUpdateSpy).not.toHaveBeenCalled();
+  });
+
+  it("passes upsert=false always, and generateEmbeddingsOverwrite=false only when skipEmbeddings is set", async () => {
+    const skipping = build({ options: { skipEmbeddings: true } });
+    await skipping.deps.createItem({ name: "A" });
+    await skipping.deps.updateItem("item-1", { name: "A" });
+    expect(skipping.createCalls[0]![4]).toBe(false);
+    expect(skipping.createCalls[0]![5]).toBe(false);
+    expect(skipping.updateCalls[0]![4]).toBe(false);
+
+    const normal = build({ options: {} });
+    await normal.deps.createItem({ name: "A" });
+    await normal.deps.updateItem("item-1", { name: "A" });
+    expect(normal.createCalls[0]![4]).toBe(false);
+    expect(normal.createCalls[0]![5]).toBeUndefined();
+    expect(normal.updateCalls[0]![4]).toBeUndefined();
+  });
+
+  it("passes the acting user id and the role uuid, from a bare or a hydrated user.role", async () => {
+    const bare = build({ user: { id: 7, role: "role-1" } });
+    await bare.deps.createItem({ name: "A" });
+    expect(bare.createCalls[0]![2]).toBe(7);
+    expect(bare.createCalls[0]![3]).toBe("role-1");
+
+    const hydrated = build({ user: { id: 7, role: { id: "role-1", name: "Admin" } } });
+    await hydrated.deps.createItem({ name: "A" });
+    await hydrated.deps.updateItem("item-1", { name: "A" });
+    expect(hydrated.createCalls[0]![3]).toBe("role-1");
+    expect(hydrated.updateCalls[0]![3]).toBe("role-1");
+
+    const roleless = build({ user: { id: 7 } });
+    await roleless.deps.createItem({ name: "A" });
+    expect(roleless.createCalls[0]![3]).toBeUndefined();
+  });
+
+  it("I1: carries the row's metadata.total into the deps, ignoring 0/absent/non-numeric values", () => {
+    expect(build({ total: 42000 }).deps.total).toBe(42000);
+    expect(build({ total: 0 }).deps.total).toBeUndefined();
+    expect(build({}).deps.total).toBeUndefined();
+    expect(build({ total: null }).deps.total).toBeUndefined();
   });
 });

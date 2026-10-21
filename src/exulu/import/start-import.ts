@@ -35,7 +35,7 @@ export type StartImportArgs = {
   fileName: string;
   mapping?: ColumnMapping[];
   access: BatchAccess;
-  options?: { skipEmbeddings?: boolean };
+  options?: { skipEmbeddings?: boolean; delimiter?: string };
   trigger: "ui" | "api";
   totalRows?: number;
 };
@@ -66,6 +66,7 @@ export class StartImportError extends Error {
       | "CONTEXT_NOT_FOUND"
       | "IMPORT_ALREADY_RUNNING"
       | "IMPORT_S3_KEY_OUTSIDE_BUCKET"
+      | "IMPORT_S3_KEY_NOT_ALLOWED"
       | "INVALID_RIGHTS_MODE"
       | "IMPORT_NOT_FOUND"
       | "NOT_AUTHORIZED",
@@ -103,6 +104,24 @@ export async function startImport(
   const bucket = args.s3Key.split("/")[0];
   if (bucket !== config.fileUploads?.s3Bucket) {
     throw new StartImportError("IMPORT_S3_KEY_OUTSIDE_BUCKET");
+  }
+
+  // Per-user prefix confinement, the same predicate `GET /s3/download` and
+  // the delete route apply (src/uppy/index.ts): a key under somebody else's
+  // `user_<id>/` upload prefix is refused, because an import is a read
+  // primitive -- it would otherwise stream another user's private upload and
+  // materialise its contents as items the caller can read. Super admins and
+  // API-key callers are exempt there, so they are exempt here too. Keys with
+  // no `user_` segment at all (shared/global prefixes such as `imports/...`)
+  // are unaffected.
+  const keyWithoutBucket = args.s3Key.split("/").slice(1).join("/");
+  const prefixAllowed =
+    user.type === "api" ||
+    user.super_admin === true ||
+    !keyWithoutBucket.includes("user_") ||
+    keyWithoutBucket.includes(`user_${user.id}/`);
+  if (!prefixAllowed) {
+    throw new StartImportError("IMPORT_S3_KEY_NOT_ALLOWED");
   }
 
   const running = await db("job_results")
@@ -196,9 +215,10 @@ export async function startImport(
 }
 
 /**
- * Cancels a running (or still-queued) import. A missing row is an error
- * (IMPORT_NOT_FOUND) -- the caller passed a jobResultId that was never
- * started, which is a real mistake worth surfacing. A row already in a
+ * Cancels a running (or still-queued) import. A missing row, or a row that is
+ * not an import at all, is an error (IMPORT_NOT_FOUND) -- the caller passed a
+ * jobResultId that was never started as an import, which is a real mistake
+ * worth surfacing. A row already in a
  * terminal state (completed/failed/cancelled), by contrast, is treated as
  * nothing-to-cancel rather than an error: a double-click or a race with the
  * worker's own completion should never fail the caller.
@@ -211,6 +231,12 @@ export async function cancelImport(
 
   const row = await db("job_results").where({ id: jobResultId }).first();
   if (!row) {
+    throw new StartImportError("IMPORT_NOT_FOUND");
+  }
+  // The per-context mutation prefix is cosmetic -- `job_results` holds every
+  // job type, so without this an import-cancel could flag (and, below, even
+  // cancel the row of) a workflow run or an eval the caller started.
+  if (row.type !== "import") {
     throw new StartImportError("IMPORT_NOT_FOUND");
   }
   if (row.state !== "waiting" && row.state !== "active") {
@@ -232,8 +258,11 @@ export async function cancelImport(
     .update({ metadata: mergeMetadataRaw(db, { cancelRequested: true }) });
 
   if (row.state === "waiting") {
-    const job = await queue.getJob?.(jobResultId);
     try {
+      // getJob is inside the guard too: a Redis outage here would otherwise
+      // throw *after* cancelRequested was persisted and leave the row
+      // "waiting", still blocking the context's one-import gate.
+      const job = await queue.getJob?.(jobResultId);
       await job?.remove();
     } catch (error: unknown) {
       // cancelRequested is already persisted above -- a failed remove (e.g.
@@ -245,6 +274,30 @@ export async function cancelImport(
       .where({ id: jobResultId })
       .whereIn("state", ["waiting"])
       .update({ state: "cancelled" });
+  } else {
+    // row.state === "active". Normally the running worker observes
+    // cancelRequested at the next chunk boundary and finalizes the row
+    // itself, so flagging is all that is needed. But if the BullMQ job no
+    // longer exists, nothing will ever observe the flag -- the run died in a
+    // way that never reached the "failed" handler (worker process gone, a
+    // Postgres outage swallowing that handler's own write, the 6 h timeout on
+    // a dead process) -- and D6's gate would refuse every future import for
+    // this context with no API way out. Force the row terminal in that case,
+    // CAS-guarded so a worker that is in fact still alive and completing
+    // cannot be overwritten.
+    try {
+      const job = await queue.getJob?.(jobResultId);
+      if (!job) {
+        await db("job_results")
+          .where({ id: jobResultId })
+          .whereIn("state", ["active"])
+          .update({ state: "cancelled" });
+      }
+    } catch (error: unknown) {
+      // Redis unreachable: we cannot tell whether the job is gone, so leave
+      // the row active (the flag is persisted) rather than guess.
+      console.error("[EXULU] failed to inspect the running import job after cancel", error);
+    }
   }
 
   return { ok: true };

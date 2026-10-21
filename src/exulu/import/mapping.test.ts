@@ -103,3 +103,30 @@ describe("importFieldsFor", () => {
     expect(fields.every((f) => f.core)).toBe(true);
   });
 });
+
+describe("I9/M6: physical column names and whitespace-tolerant mapping", () => {
+  it("I9: emits the sanitized column name for a context field, keeping the raw name as the label", () => {
+    const fields = importFieldsFor([{ name: "Item Number", type: "shortText" }]);
+    const field = fields.find((f) => f.label === "Item Number");
+    expect(field).toMatchObject({ name: "item_number", label: "Item Number" });
+  });
+
+  it("I9: auto-maps a header to the sanitized column, not the raw field name", () => {
+    const fields = importFieldsFor([{ name: "Item Number", type: "shortText" }]);
+    expect(resolveMapping(["item number"], fields)).toEqual({
+      byIndex: ["item_number"],
+      unknownFields: [],
+    });
+    // The GraphQL/physical name the wizard would send back also resolves.
+    expect(
+      resolveMapping(["Item Number"], fields, [{ header: "Item Number", fieldName: "item_number" }]),
+    ).toEqual({ byIndex: ["item_number"], unknownFields: [] });
+  });
+
+  it("M6: resolves a supplied mapping header that differs only in surrounding whitespace or case", () => {
+    const fields = importFieldsFor([{ name: "brand", type: "shortText" }]);
+    expect(
+      resolveMapping(["Brand"], fields, [{ header: "  brand  ", fieldName: "brand" }]),
+    ).toEqual({ byIndex: ["brand"], unknownFields: [] });
+  });
+});

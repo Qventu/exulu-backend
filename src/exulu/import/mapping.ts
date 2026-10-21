@@ -1,3 +1,4 @@
+import { sanitizeName } from "@SRC/utils/sanitize-name";
 import type { ExuluContextFieldDefinition } from "@SRC/exulu/context";
 
 /** One importable column: a core item field or a context custom field. */
@@ -50,12 +51,21 @@ const CORE_FIELDS: ImportField[] = [
  * Importable columns: the built-in item fields plus editable context fields.
  * Calculated, hidden, and file-typed fields are excluded -- file cells are not
  * importable through this server path (no local file to upload against).
+ *
+ * `name` is the *physical* column (`sanitizeName(field.name)`, the same
+ * transform `createItemsTable` applies when it creates the column and
+ * `convertContextToTableDefinition` applies when it exposes it over GraphQL),
+ * so the write input's keys are real columns; the raw field name is kept as
+ * `label`, so a header matches whichever spelling the file uses (nothing
+ * validates that a context field name is already lowercase/underscore -- only
+ * context *ids* are checked).
  */
 export function importFieldsFor(fields: ExuluContextFieldDefinition[]): ImportField[] {
   const custom: ImportField[] = fields
     .filter((f) => !f.calculated && !f.hidden && f.type !== "file")
     .map((f) => ({
-      name: f.name,
+      name: sanitizeName(f.name),
+      label: f.name,
       type: f.type,
       required: f.required === true,
       core: false,
@@ -69,6 +79,12 @@ export function importFieldsFor(fields: ExuluContextFieldDefinition[]): ImportFi
  * fields. Entries whose `fieldName` is not among `fields` are dropped (and
  * reported in `unknownFields`); a header with no entry in `given` stays
  * unmapped. When `given` is omitted entirely, auto-map instead.
+ *
+ * Headers are matched through `normalizeHeader` on BOTH sides: csv-stream
+ * trims the file's header cells, so a stored mapping whose headers carry
+ * surrounding whitespace (or differ only in case) would otherwise match
+ * nothing and abort the run with NO_MAPPABLE_COLUMNS -- including on the
+ * documented retry flow, which re-reads a header the backend itself trimmed.
  */
 export function resolveMapping(
   headers: string[],
@@ -79,10 +95,10 @@ export function resolveMapping(
     return { byIndex: autoMapColumns(headers, fields).map((m) => m.fieldName), unknownFields: [] };
   }
   const fieldNames = new Set(fields.map((f) => f.name));
-  const byHeader = new Map(given.map((g) => [g.header, g.fieldName]));
+  const byHeader = new Map(given.map((g) => [normalizeHeader(g.header), g.fieldName]));
   const unknownFields = new Set<string>();
   const byIndex = headers.map((header) => {
-    const fieldName = byHeader.get(header);
+    const fieldName = byHeader.get(normalizeHeader(header));
     if (fieldName == null) return null;
     if (!fieldNames.has(fieldName)) {
       unknownFields.add(fieldName);

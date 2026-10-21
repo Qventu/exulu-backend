@@ -10,6 +10,7 @@ import util from "util";
 import { redisServer } from "@EE/queues/server.ts";
 import { getDefaultEvals } from "@SRC/templates/evals/index.ts";
 import { queues as ExuluQueues, global_queues } from "@EE/queues/queues";
+import { registerImportQueue } from "@EE/queues/import-queue";
 import { todoTools } from "@SRC/templates/tools/todo/todo.ts";
 import { questionTools } from "@SRC/templates/tools/question/question.ts";
 import { perplexityTools } from "@SRC/templates/tools/perplexity.ts";
@@ -331,20 +332,10 @@ export class ExuluApp {
         5,
         300,
       );
-      // Server-side bulk import (CSV -> items): one job at a time, one
-      // context's import running per worker slot -- a bulk import already
-      // runs its own bounded concurrency pool internally (run-import.ts), so
-      // the queue just serializes whole import runs. 6h timeout covers a
-      // large file streamed + chunk-processed end to end.
-      ExuluQueues.register(
-        global_queues.import,
-        {
-          worker: 1,
-          queue: 1,
-        },
-        1,
-        6 * 3600,
-      );
+      // Server-side bulk import (CSV -> items). Parameters live in the one
+      // helper the StartImport/CancelImport resolvers also use, so the two
+      // registrations cannot drift (ee/queues/import-queue.ts).
+      registerImportQueue();
 
       if (queues?.length) {
         // Custom provided queues

@@ -17,7 +17,8 @@ import bcrypt from "bcryptjs";
 import { finalizeRequestedFields } from "../utilities/sanitize-and-hydrate-fields.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { deleteAgentSessionData } from "@SRC/exulu/routines/run-state.ts";
-import { queues as ExuluQueues, global_queues } from "@EE/queues/queues";
+import { queues as ExuluQueues } from "@EE/queues/queues";
+import { registerImportQueue } from "@EE/queues/import-queue";
 import { startImport, cancelImport, StartImportError } from "@SRC/exulu/import/start-import";
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
@@ -1183,8 +1184,9 @@ export function createMutations(
     // resolver.
     //
     // Only `ExuluQueues.register(...)` itself throws the missing-licence
-    // error (ee/queues/queues.ts:92-95, a synchronous throw) -- that's the
-    // only failure QUEUES_NOT_LICENSED should ever mask. `.use()` throws
+    // error (ee/queues/queues.ts, a synchronous throw, reached here through
+    // registerImportQueue) -- that's the only failure QUEUES_NOT_LICENSED
+    // should ever mask. `.use()` throws
     // separately (e.g. no Redis server configured, or a connection timeout)
     // and must surface as-is: swallowing a real Redis outage behind
     // "QUEUES_NOT_LICENSED" would send an operator chasing a licensing
@@ -1192,7 +1194,7 @@ export function createMutations(
     const getImportQueue = async () => {
       let registered;
       try {
-        registered = ExuluQueues.register(global_queues.import, { worker: 1, queue: 1 }, 1, 6 * 3600);
+        registered = registerImportQueue();
       } catch (error: unknown) {
         throw new Error("QUEUES_NOT_LICENSED");
       }
@@ -1213,6 +1215,12 @@ export function createMutations(
     mutations[`${tableNameSingular}StartImport`] = async (_, args, context, info) => {
       if (!context.user) {
         throw new Error("NOT_AUTHORIZED");
+      }
+      // `ExuluTableDefinition.id` is optional (only context-backed tables
+      // carry one); startImport needs a real context id to key the gate,
+      // trigger_metadata and the item table off.
+      if (!table.id) {
+        throw new Error("CONTEXT_NOT_FOUND");
       }
 
       const queue = await getImportQueue();

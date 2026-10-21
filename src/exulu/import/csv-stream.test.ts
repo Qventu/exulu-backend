@@ -72,3 +72,110 @@ describe("streamCsvRows", () => {
     expect(whole.result).toEqual({ rows: 2 });
   });
 });
+
+describe("delimiter handling", () => {
+  async function collect(csv: string, opts?: { delimiter?: string }) {
+    const headers: string[][] = [];
+    const rows: string[][] = [];
+    await streamCsvRows(
+      Readable.from([csv]),
+      {
+        onHeader: (h) => {
+          headers.push(h);
+        },
+        onRow: (cells) => {
+          rows.push(cells);
+        },
+      },
+      opts,
+    );
+    return { headers, rows };
+  }
+
+  it("still parses a comma-delimited file when no delimiter is supplied", async () => {
+    const { headers, rows } = await collect("a,b\n1,2\n");
+    expect(headers).toEqual([["a", "b"]]);
+    expect(rows).toEqual([["1", "2"]]);
+  });
+
+  it("sniffs a semicolon-delimited file (the German/Swiss Excel default) from its header line", async () => {
+    const { headers, rows } = await collect("name;qty;note\nShoe;5;ok\n");
+    expect(headers).toEqual([["name", "qty", "note"]]);
+    expect(rows).toEqual([["Shoe", "5", "ok"]]);
+  });
+
+  it("sniffs a tab-delimited file", async () => {
+    const { headers, rows } = await collect("name\tqty\nShoe\t5\n");
+    expect(headers).toEqual([["name", "qty"]]);
+    expect(rows).toEqual([["Shoe", "5"]]);
+  });
+
+  it("sniffs a pipe-delimited file", async () => {
+    const { headers, rows } = await collect("name|qty\nShoe|5\n");
+    expect(headers).toEqual([["name", "qty"]]);
+    expect(rows).toEqual([["Shoe", "5"]]);
+  });
+
+  it("ignores delimiter characters inside a quoted header cell", async () => {
+    const { headers, rows } = await collect('"name, long";qty\nShoe;5\n');
+    expect(headers).toEqual([["name, long", "qty"]]);
+    expect(rows).toEqual([["Shoe", "5"]]);
+  });
+
+  it("sniffs across a BOM and a CRLF header line, and over small stream chunks", async () => {
+    const csv = "﻿name;qty\r\nShoe;5\r\n";
+    const headers: string[][] = [];
+    const rows: string[][] = [];
+    await streamCsvRows(Readable.from(chunksOf(csv, 3)), {
+      onHeader: (h) => {
+        headers.push(h);
+      },
+      onRow: (cells) => {
+        rows.push(cells);
+      },
+    });
+    expect(headers).toEqual([["name", "qty"]]);
+    expect(rows).toEqual([["Shoe", "5"]]);
+  });
+
+  it("defaults to a comma for a single-column file with no delimiter at all", async () => {
+    const { headers, rows } = await collect("name\nShoe\n");
+    expect(headers).toEqual([["name"]]);
+    expect(rows).toEqual([["Shoe"]]);
+  });
+
+  it("an explicitly supplied delimiter wins over sniffing", async () => {
+    // The header line has more semicolons than commas, so sniffing would pick
+    // ";" -- the explicit "," must be honoured instead.
+    const { headers } = await collect("a,b;c;d\n1,2;3;4\n", { delimiter: "," });
+    expect(headers).toEqual([["a", "b;c;d"]]);
+  });
+});
+
+describe("source errors", () => {
+  function failingStream(after: string | null): Readable {
+    let emitted = false;
+    return new Readable({
+      read() {
+        if (after !== null && !emitted) {
+          emitted = true;
+          this.push(after);
+          return;
+        }
+        this.destroy(new Error("s3 download broke"));
+      },
+    });
+  }
+
+  it("rejects when the source fails before the header line is complete", async () => {
+    await expect(
+      streamCsvRows(failingStream(null), { onHeader: () => {}, onRow: () => {} }),
+    ).rejects.toThrow("s3 download broke");
+  });
+
+  it("rejects when the source fails after the header line was parsed", async () => {
+    await expect(
+      streamCsvRows(failingStream("a,b\n1,2\n"), { onHeader: () => {}, onRow: () => {} }),
+    ).rejects.toThrow("s3 download broke");
+  });
+});

@@ -44,7 +44,7 @@ import { findLiteLLMModel } from "@SRC/exulu/litellm/catalog.ts";
 import { computeRunCostUsd } from "@SRC/exulu/routines/run-cost.ts";
 import { getS3ObjectStream } from "@SRC/uppy";
 import { runImport, ImportAbort } from "@SRC/exulu/import/run-import.ts";
-import { buildWorkerDeps, finalizeCancelled } from "@SRC/exulu/import/worker-deps.ts";
+import { buildWorkerDeps, finalizeCancelled, parseMetadata } from "@SRC/exulu/import/worker-deps.ts";
 import { importFieldsFor } from "@SRC/exulu/import/mapping.ts";
 import type { ImportJobData } from "@EXULU_TYPES/queue-config.ts";
 
@@ -1148,6 +1148,24 @@ export const createWorkers = async (
                 );
               }
 
+              // Stalled re-delivery guard: `attempts: 1` stops *failure*
+              // retries, but BullMQ's stalled recovery (lockDuration 5 min,
+              // stalledInterval 2 min, maxStalledCount 1 below) still moves
+              // the job back to `wait` once after a worker crash, a long
+              // event-loop block, or a Redis gap. Restarting the stream from
+              // row 0 would re-create every key-less row a second time and
+              // reset the counters, so a second pickup fails loudly instead:
+              // the "failed" handler records this message on the row, which
+              // also reopens the context's one-import gate (D6).
+              const priorMetadata = parseMetadata(row.metadata);
+              const priorProcessed = Number(priorMetadata.processed ?? 0);
+              if (row.state === JOB_STATUS_ENUM.active || priorProcessed > 0) {
+                throw new Error(
+                  `IMPORT_RESTARTED_AFTER_STALL: import ${jobResultId} was already running; ` +
+                    `partial rows are kept, start a new import`,
+                );
+              }
+
               // Moves the row to "active" (CAS-free: the row is keyed by
               // job_id, owned by this one worker pickup).
               await upsertJobStart(db, bullmqJob, row.label, "import");
@@ -1226,6 +1244,11 @@ export const createWorkers = async (
                   options: triggerMetadata.options ?? {},
                   user: importUser,
                   log: (m: string) => console.log(`[EXULU] import ${jobResultId}: ${m}`),
+                  // The row count StartImport seeded into metadata.total
+                  // (from the caller's `totalRows`); buildWorkerDeps treats a
+                  // 0/absent value as "unknown" so the progress patch does
+                  // not overwrite it with null on the first tick.
+                  total: priorMetadata.total,
                 });
 
                 const result = await runImport(deps);

@@ -217,13 +217,73 @@ describe("startImport", () => {
     const inserted = calls["insert"]![0]![0];
     expect(inserted.trigger).toBe("api");
   });
+
+  it("I4: refuses another user's user_<n>/ key without inserting or enqueuing", async () => {
+    const { deps, calls, queue } = makeDeps({}, { first: undefined });
+    const args = { ...baseArgs, s3Key: "test-bucket/user_42/imports/file.csv" };
+
+    await expect(startImport(deps, args)).rejects.toMatchObject({
+      code: "IMPORT_S3_KEY_NOT_ALLOWED",
+    });
+    expect(calls["insert"]).toBeUndefined();
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it("I4: refuses a prefix that merely starts with the caller's id (user_7 vs user_77)", async () => {
+    const { deps } = makeDeps({}, { first: undefined });
+    await expect(
+      startImport(deps, { ...baseArgs, s3Key: "test-bucket/user_77/file.csv" }),
+    ).rejects.toMatchObject({ code: "IMPORT_S3_KEY_NOT_ALLOWED" });
+  });
+
+  it("I4: allows the caller's own user_<id>/ key", async () => {
+    const { deps, calls, queue } = makeDeps({}, { first: undefined });
+    const args = { ...baseArgs, s3Key: "test-bucket/user_7/imports/file.csv" };
+
+    await expect(startImport(deps, args)).resolves.toEqual({ jobResultId: "job-1" });
+    expect(calls["insert"]).toHaveLength(1);
+    expect(queue.add).toHaveBeenCalledTimes(1);
+  });
+
+  it("I4: allows a super admin and an API-key caller to read any user's key", async () => {
+    const args = { ...baseArgs, s3Key: "test-bucket/user_42/imports/file.csv" };
+
+    const admin = makeDeps({ user: { id: 7, super_admin: true } }, { first: undefined });
+    await expect(startImport(admin.deps, args)).resolves.toEqual({ jobResultId: "job-1" });
+
+    const apiKey = makeDeps({ user: { id: 7, type: "api" } }, { first: undefined });
+    await expect(startImport(apiKey.deps, args)).resolves.toEqual({ jobResultId: "job-1" });
+  });
+
+  it("I4: checks the key prefix only after the bucket, and before the running-import query", async () => {
+    const { deps, calls } = makeDeps({}, { first: { id: "existing-job" } });
+
+    // Another bucket entirely still reports the bucket error, not this one.
+    await expect(
+      startImport(deps, { ...baseArgs, s3Key: "other-bucket/user_42/file.csv" }),
+    ).rejects.toMatchObject({ code: "IMPORT_S3_KEY_OUTSIDE_BUCKET" });
+
+    // ...and a refused prefix never reaches the gate query.
+    await expect(
+      startImport(deps, { ...baseArgs, s3Key: "test-bucket/user_42/file.csv" }),
+    ).rejects.toMatchObject({ code: "IMPORT_S3_KEY_NOT_ALLOWED" });
+    expect(calls["where"]).toBeUndefined();
+  });
+
+  it("carries options.delimiter into trigger_metadata for the worker to parse with", async () => {
+    const { deps, calls } = makeDeps({}, { first: undefined });
+    await startImport(deps, { ...baseArgs, options: { skipEmbeddings: true, delimiter: ";" } });
+    const triggerMetadata = JSON.parse(calls["insert"]![0]![0].trigger_metadata);
+    expect(triggerMetadata.options).toEqual({ skipEmbeddings: true, delimiter: ";" });
+  });
 });
 
 describe("cancelImport", () => {
-  function runningRow(state: string, starter: unknown = 7) {
+  function runningRow(state: string, starter: unknown = 7, type: string = "import") {
     return {
       id: "job-1",
       state,
+      type,
       trigger_metadata: { user: { id: starter, super_admin: false } },
     };
   }
@@ -263,6 +323,24 @@ describe("cancelImport", () => {
     expect(calls["whereIn"]).toEqual([["state", ["waiting"]]]);
   });
 
+  it("M5: logs and still cancels when queue.getJob itself throws (Redis outage), not leaving the row waiting", async () => {
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const { deps, calls, queue } = makeDeps(
+      { user: { id: 7, super_admin: false } },
+      { first: runningRow("waiting", 7) },
+    );
+    queue.getJob.mockRejectedValue(new Error("redis unreachable"));
+
+    const result = await cancelImport(deps, "job-1");
+    expect(result).toEqual({ ok: true });
+    expect(consoleErrorSpy).toHaveBeenCalled();
+
+    const stateUpdate = calls["update"]!.find((c) => "state" in c[0]!)!;
+    expect(stateUpdate[0]).toEqual({ state: "cancelled" });
+
+    consoleErrorSpy.mockRestore();
+  });
+
   it("logs and continues when job.remove() fails after cancelRequested is persisted (F6)", async () => {
     const remove = jest.fn(async () => {
       throw new Error("job locked by worker");
@@ -285,19 +363,63 @@ describe("cancelImport", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("only flags cancelRequested (no remove, no state change) when the row is already active", async () => {
+  it("I3: only flags cancelRequested (no state change) when the row is active and its job still exists", async () => {
     const { deps, calls, queue } = makeDeps(
       { user: { id: 7, super_admin: false } },
       { first: runningRow("active", 7) },
     );
+    queue.getJob.mockResolvedValue({ remove: jest.fn(async () => undefined) });
 
     const result = await cancelImport(deps, "job-1");
     expect(result).toEqual({ ok: true });
-    expect(queue.getJob).not.toHaveBeenCalled();
+    expect(queue.getJob).toHaveBeenCalledWith("job-1");
     expect(calls["update"]).toHaveLength(1);
     expect(calls["update"]![0]![0].metadata.toString()).toBe(
       `coalesce(metadata, '{}'::jsonb) || '${JSON.stringify({ cancelRequested: true })}'::jsonb`,
     );
+  });
+
+  it("I3: forces an active row whose BullMQ job is gone to cancelled, unblocking the context", async () => {
+    const { deps, calls, queue } = makeDeps(
+      { user: { id: 7, super_admin: false } },
+      { first: runningRow("active", 7) },
+    );
+    queue.getJob.mockResolvedValue(undefined);
+
+    const result = await cancelImport(deps, "job-1");
+    expect(result).toEqual({ ok: true });
+
+    expect(calls["update"]).toHaveLength(2);
+    const stateUpdate = calls["update"]!.find((c) => "state" in c[0]!)!;
+    expect(stateUpdate[0]).toEqual({ state: "cancelled" });
+    // CAS: only an still-active row may be forced (a worker that came back
+    // and completed it in the meantime must not be overwritten).
+    expect(calls["whereIn"]).toEqual([["state", ["active"]]]);
+  });
+
+  it("I3: leaves an active row alone (flag only) when the queue lookup itself fails", async () => {
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const { deps, calls, queue } = makeDeps(
+      { user: { id: 7, super_admin: false } },
+      { first: runningRow("active", 7) },
+    );
+    queue.getJob.mockRejectedValue(new Error("redis unreachable"));
+
+    const result = await cancelImport(deps, "job-1");
+    expect(result).toEqual({ ok: true });
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    expect(calls["update"]).toHaveLength(1);
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("M4: throws IMPORT_NOT_FOUND for a job_results row of another type", async () => {
+    const { deps, calls } = makeDeps(
+      { user: { id: 7, super_admin: false } },
+      { first: runningRow("active", 7, "workflow") },
+    );
+    await expect(cancelImport(deps, "job-1")).rejects.toMatchObject({ code: "IMPORT_NOT_FOUND" });
+    expect(calls["update"]).toBeUndefined();
   });
 
   it("allows a super admin to cancel someone else's import", async () => {
@@ -311,7 +433,7 @@ describe("cancelImport", () => {
   it("tolerates a bare-number trigger_metadata.user snapshot for the starter check", async () => {
     const { deps } = makeDeps(
       { user: { id: 7, super_admin: false } },
-      { first: { id: "job-1", state: "active", trigger_metadata: { user: 7 } } },
+      { first: { id: "job-1", state: "active", type: "import", trigger_metadata: { user: 7 } } },
     );
     await expect(cancelImport(deps, "job-1")).resolves.toEqual({ ok: true });
   });

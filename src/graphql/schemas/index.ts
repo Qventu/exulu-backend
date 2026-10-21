@@ -840,6 +840,7 @@ export function createSDL(
 
     input StartImportOptionsInput {
         skipEmbeddings: Boolean
+        delimiter: String
     }
 
     input StartImportInput {

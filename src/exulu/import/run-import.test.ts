@@ -52,9 +52,10 @@ describe("runImport", () => {
     expect(result.updated).toBe(1);
     expect(lookupExisting).toHaveBeenCalledWith([], ["X1"]);
     expect(d.updateItem).toHaveBeenCalledWith("id-X1", { name: "Shoe X1", external_id: "X1", qty: 5 });
+    // I7: the blank external_id cell is dropped, never written as "" (the
+    // column is UNIQUE, so a second blank row would collide).
     expect(d.createItem).toHaveBeenCalledWith({
       name: "Shoe X2",
-      external_id: "",
       qty: 7,
       rights_mode: "public",
     });
@@ -243,6 +244,69 @@ describe("runImport", () => {
     expect(d.uploadErrorReport).toHaveBeenCalledWith(
       "﻿name,external_id,qty,import_error\nR1,E1,abc,qty:number\nR2,E2,abc,qty:number\n…,,,truncated: 2 more rows not listed",
     );
+  });
+
+  it("I8: a row keyed by a uuid id that matches nothing fails with \"id not found\" instead of creating", async () => {
+    const withId: ImportField[] = [...fields, { name: "id", type: "text", core: true }];
+    const missingUuid = "123e4567-e89b-12d3-a456-426614174000";
+    const csv = `name,external_id,qty,id\nGhost,,1,${missingUuid}\n`;
+    const d = deps(csv, { fields: withId, lookupExisting: jest.fn(async () => []) });
+
+    const result = await runImport(d);
+
+    expect(result.failed).toBe(1);
+    expect(result.created).toBe(0);
+    expect(d.createItem).not.toHaveBeenCalled();
+    expect(d.updateItem).not.toHaveBeenCalled();
+    expect(d.uploadErrorReport).toHaveBeenCalledWith(expect.stringContaining("id not found"));
+  });
+
+  it("I8: a row keyed by a non-uuid id fails the same way (it can never match the uuid primary key)", async () => {
+    const withId: ImportField[] = [...fields, { name: "id", type: "text", core: true }];
+    const csv = "name,external_id,qty,id\nSku Row,,1,SKU-1\n";
+    const d = deps(csv, { fields: withId, lookupExisting: jest.fn(async () => []) });
+
+    const result = await runImport(d);
+
+    expect(result.failed).toBe(1);
+    expect(result.created).toBe(0);
+    expect(d.createItem).not.toHaveBeenCalled();
+    expect(d.uploadErrorReport).toHaveBeenCalledWith(expect.stringContaining("id not found"));
+  });
+
+  it("I8: an external_id that matches nothing still becomes a create (the created row carries the key)", async () => {
+    const csv = "name,external_id,qty\nNew,X9,1\n";
+    const d = deps(csv, { lookupExisting: jest.fn(async () => []) });
+
+    const result = await runImport(d);
+
+    expect(result.created).toBe(1);
+    expect(result.failed).toBe(0);
+  });
+
+  it("M10: quotes an error-report cell containing a lone carriage return", async () => {
+    const csv = 'name,external_id,qty\n"a\rb",X1,abc\n';
+    const d = deps(csv);
+
+    const result = await runImport(d);
+
+    expect(result.invalid).toBe(1);
+    expect(d.uploadErrorReport).toHaveBeenCalledWith(
+      '\ufeffname,external_id,qty,import_error\n"a\rb",X1,abc,qty:number',
+    );
+  });
+
+  it("I10: honours options.delimiter instead of sniffing the header line", async () => {
+    // The header line ties on "," and ";", so sniffing picks "," -- which
+    // maps nothing and aborts the run. Only the explicit delimiter parses it.
+    const csv = "qty,name;external_id\n5,Shoe;X1\n";
+    await expect(runImport(deps(csv))).rejects.toMatchObject({ code: "NO_MAPPABLE_COLUMNS" });
+
+    const d = deps(csv, { options: { delimiter: ";" } });
+    const result = await runImport(d);
+
+    expect(result.created).toBe(1);
+    expect(d.createItem).toHaveBeenCalledWith({ external_id: "X1", rights_mode: "public" });
   });
 
   it("fix 3: does not consult isCancelRequested after the trailing partial chunk", async () => {

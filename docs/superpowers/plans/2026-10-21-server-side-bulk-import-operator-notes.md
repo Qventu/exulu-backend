@@ -20,8 +20,11 @@ The CSV import wizard has two modes, split by size:
   daily export already sitting on S3) — there is no separate API path.
 
 Server mode requires the queues enterprise licence and Redis (see
-Configuration prerequisites and Queue below); without them `StartImport`
-fails with `QUEUES_NOT_LICENSED`.
+Configuration prerequisites and Queue below). A missing/invalid licence is
+the only case that surfaces as `QUEUES_NOT_LICENSED`; a missing or
+unreachable Redis server surfaces as the original error (e.g.
+`[EXULU] no redis server configured.`), deliberately unmapped — see Error
+codes.
 
 ## Configuration prerequisites
 
@@ -78,11 +81,15 @@ variables. For server-side import to work, an operator must have:
 
 Any context of type `items` gets `${singular}StartImport` and
 `${singular}CancelImport` mutations (`src/graphql/schemas/index.ts`). For a
-context named `products` (singular name `product`):
+context the *singular table name* is `<contextId>_items`
+(`convertContextToTableDefinition`), so a context with id `products` gets
+**`products_itemsStartImport`** and **`products_itemsCancelImport`** — the
+same spelling as its sibling mutations (`products_itemsExecuteSource`), not
+`productStartImport`:
 
 ```graphql
 mutation {
-  productStartImport(
+  products_itemsStartImport(
     input: {
       s3Key: "my-platform-bucket/imports/products-2026-10-21.csv"
       fileName: "products-2026-10-21.csv"
@@ -98,7 +105,7 @@ mutation {
         roles: null
         teams: null
       }
-      options: { skipEmbeddings: false }
+      options: { skipEmbeddings: false, delimiter: ";" }
       totalRows: 42000
     }
   ) {
@@ -130,6 +137,7 @@ input StartImportAccessInput {
 }
 input StartImportOptionsInput {
     skipEmbeddings: Boolean
+    delimiter: String
 }
 type StartImportPayload {
     jobResultId: ID!
@@ -143,7 +151,13 @@ Notes:
   `config.fileUploads.s3Bucket` exactly — a key pointing at any other bucket
   is rejected before anything is written (`IMPORT_S3_KEY_OUTSIDE_BUCKET`).
   There is no cross-bucket support: copy or upload the file into the
-  platform bucket first.
+  platform bucket first. Within the bucket, a key under somebody else's
+  private upload prefix (`user_<id>/…`, for any id other than the caller's)
+  is also refused (`IMPORT_S3_KEY_NOT_ALLOWED`) — the same rule
+  `GET /s3/download` applies, since an import would otherwise read another
+  user's upload and materialise it as items. Super admins and API-key
+  callers (`user.type === "api"`) are exempt, and keys with no `user_`
+  segment (e.g. a shared `imports/…` prefix) are unaffected.
 - **`mapping`** is by **header name**, not column index
   (`{ header, fieldName }`). `fieldName: null` means "ignore this column" —
   also how a retry pre-fills the error CSV's own `import_error` column so it
@@ -155,10 +169,17 @@ Notes:
   or the call fails with `INVALID_RIGHTS_MODE`. This access is applied only
   to newly **created** rows; updated rows keep their existing access
   unchanged.
+- **`options.delimiter`**, if supplied, is used verbatim by the CSV parser.
+  Omitted, the delimiter is **sniffed from the header line**: the most
+  frequent of `,` `;` `\t` `|` outside quotes wins, with `,` as the default
+  and tie-break (`sniffDelimiter`, `src/exulu/import/csv-stream.ts`). A
+  `;`-delimited export (the German/Swiss Excel default) therefore imports
+  without any extra input.
 - **`totalRows`**, if supplied by the caller (e.g. the wizard's chunked
-  count), seeds `job_results.metadata.total` for a progress percentage;
-  omitted or unknown, it starts `null`/`0` and only `processed` is
-  meaningful until the run finishes.
+  count), seeds `job_results.metadata.total` and is carried through the run
+  as the progress denominator; omitted (or `0`), `metadata.total` stays
+  `null` throughout and only `processed` is meaningful until the run
+  finishes.
 - The call returns `{ jobResultId }` — this is both the `job_results.id` to
   poll and the BullMQ job id (`jobId: jobResultId` on enqueue), so cancel and
   the progress query both key off the same value.
@@ -170,7 +191,7 @@ Notes:
 
 ```graphql
 mutation {
-  productCancelImport(jobResultId: "3fa85f64-5717-4562-b3fc-2c963f66afa6") {
+  products_itemsCancelImport(jobResultId: "3fa85f64-5717-4562-b3fc-2c963f66afa6") {
     ok
   }
 }
@@ -187,10 +208,24 @@ mutation {
   `cancelled`. A failed removal (e.g. the worker grabbed it a moment earlier)
   is logged, not thrown — the `cancelRequested` flag is already persisted
   and the running worker will honour it instead.
+- If the row is `active` (a worker has it), the running worker normally sees
+  the flag at its next chunk boundary and finalizes the row itself, so only
+  the flag is written. **Recovery for a stuck `active` row:** if the BullMQ
+  job no longer exists (the run died in a way that never reached the
+  `"failed"` handler — worker process gone, a Postgres outage swallowing
+  that write, the 6 h timeout on a dead process), nothing will ever observe
+  the flag and D6's gate would refuse every future import for the context.
+  Cancel therefore also forces such a row to `cancelled` (CAS-guarded on it
+  still being `active`), so the next `StartImport` works. If Redis itself is
+  unreachable, the lookup failure is logged and the row is left `active` —
+  cancel still returns `{ ok: true }`; retry once Redis is back.
 - If the row is already terminal (`completed`/`failed`/`cancelled`), the call
   is a no-op that still returns `{ ok: true }` — a double-click or a race
   with the worker's own completion never errors.
-- A `jobResultId` with no matching row is an error (`IMPORT_NOT_FOUND`).
+- A `jobResultId` with no matching row — or one whose row is not an import
+  (`type != "import"`, e.g. a workflow run) — is an error
+  (`IMPORT_NOT_FOUND`); the per-context mutation prefix is cosmetic, so this
+  is what stops an import-cancel from touching another job type's row.
 
 ## Progress and results
 
@@ -236,8 +271,9 @@ reaches a GraphQL client as the error message.
 | `CONTEXT_NOT_FOUND` | `table.id` does not match a registered context. | Check the context id used in the mutation name/call. |
 | `IMPORT_ALREADY_RUNNING` | A `job_results` row for this context, `type = "import"`, is already `waiting` or `active` (one running import per context, D6). | Wait for it to finish, or cancel it first. |
 | `IMPORT_S3_KEY_OUTSIDE_BUCKET` | `s3Key`'s bucket segment does not equal `config.fileUploads.s3Bucket`. | Upload/copy the file into the platform bucket and pass that key. |
+| `IMPORT_S3_KEY_NOT_ALLOWED` | The key is inside the platform bucket but under another user's `user_<id>/` prefix, and the caller is neither a super admin nor an API key (same predicate as `GET /s3/download`, `src/uppy/index.ts`). | Upload the file under your own prefix (or a shared one), or call as a super admin / API key. |
 | `INVALID_RIGHTS_MODE` | `access.rights_mode` is not one of `private`, `users`, `roles`, `teams`, `public`. | Fix the `access.rights_mode` value. |
-| `IMPORT_NOT_FOUND` | `CancelImport`'s `jobResultId` matches no `job_results` row. | Check the id; it may have been typo'd or the row pruned. |
+| `IMPORT_NOT_FOUND` | `CancelImport`'s `jobResultId` matches no `job_results` row, or matches a row whose `type` is not `"import"`. | Check the id; it may have been typo'd, pruned, or belong to another job type. |
 | `NOT_AUTHORIZED` | Either: no authenticated user on the request (`StartImport`/`CancelImport` both require `context.user`); or (`CancelImport` only) the caller is neither the import's starter nor a super admin. | Authenticate, or have the starter / a super admin cancel instead. |
 | `QUEUES_NOT_LICENSED` | `ExuluQueues.register(...)` for the `import` queue threw — only happens when `checkLicense()["queues"]` is false, i.e. `EXULU_ENTERPRISE_LICENSE` missing/invalid. A genuine Redis connectivity error from `.use()` is deliberately **not** mapped to this code and surfaces as-is. | Set a valid `EXULU_ENTERPRISE_LICENSE`. If the error is something else (Redis down/unreachable), fix Redis, not the licence. |
 
@@ -253,6 +289,19 @@ not reach the GraphQL caller — they land in `job_results.error` with
 A DB outage or any other unexpected throw during the run also lands the row
 in `state = "failed"` with the real error serialized into `error`
 (`src/utils/serialize-error.ts`), via the same worker `"failed"` handler.
+
+**`IMPORT_RESTARTED_AFTER_STALL`** is one such message, raised by the worker
+branch itself rather than by `run-import`. `attempts: 1` stops *failure*
+retries, but BullMQ's stalled recovery (`lockDuration` 5 min,
+`stalledInterval` 2 min, `maxStalledCount` 1) still moves a job back to
+`wait` once after a worker crash, a long event-loop block, or a Redis gap.
+Re-streaming the file from row 0 would create every key-less row a second
+time and reset the counters, so the second pickup refuses: the row goes
+`failed` with `IMPORT_RESTARTED_AFTER_STALL: import <id> was already
+running; partial rows are kept, start a new import`. The rows written before
+the stall stay; the context's gate reopens, so the remedy is to start a new
+import (an `external_id`/`id`-keyed file is safe to re-run as-is, since
+those rows match and update).
 
 ## Error CSV
 
@@ -280,6 +329,17 @@ in `state = "failed"` with the real error serialized into `error`
   `"duplicateKey:external_id"` (a later row in the same file reusing a key
   already claimed earlier in the same run), or the raw error message from a
   failed create/update/lookup.
+
+## Coercion parity with the browser preview
+
+The server validates and coerces exactly as the client wizard's preview does
+(same outcomes, same error codes), for every type except `file` — which is
+excluded from a server import entirely, there being no local file to upload
+against. The shared parity fixture lives at
+**`src/exulu/import/fixtures/coercion-cases.json`** in this repo, and the
+frontend copies it verbatim; nothing in either repo enforces that link
+automatically, so a change to the coercion rules means changing the fixture
+here and re-copying it there.
 
 ## Retention
 

@@ -39,7 +39,8 @@ export type RunImportDeps = {
   fields: ImportField[];
   mapping?: ColumnMapping[];
   access: BatchAccess;
-  options: { skipEmbeddings?: boolean };
+  /** `delimiter`, when set, overrides csv-stream's header-line sniffing. */
+  options: { skipEmbeddings?: boolean; delimiter?: string };
   user: { id: number; super_admin?: boolean; role?: unknown };
   lookupExisting: (ids: string[], externalIds: string[]) => Promise<ExistingRow[]>;
   /** Per-record write gate for an update target (D13: public, private+creator, creator, RBAC users/roles/teams with write). */
@@ -83,9 +84,14 @@ export const IMPORT_MAX_ERROR_LINES = 50_000;
 /** Internal signal thrown from `onRow` to stop the parser right after a cancellation is observed. */
 class RunCancelled extends Error {}
 
-/** RFC 4180 quoting: wrap in quotes (doubling embedded quotes) when the value contains a quote, comma, or newline. */
+/**
+ * RFC 4180 quoting: wrap in quotes (doubling embedded quotes) when the value
+ * contains a quote, comma, or any line break -- a lone CR included, since the
+ * CSV parsers that accept a bare CR as a record delimiter (this one does,
+ * `record_delimiter` in csv-stream.ts) would otherwise split the error line.
+ */
 function csvField(value: string): string {
-  return /["\n,]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+  return /["\n\r,]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
 function csvLine(cells: string[]): string {
@@ -264,7 +270,27 @@ export async function runImport(deps: RunImportDeps): Promise<RunImportResult> {
     }
     for (const u of toUpdate) {
       const existing = u.by === "id" ? byId.get(u.key) : byExternalId.get(u.key);
-      tasks.push(existing ? () => runUpdate(existing, u.row, u.cells) : () => runCreate(u.row, u.cells));
+      if (existing) {
+        tasks.push(() => runUpdate(existing, u.row, u.cells));
+        continue;
+      }
+      // An `id`-keyed row that matches no existing item is a mistake, not a
+      // create: `id` is the item table's uuid primary key, which only this
+      // platform mints, and `cellValues` deliberately drops it from the write
+      // input -- so "create it anyway" would silently produce a fresh,
+      // unmatched row on every run (a daily export mapped to `id` instead of
+      // `external_id` would duplicate the whole catalogue daily). A key that
+      // is not even uuid-shaped arrives here too: lookupExisting filters it
+      // out before the query, so it can only ever report a miss.
+      //
+      // `external_id` keeps the miss -> create fallback: the created row
+      // carries that key, so the next run matches it.
+      if (u.by === "id") {
+        metadata.failed++;
+        pushErrorLine(u.cells, "id not found");
+        continue;
+      }
+      tasks.push(() => runCreate(u.row, u.cells));
     }
 
     await runPool(tasks, concurrency, (task) => task());
@@ -276,35 +302,39 @@ export async function runImport(deps: RunImportDeps): Promise<RunImportResult> {
   }
 
   try {
-    await streamCsvRows(deps.stream, {
-      onHeader: (headers) => {
-        headerSeen = true;
-        headerCells = headers;
-        const resolved = resolveMapping(headers, deps.fields, deps.mapping);
-        byIndex = resolved.byIndex;
-        const nameMapped = byIndex.includes("name");
-        const keyMapped = byIndex.includes("id") || byIndex.includes("external_id");
-        const allUnmapped = byIndex.every((f) => f === null);
-        if (allUnmapped || (!nameMapped && !keyMapped)) {
-          throw new ImportAbort("NO_MAPPABLE_COLUMNS");
-        }
-      },
-      onRow: async (cells, index) => {
-        buffer.push({ index, cells });
-        const intervalElapsed = now() - lastTickAt >= progressIntervalMs;
-        if (buffer.length < chunkRows && !intervalElapsed) return;
+    await streamCsvRows(
+      deps.stream,
+      {
+        onHeader: (headers) => {
+          headerSeen = true;
+          headerCells = headers;
+          const resolved = resolveMapping(headers, deps.fields, deps.mapping);
+          byIndex = resolved.byIndex;
+          const nameMapped = byIndex.includes("name");
+          const keyMapped = byIndex.includes("id") || byIndex.includes("external_id");
+          const allUnmapped = byIndex.every((f) => f === null);
+          if (allUnmapped || (!nameMapped && !keyMapped)) {
+            throw new ImportAbort("NO_MAPPABLE_COLUMNS");
+          }
+        },
+        onRow: async (cells, index) => {
+          buffer.push({ index, cells });
+          const intervalElapsed = now() - lastTickAt >= progressIntervalMs;
+          if (buffer.length < chunkRows && !intervalElapsed) return;
 
-        const chunk = buffer;
-        buffer = [];
-        await processChunk(chunk);
-        await tick();
-        if (await deps.isCancelRequested()) {
-          cancelled = true;
-          log(`import: cancelled after ${metadata.processed} rows`);
-          throw new RunCancelled();
-        }
+          const chunk = buffer;
+          buffer = [];
+          await processChunk(chunk);
+          await tick();
+          if (await deps.isCancelRequested()) {
+            cancelled = true;
+            log(`import: cancelled after ${metadata.processed} rows`);
+            throw new RunCancelled();
+          }
+        },
       },
-    });
+      { delimiter: deps.options.delimiter },
+    );
   } catch (e) {
     if (!(e instanceof RunCancelled)) throw e;
   }
