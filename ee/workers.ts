@@ -44,7 +44,7 @@ import { findLiteLLMModel } from "@SRC/exulu/litellm/catalog.ts";
 import { computeRunCostUsd } from "@SRC/exulu/routines/run-cost.ts";
 import { getS3ObjectStream } from "@SRC/uppy";
 import { runImport, ImportAbort } from "@SRC/exulu/import/run-import.ts";
-import { buildWorkerDeps } from "@SRC/exulu/import/worker-deps.ts";
+import { buildWorkerDeps, finalizeCancelled } from "@SRC/exulu/import/worker-deps.ts";
 import { importFieldsFor } from "@SRC/exulu/import/mapping.ts";
 import type { ImportJobData } from "@EXULU_TYPES/queue-config.ts";
 
@@ -1163,7 +1163,7 @@ export const createWorkers = async (
                 mapping?: any;
                 access?: any;
                 options?: { skipEmbeddings?: boolean };
-                user?: { id: number; super_admin?: boolean; role?: unknown };
+                user?: unknown;
               };
               if (!triggerMetadata.s3Key) {
                 throw new Error(
@@ -1176,12 +1176,32 @@ export const createWorkers = async (
                 );
               }
 
-              // trigger_metadata.user is a snapshot of the acting user (id,
-              // super_admin, role) taken at StartImport time -- the top-level
-              // importData.user/importData.role on the BullMQ job are plain
-              // ids/strings and do not carry super_admin, which canWrite needs.
+              // trigger_metadata.user is a snapshot of the acting user
+              // ({ id, super_admin, role, team }) taken at StartImport time --
+              // the top-level importData.user/importData.role on the BullMQ
+              // job are plain ids/strings and carry neither super_admin nor
+              // team, which canWrite needs. The snapshot may also just be a
+              // bare id (number or numeric string); `snap ?? importData.user`
+              // only reaches that branch when `snap` itself is not an object,
+              // so a bare-number snapshot (not just a wholly absent one) also
+              // falls back correctly -- `triggerMetadata.user ?? {...}` did
+              // not (a bare number is not nullish, so it short-circuited the
+              // fallback and `importUser` ended up as that raw number instead
+              // of an object with an `.id`).
+              const snap = triggerMetadata.user as
+                | { id?: unknown; super_admin?: unknown; role?: unknown; team?: unknown }
+                | number
+                | string
+                | undefined;
               const importUser =
-                triggerMetadata.user ?? { id: Number(importData.user), role: importData.role };
+                snap && typeof snap === "object"
+                  ? {
+                      id: Number(snap.id),
+                      super_admin: snap.super_admin === true,
+                      role: snap.role,
+                      team: snap.team,
+                    }
+                  : { id: Number(snap ?? importData.user), role: importData.role };
               if (!importUser.id) {
                 throw new Error(`No acting user recorded for import job ${bullmqJob.id}.`);
               }
@@ -1212,15 +1232,13 @@ export const createWorkers = async (
 
                 if (result.cancelled) {
                   // The completed handler's CAS only fires `WHERE state =
-                  // "active"` -- flip to "cancelled" here first so that CAS
-                  // no longer matches and the row's state stays "cancelled"
-                  // instead of being overwritten back to "completed".
-                  await casJobResultState(
-                    db,
-                    row.id,
-                    [JOB_STATUS_ENUM.active],
-                    JOB_STATUS_ENUM.cancelled,
-                  );
+                  // "active"` -- finalizeCancelled flips the row to
+                  // "cancelled" (so that CAS no longer matches and the state
+                  // stays "cancelled" instead of being overwritten back to
+                  // "completed") AND persists `result`/`errorReportKey` in
+                  // the same statement, since no handler will run for this
+                  // return value once the row is no longer "active".
+                  await finalizeCancelled(db, row.id, result);
                 }
 
                 return { result, metadata: result };

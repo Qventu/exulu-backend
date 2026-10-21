@@ -5,12 +5,47 @@ jest.mock("@SRC/uppy", () => ({
   uploadFile: (...args: any[]) => uploadFileSpy(...args),
 }));
 
-import { canWrite, isCancelRequested, lookupExisting, uploadErrorReport, writeProgress } from "./worker-deps";
-import type { ExistingRow } from "./run-import";
+import knexFactory from "knex";
+import {
+  canWrite,
+  finalizeCancelled,
+  isCancelRequested,
+  lookupExisting,
+  uploadErrorReport,
+  writeProgress,
+} from "./worker-deps";
+import type { ExistingRow, RunImportResult } from "./run-import";
 
 beforeEach(() => {
   uploadFileSpy.mockClear();
 });
+
+// Connectionless real knex instance (same pattern as
+// src/exulu/memory/recall-collector.rbac.test.ts): lets `db.raw(...)`
+// compile genuine SQL -- via `.toString()` -- without a live database, so
+// the atomic-merge raw expression can be asserted on verbatim instead of
+// guessed at through a hand-rolled fake.
+const k = knexFactory({ client: "pg" });
+
+/** Fake `job_results` query builder: records every call, `db.raw` is real. */
+function fakeJobResultsDb(opts: { first?: any } = {}) {
+  const calls: Record<string, any[][]> = {};
+  const builder: any = {};
+  const record =
+    (name: string) =>
+    (...args: any[]) => {
+      (calls[name] ||= []).push(args);
+      return builder;
+    };
+  builder.where = record("where");
+  builder.whereIn = record("whereIn");
+  builder.select = record("select");
+  builder.first = jest.fn(async () => opts.first);
+  builder.update = jest.fn(async () => 1);
+  const db: any = jest.fn(() => builder);
+  db.raw = (...args: any[]) => k.raw(...args);
+  return { db, calls, builder };
+}
 
 describe("canWrite", () => {
   const user = { id: 7 };
@@ -117,7 +152,29 @@ describe("canWrite", () => {
     expect(canWrite(existing, user)).toBe(false);
   });
 
-  it("denies teams-shared records -- import jobs carry no team membership", () => {
+  it("grants write via a teams-RBAC write grant, matching an unhydrated team id", () => {
+    const existing: ExistingRow = {
+      id: "i1",
+      external_id: null,
+      rights_mode: "teams",
+      created_by: "99",
+      RBAC: [{ access_type: "Team", team_id: "team-1", rights: "write" }],
+    };
+    expect(canWrite(existing, { id: 7, team: "team-1" })).toBe(true);
+  });
+
+  it("grants write via a teams-RBAC write grant, matching a hydrated team object", () => {
+    const existing: ExistingRow = {
+      id: "i1",
+      external_id: null,
+      rights_mode: "teams",
+      created_by: "99",
+      RBAC: [{ access_type: "Team", team_id: "team-1", rights: "write" }],
+    };
+    expect(canWrite(existing, { id: 7, team: { id: "team-1" } })).toBe(true);
+  });
+
+  it("denies teams-shared records when the user has no team", () => {
     const existing: ExistingRow = {
       id: "i1",
       external_id: null,
@@ -126,6 +183,17 @@ describe("canWrite", () => {
       RBAC: [{ access_type: "Team", team_id: "team-1", rights: "write" }],
     };
     expect(canWrite(existing, user)).toBe(false);
+  });
+
+  it("denies a teams-RBAC grant that belongs to a different team", () => {
+    const existing: ExistingRow = {
+      id: "i1",
+      external_id: null,
+      rights_mode: "teams",
+      created_by: "99",
+      RBAC: [{ access_type: "Team", team_id: "team-2", rights: "write" }],
+    };
+    expect(canWrite(existing, { id: 7, team: "team-1" })).toBe(false);
   });
 });
 
@@ -171,7 +239,11 @@ describe("lookupExisting", () => {
       throw new Error(`unexpected table ${table}`);
     });
 
-    const rows = await lookupExisting(db, "ctx_items", ["i1"], ["e1"]);
+    // "i1" the query *input* must be a uuid to survive F3's PK-shape filter --
+    // it is unrelated to the fixture rows' own `id` values, which the fake's
+    // whereIn returns unconditionally regardless of args.
+    const validUuid = "11111111-1111-1111-1111-111111111111";
+    const rows = await lookupExisting(db, "ctx_items", [validUuid], ["e1"]);
 
     expect(rows).toEqual([
       { id: "i1", external_id: "e1", rights_mode: "users", created_by: "1", RBAC: [grants[0]] },
@@ -187,15 +259,48 @@ describe("lookupExisting", () => {
     expect(await lookupExisting(db, "ctx_items", [], [])).toEqual([]);
   });
 
+  it("filters out non-uuid CSV ids before querying the uuid primary key, keeping any valid uuid", async () => {
+    const { calls, builderFor } = fakeDb();
+    const validUuid = "123e4567-e89b-12d3-a456-426614174000";
+    const items = [{ id: validUuid, external_id: null, rights_mode: "private", created_by: "1" }];
+    const db: any = jest.fn((table: string) => builderFor(table, items));
+
+    await lookupExisting(db, "ctx_items", ["SKU-1", validUuid], []);
+
+    expect(calls["ctx_items.whereIn"]).toEqual([["id", [validUuid]]]);
+  });
+
+  it("issues no id query at all when every CSV id is non-uuid (e.g. a SKU code)", async () => {
+    const db: any = jest.fn(() => {
+      throw new Error("db should not be queried -- no uuid-shaped id and no external_id to look up");
+    });
+
+    const rows = await lookupExisting(db, "ctx_items", ["SKU-1", "SKU-2"], []);
+
+    expect(rows).toEqual([]);
+  });
+
+  it("still queries by external_id (a text column, left unfiltered) even when every id is non-uuid", async () => {
+    const { calls, builderFor } = fakeDb();
+    const items = [{ id: "123e4567-e89b-12d3-a456-426614174000", external_id: "SKU-1", rights_mode: "private", created_by: "1" }];
+    const db: any = jest.fn((table: string) => builderFor(table, items));
+
+    const rows = await lookupExisting(db, "ctx_items", ["SKU-1"], ["SKU-1"]);
+
+    expect(calls["ctx_items.whereIn"]).toEqual([["external_id", ["SKU-1"]]]);
+    expect(rows).toEqual([{ ...items[0], RBAC: [] }]);
+  });
+
   it("skips the rbac grants query entirely when no matched row needs grant-based access", async () => {
     const { calls, builderFor } = fakeDb();
-    const items = [{ id: "i1", external_id: null, rights_mode: "private", created_by: "1" }];
+    const validUuid = "22222222-2222-2222-2222-222222222222";
+    const items = [{ id: validUuid, external_id: null, rights_mode: "private", created_by: "1" }];
     const db: any = jest.fn((table: string) => {
       if (table === "rbac") throw new Error("rbac should not be queried");
       return builderFor(table, items);
     });
 
-    const rows = await lookupExisting(db, "ctx_items", ["i1"], []);
+    const rows = await lookupExisting(db, "ctx_items", [validUuid], []);
 
     expect(rows).toEqual([{ ...items[0], RBAC: [] }]);
     expect(calls["rbac.where"]).toBeUndefined();
@@ -203,68 +308,53 @@ describe("lookupExisting", () => {
 });
 
 describe("writeProgress", () => {
-  it("merges new counters over the existing metadata, keeping cancelRequested", async () => {
-    const updateSpy = jest.fn(async () => 1);
-    const builder: any = {
-      where: () => builder,
-      select: () => builder,
-      first: async () => ({ metadata: { cancelRequested: true, processed: 1 } }),
-      update: updateSpy,
-    };
-    const db: any = jest.fn(() => builder);
+  it("merges the new counters into metadata with a single atomic update -- no prior select/first, so a concurrent cancelRequested write can never be read-then-clobbered", async () => {
+    const { db, calls, builder } = fakeJobResultsDb();
+    const metadata = { total: null, processed: 5, created: 2, updated: 1, failed: 0, invalid: 0 };
 
-    await writeProgress(db, "job-1", {
-      total: null,
-      processed: 5,
-      created: 2,
-      updated: 1,
-      failed: 0,
-      invalid: 0,
-    });
+    await writeProgress(db, "job-1", metadata);
 
-    expect(updateSpy).toHaveBeenCalledTimes(1);
-    const written = JSON.parse(updateSpy.mock.calls[0]![0].metadata);
-    expect(written).toEqual({
-      cancelRequested: true,
-      total: null,
-      processed: 5,
-      created: 2,
-      updated: 1,
-      failed: 0,
-      invalid: 0,
-    });
+    expect(calls["select"]).toBeUndefined();
+    expect(builder.first).not.toHaveBeenCalled();
+    expect(calls["where"]).toEqual([[{ id: "job-1" }]]);
+    expect(builder.update).toHaveBeenCalledTimes(1);
+
+    const [values] = builder.update.mock.calls[0]!;
+    expect(Object.keys(values)).toEqual(["metadata"]);
+    const sql = values.metadata.toString();
+    expect(sql).toBe(`coalesce(metadata, '{}'::jsonb) || '${JSON.stringify(metadata)}'::jsonb`);
   });
+});
 
-  it("tolerates metadata stored as a JSON string, and a row with no prior metadata", async () => {
-    const updateSpy = jest.fn(async () => 1);
-    const builder: any = {
-      where: () => builder,
-      select: () => builder,
-      first: async () => ({ metadata: JSON.stringify({ cancelRequested: true }) }),
-      update: updateSpy,
-    };
-    const db: any = jest.fn(() => builder);
+describe("finalizeCancelled", () => {
+  const result: RunImportResult = {
+    total: 10,
+    processed: 10,
+    created: 4,
+    updated: 3,
+    failed: 2,
+    invalid: 1,
+    durationMs: 1234,
+    errorReportKey: "test-bucket/imports/ctx-1/job-1-errors.csv",
+    cancelled: true,
+    errorReportTruncated: false,
+  };
 
-    await writeProgress(db, "job-1", {
-      total: null,
-      processed: 1,
-      created: 0,
-      updated: 0,
-      failed: 0,
-      invalid: 0,
-    });
+  it("persists state/result/metadata in one update guarded on the row still being active", async () => {
+    const { db, calls, builder } = fakeJobResultsDb();
 
-    expect(updateSpy).toHaveBeenCalledTimes(1);
-    const written = JSON.parse(updateSpy.mock.calls[0]![0].metadata);
-    expect(written).toEqual({
-      cancelRequested: true,
-      total: null,
-      processed: 1,
-      created: 0,
-      updated: 0,
-      failed: 0,
-      invalid: 0,
-    });
+    await finalizeCancelled(db, "job-1", result);
+
+    expect(calls["where"]).toEqual([[{ id: "job-1" }]]);
+    expect(calls["whereIn"]).toEqual([["state", ["active"]]]);
+    expect(builder.update).toHaveBeenCalledTimes(1);
+
+    const [values] = builder.update.mock.calls[0]!;
+    expect(values.state).toBe("cancelled");
+    expect(values.result).toBe(JSON.stringify(result));
+    expect(values.metadata.toString()).toBe(
+      `coalesce(metadata, '{}'::jsonb) || '${JSON.stringify(result)}'::jsonb`,
+    );
   });
 });
 

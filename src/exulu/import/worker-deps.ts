@@ -1,12 +1,13 @@
 import { getTableName } from "@SRC/exulu/table-names";
 import { uploadFile } from "@SRC/uppy";
+import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import type { ExuluConfig } from "@SRC/exulu/app/index";
 import type { ColumnMapping, ImportField } from "./mapping";
 import type { BatchAccess } from "./rows";
-import type { ExistingRow, ProgressMetadata, RunImportDeps } from "./run-import";
+import type { ExistingRow, ProgressMetadata, RunImportDeps, RunImportResult } from "./run-import";
 
 /** The acting user for an import run, as carried on RunImportDeps.user. */
-export type ImportUser = { id: number; super_admin?: boolean; role?: unknown };
+export type ImportUser = { id: number; super_admin?: boolean; role?: unknown; team?: unknown };
 
 /**
  * One grant row from the shared `rbac` table (ee/rbac-update.ts), as attached
@@ -25,11 +26,28 @@ function grantsOf(existing: ExistingRow): RbacGrant[] {
   return Array.isArray(raw) ? (raw as RbacGrant[]) : [];
 }
 
-/** `user.role` arrives either as a bare uuid string or a hydrated `{ id, ... }` row. */
-function roleIdOf(role: unknown): string | undefined {
-  if (typeof role === "string") return role;
-  if (role != null && typeof role === "object" && "id" in role) {
-    const id = (role as { id: unknown }).id;
+/**
+ * Item tables declare `id` as a `uuid` column (createItemsTable,
+ * src/exulu/context.ts). A CSV's `id` column is free text -- a row quoting
+ * some other system's non-uuid key there (e.g. a SKU) must not reach
+ * `whereIn("id", ...)`, or Postgres rejects the whole query ("invalid input
+ * syntax for type uuid") and fails every row in the chunk, not just the bad
+ * one. `external_id` is a plain text column and is never filtered.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
+/**
+ * `user.role` / `user.team` each arrive either as a bare uuid string or a
+ * hydrated `{ id, ... }` row (auth.ts hydrates when the role/team still
+ * exists; unhydrated it is still just the uuid string).
+ */
+function idOf(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (value != null && typeof value === "object" && "id" in value) {
+    const id = (value as { id: unknown }).id;
     if (typeof id === "string") return id;
     if (typeof id === "number") return String(id);
   }
@@ -45,14 +63,10 @@ function roleIdOf(role: unknown): string | undefined {
  * Must stay synchronous: run-import.ts calls `deps.canWrite(existing)`
  * without awaiting it (RunImportDeps.canWrite returns `boolean`, not a
  * Promise), so it cannot query the `rbac` table itself the way
- * checkItemWriteAccess does -- lookupExisting batches those grants onto
- * `existing.RBAC` once per chunk instead of a query per row.
- *
- * No `teams` support: ImportUser (built from the import job's data) carries
- * no team membership -- the import job data never does -- so a
- * `teams`-shared record can never be written through this path. Deliberate,
- * documented gap, not a bug: such rows simply fail with "no write access"
- * the same way an unknown rights_mode would.
+ * checkItemWriteAccess does -- lookupExisting batches those grants (users,
+ * roles, AND teams -- mirrors src/graphql/mutations/index.ts:444-461 and
+ * src/utils/check-item-write-access.ts:84-98) onto `existing.RBAC` once per
+ * chunk instead of a query per row.
  */
 export function canWrite(existing: ExistingRow, user: ImportUser): boolean {
   if (user.super_admin === true) return true;
@@ -71,15 +85,22 @@ export function canWrite(existing: ExistingRow, user: ImportUser): boolean {
   }
 
   if (existing.rights_mode === "roles") {
-    const roleId = roleIdOf(user.role);
+    const roleId = idOf(user.role);
     if (!roleId) return false;
     return grantsOf(existing).some(
       (g) => g.access_type === "Role" && String(g.role_id) === roleId && g.rights === "write",
     );
   }
 
-  // rights_mode === "teams" (no team on ImportUser, see doc comment) or any
-  // other/unknown value: deny.
+  if (existing.rights_mode === "teams") {
+    const teamId = idOf(user.team);
+    if (!teamId) return false;
+    return grantsOf(existing).some(
+      (g) => g.access_type === "Team" && String(g.team_id) === teamId && g.rights === "write",
+    );
+  }
+
+  // Any other/unknown rights_mode: deny.
   return false;
 }
 
@@ -107,6 +128,14 @@ async function selectItemsBy(
  * private row owned by someone else that should surface as "no write
  * access" rather than silently vanish from the lookup and get miscounted as
  * a create). getItems also has no way to select the `rbac` grants at all.
+ *
+ * `ids` is filtered to uuid-shaped strings before it ever reaches
+ * `whereIn("id", ...)` -- `id` is a `uuid` PK column, and a CSV's id column
+ * is free text (a non-uuid key like a SKU is a tentative-update signal, not
+ * a real row reference); an unfiltered non-uuid value in that `whereIn`
+ * would make Postgres reject the whole query ("invalid input syntax for
+ * type uuid"), failing every row in the chunk instead of just the one with
+ * the bad id. `external_id` is a plain text column and stays unfiltered.
  */
 export async function lookupExisting(
   db: any,
@@ -115,7 +144,7 @@ export async function lookupExisting(
   externalIds: string[],
 ): Promise<ExistingRow[]> {
   const [byId, byExternalId] = await Promise.all([
-    selectItemsBy(db, tableName, "id", ids),
+    selectItemsBy(db, tableName, "id", ids.filter(isUuid)),
     selectItemsBy(db, tableName, "external_id", externalIds),
   ]);
   const merged = new Map<string, ExistingRow>();
@@ -165,22 +194,62 @@ function parseMetadata(value: unknown): Record<string, any> {
 }
 
 /**
- * Merges the run loop's latest counters over the row's current metadata
- * (rather than overwriting it outright), so `cancelRequested` -- set by the
- * Cancel mutation directly on the row, outside the run loop -- survives
- * every progress tick.
+ * `job_results.metadata` is a `jsonb` column (declared `type: "json"` in
+ * ee/schemas.ts, but src/utils/map-types.ts's `"json"` branch calls
+ * `table.jsonb(name)` -- the physical Postgres type is jsonb). `||` is
+ * jsonb's own top-level merge operator: keys in `patch` overwrite keys
+ * already in the column, everything else (notably `cancelRequested`, set by
+ * the Cancel mutation outside the run loop) is left untouched.
+ */
+function mergeMetadataRaw(db: any, patch: Record<string, unknown>): unknown {
+  return db.raw("coalesce(metadata, '{}'::jsonb) || ?::jsonb", [JSON.stringify(patch)]);
+}
+
+/**
+ * Merges the run loop's latest counters into the row's metadata in a single
+ * UPDATE (D-Fix F4): a prior read-merge-write round-tripped through this
+ * process's memory between the SELECT and the UPDATE, so a `cancelRequested`
+ * write landing in that window (the Cancel mutation, racing a progress tick)
+ * would be read, then silently overwritten back to absent by this UPDATE
+ * once it ran -- the merge now happens inside the single statement, in the
+ * database, so no window exists for another writer to lose.
  */
 export async function writeProgress(db: any, jobResultId: string, m: ProgressMetadata): Promise<void> {
-  const row = await db("job_results").where({ id: jobResultId }).select("metadata").first();
-  const prev = parseMetadata(row?.metadata);
   await db("job_results")
     .where({ id: jobResultId })
-    .update({ metadata: JSON.stringify({ ...prev, ...m }) });
+    .update({ metadata: mergeMetadataRaw(db, m) });
 }
 
 export async function isCancelRequested(db: any, jobResultId: string): Promise<boolean> {
   const row = await db("job_results").where({ id: jobResultId }).select("metadata").first();
   return parseMetadata(row?.metadata).cancelRequested === true;
+}
+
+/**
+ * Persists a cancelled run's final result (D-Fix F6): the cancelled path
+ * previously only CASed `state` to "cancelled" and returned `{ result,
+ * metadata: result }` for the worker's `completed`/`failed` handlers to
+ * persist -- but neither handler runs for a return value on the already-
+ * terminal "cancelled" state (the `completed` handler's own CAS requires
+ * `state = "active"`, which no longer matches once this flips it), so
+ * `result`/`errorReportKey` were silently dropped on every cancelled run.
+ * This single, CAS-guarded UPDATE sets state, result, AND merges the final
+ * counters + errorReportKey into metadata (same atomic merge as
+ * writeProgress) all at once, so nothing else needs to write afterward.
+ */
+export async function finalizeCancelled(
+  db: any,
+  jobResultId: string,
+  result: RunImportResult,
+): Promise<void> {
+  await db("job_results")
+    .where({ id: jobResultId })
+    .whereIn("state", [JOB_STATUS_ENUM.active])
+    .update({
+      state: JOB_STATUS_ENUM.cancelled,
+      result: JSON.stringify(result),
+      metadata: mergeMetadataRaw(db, result),
+    });
 }
 
 /**
@@ -247,7 +316,7 @@ export function buildWorkerDeps(input: BuildWorkerDepsInput): RunImportDeps {
   const { db, config, context, contextId, jobResultId, stream, fields, mapping, access, options, user, log } =
     input;
   const tableName = getTableName(contextId);
-  const roleId = roleIdOf(user.role);
+  const roleId = idOf(user.role);
   // D6/Review Focus 6: the loop already decided create vs. update, so both
   // calls pass upsert=false; skipEmbeddings forces the overwrite to `false`,
   // otherwise leaving it `undefined` so the context's own calculateVectors

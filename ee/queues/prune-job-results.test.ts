@@ -23,11 +23,15 @@ describe("maybePruneJobResults", () => {
       },
       whereNot: () => builder,
       whereRaw: () => builder,
+      orWhereNull: () => builder,
       orderBy: () => builder,
       offset: () => builder,
       limit: () => builder,
       first: async () => undefined, // under cap: nothing to delete
-      where: () => builder,
+      where: (arg: any) => {
+        if (typeof arg === "function") arg.call(builder);
+        return builder;
+      },
       del: async () => 0,
     };
     const db: any = jest.fn(() => builder);
@@ -64,7 +68,17 @@ describe("maybePruneJobResults -- import retention exemption", () => {
       };
     builder.whereIn = record("whereIn");
     builder.whereNot = record("whereNot");
-    builder.where = record("where");
+    builder.orWhereNull = record("orWhereNull");
+    // Grouped predicate: `.where((b) => b.whereNot(...).orWhereNull(...))`.
+    // Knex invokes the callback with `this` bound to a sub-builder -- record
+    // the call itself, then run the callback against this same builder so
+    // its whereNot/orWhereNull calls land in the same `calls` map (matching
+    // how the production code's grouped predicate is actually built).
+    builder.where = (...args: any[]) => {
+      (calls["where"] ||= []).push(args);
+      if (typeof args[0] === "function") args[0].call(builder);
+      return builder;
+    };
     builder.whereRaw = record("whereRaw");
     builder.orderBy = record("orderBy");
     builder.offset = record("offset");
@@ -78,15 +92,25 @@ describe("maybePruneJobResults -- import retention exemption", () => {
     return { db, calls, del: builder.del as jest.Mock };
   }
 
-  it("excludes import rows from both the generic boundary query and its delete", async () => {
+  it("excludes import rows from both the generic boundary query and its delete, via a grouped predicate", async () => {
     const { db, calls } = fakeDb({ boundaryCreatedAt: "2026-01-01T00:00:00.000Z" });
     for (let i = 0; i < 100; i++) await maybePruneJobResults(db);
 
+    // Both queries build the predicate as `.where((b) => b.whereNot({type:
+    // "import"}).orWhereNull("type"))` -- a plain top-level `.whereNot({type:
+    // "import"})` compiles to `not type = 'import'`, which SQL evaluates to
+    // NULL/false for a row with `type IS NULL`, making such rows unprunable
+    // forever (D-Fix F2). The grouped `orWhereNull` closes that gap.
+    expect((calls["where"] ?? []).length).toBeGreaterThanOrEqual(2);
     const whereNotCalls = calls["whereNot"] ?? [];
-    // One on the boundary SELECT, one on the DELETE that uses it.
     expect(whereNotCalls.length).toBeGreaterThanOrEqual(2);
     for (const args of whereNotCalls) {
       expect(args[0]).toEqual({ type: "import" });
+    }
+    const orWhereNullCalls = calls["orWhereNull"] ?? [];
+    expect(orWhereNullCalls.length).toBeGreaterThanOrEqual(2);
+    for (const args of orWhereNullCalls) {
+      expect(args).toEqual(["type"]);
     }
   });
 

@@ -44,26 +44,42 @@ export async function maybePruneJobResults(db: any): Promise<void> {
 }
 
 /**
+ * Excludes import rows from the generic cap, on either a SELECT or a
+ * DELETE: a plain top-level `.whereNot({ type: "import" })` compiles to
+ * `not (type = 'import')`, and SQL's three-valued logic evaluates that to
+ * NULL (neither true nor false, so excluded from the result) for any row
+ * whose `type` is NULL -- making every untyped job_results row permanently
+ * unprunable (D-Fix F2). The grouped `orWhereNull("type")` catches those
+ * rows back into the generic cap, where they belong (they were never
+ * exempted on purpose -- `type` is just nullable on the column).
+ */
+function excludeImportType(builder: any): any {
+  return builder.where(function (this: any) {
+    this.whereNot({ type: "import" }).orWhereNull("type");
+  });
+}
+
+/**
  * The (MAX_TERMINAL+1)-th newest terminal row marks the boundary; delete it
  * and everything older. Dialect-agnostic (knex offset/limit) so it works on
- * both Postgres and MySQL. Import rows are excluded here (`whereNot({ type:
- * "import" })` on both the boundary query and the delete) -- they get their
- * own, smaller, per-context cap in pruneImportJobResults instead.
+ * both Postgres and MySQL. Import rows are excluded here (see
+ * excludeImportType) -- they get their own, smaller, per-context cap in
+ * pruneImportJobResults instead.
  */
 async function pruneGenericJobResults(db: any): Promise<void> {
   try {
-    const boundary = await db("job_results")
-      .whereIn("state", TERMINAL_JOB_STATES)
-      .whereNot({ type: "import" })
+    const boundary = await excludeImportType(
+      db("job_results").whereIn("state", TERMINAL_JOB_STATES),
+    )
       .orderBy("createdAt", "desc")
       .offset(MAX_TERMINAL)
       .limit(1)
       .first();
 
     if (boundary?.createdAt) {
-      const deleted = await db("job_results")
-        .whereIn("state", TERMINAL_JOB_STATES)
-        .whereNot({ type: "import" })
+      const deleted = await excludeImportType(
+        db("job_results").whereIn("state", TERMINAL_JOB_STATES),
+      )
         .where("createdAt", "<=", boundary.createdAt)
         .del();
       if (deleted) {
