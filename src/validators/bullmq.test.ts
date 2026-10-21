@@ -14,6 +14,18 @@ describe("bullmq.validate", () => {
     expect(() => bullmq.validate("job-1", base)).not.toThrow();
   });
 
+  it("accepts import jobs without a workflow/embedder/processor target", () => {
+    expect(() =>
+      bullmq.validate("job-1", {
+        ...base,
+        type: "import",
+        inputs: {},
+        jobResultId: "jr-1",
+        context: "ctx-1",
+      }),
+    ).not.toThrow();
+  });
+
   it("still rejects unknown job types", () => {
     expect(() => bullmq.validate("job-1", { ...base, type: "bogus" })).toThrow(
       /must be of value/,

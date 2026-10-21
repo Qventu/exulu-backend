@@ -1019,6 +1019,64 @@ const contextPresetsSchema: ExuluTableDefinition = {
   ],
 };
 
+// UI-only grouping of knowledge contexts for the IMP's folder view (the
+// contexts themselves are unchanged; a folder just lists their ids). Writes
+// are admin-only, the same apiWrites pattern as shared_artifacts: any
+// authenticated user may read the folder list, but only a super admin may
+// create, rename, reorder, or delete a folder through the generic mutations.
+const contextFoldersSchema: ExuluTableDefinition = {
+  type: "context_folders",
+  name: {
+    plural: "context_folders",
+    singular: "context_folder",
+  },
+  RBAC: false,
+  apiWrites: "super_admin",
+  fields: [
+    {
+      // `index: true` is advisory here, not a DB index: init-exulu-db.ts's
+      // mapType call for core tables only forwards `unique`, never `index`,
+      // to knex. Kept on the field because it documents intent (and other,
+      // non-core-table callers of mapType do read it) and the schema test
+      // asserts it, but creating this table does not add a Postgres index.
+      name: "name",
+      type: "text",
+      required: true,
+      index: true,
+    },
+    {
+      name: "description",
+      type: "text",
+    },
+    {
+      name: "icon",
+      type: "text",
+    },
+    {
+      // `default: 0` is advisory here, not a DB default: map-types.ts's
+      // json/number branches only call `.defaultTo(defaultValue)` when
+      // defaultValue is truthy, and 0 is falsy, so no column default is ever
+      // emitted for this field. New rows rely on the GraphQL input/resolver
+      // defaulting sort_order, not a Postgres-level default.
+      name: "sort_order",
+      type: "number",
+      default: 0,
+    },
+    {
+      // Unlike sort_order's `0`, "[]" is a truthy string, so map-types.ts's
+      // json branch does emit `.defaultTo("[]")`: a CreateOne that omits
+      // context_ids stores an empty array instead of NULL. That matters
+      // because the generated GraphQL output type is JSON! (non-null) —
+      // without this default a bare NULL would break context_foldersPagination
+      // for every reader, not just the row that omitted the field.
+      name: "context_ids",
+      type: "json",
+      required: true,
+      default: "[]",
+    },
+  ],
+};
+
 export const addCoreFields = (schema: ExuluTableDefinition): ExuluTableDefinition => {
   schema.fields.forEach((field) => {
     if (field.type === "file") {
@@ -1129,6 +1187,7 @@ export const coreSchemas = {
       contextProjectionsSchema: (): ExuluTableDefinition => addCoreFields(contextProjectionsSchema),
       contextMapTopicsSchema: (): ExuluTableDefinition => addCoreFields(contextMapTopicsSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
+      contextFoldersSchema: (): ExuluTableDefinition => addCoreFields(contextFoldersSchema),
       sharedArtifactsSchema: (): ExuluTableDefinition => addCoreFields(sharedArtifactsSchema),
       transcriptionJobsSchema: (): ExuluTableDefinition => addCoreFields(transcriptionJobsSchema),
       imageGenerationsSchema: (): ExuluTableDefinition => addCoreFields(imageGenerationsSchema),

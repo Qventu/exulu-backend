@@ -18,6 +18,8 @@ import { finalizeRequestedFields } from "../utilities/sanitize-and-hydrate-field
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { deleteAgentSessionData } from "@SRC/exulu/routines/run-state.ts";
 import { queues as ExuluQueues } from "@EE/queues/queues";
+import { registerImportQueue } from "@EE/queues/import-queue";
+import { startImport, cancelImport, StartImportError } from "@SRC/exulu/import/start-import";
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
@@ -1174,6 +1176,113 @@ export function createMutations(
         items,
       };
     };
+    // Any authenticated user may start/cancel a server-side bulk import for
+    // this context -- no super_admin gate (unlike ExecuteSource above):
+    // per-row write checks happen in the worker (worker-deps.ts's canWrite),
+    // not here. Both mutations share the same "import" queue handle, built
+    // once here rather than duplicating the { add, getJob } adapter in each
+    // resolver.
+    //
+    // Only `ExuluQueues.register(...)` itself throws the missing-licence
+    // error (ee/queues/queues.ts, a synchronous throw, reached here through
+    // registerImportQueue) -- that's the only failure QUEUES_NOT_LICENSED
+    // should ever mask. `.use()` throws
+    // separately (e.g. no Redis server configured, or a connection timeout)
+    // and must surface as-is: swallowing a real Redis outage behind
+    // "QUEUES_NOT_LICENSED" would send an operator chasing a licensing
+    // problem that doesn't exist.
+    const getImportQueue = async () => {
+      let registered;
+      try {
+        registered = registerImportQueue();
+      } catch (error: unknown) {
+        throw new Error("QUEUES_NOT_LICENSED");
+      }
+
+      let importQueue;
+      try {
+        importQueue = await registered.use();
+      } catch (error: unknown) {
+        console.error("[EXULU] import queue unavailable", error);
+        throw error;
+      }
+
+      return {
+        add: (name: string, data: unknown, opts: unknown) => importQueue.queue.add(name, data, opts as any),
+        getJob: (id: string) => importQueue.queue.getJob(id),
+      };
+    };
+    mutations[`${tableNameSingular}StartImport`] = async (_, args, context, info) => {
+      if (!context.user) {
+        throw new Error("NOT_AUTHORIZED");
+      }
+      // `ExuluTableDefinition.id` is optional (only context-backed tables
+      // carry one); startImport needs a real context id to key the gate,
+      // trigger_metadata and the item table off.
+      if (!table.id) {
+        throw new Error("CONTEXT_NOT_FOUND");
+      }
+
+      const queue = await getImportQueue();
+
+      try {
+        return await startImport(
+          {
+            db: context.db,
+            config,
+            queue,
+            user: context.user,
+            // Mirrors ExecuteSource's own `exists` lookup above, as a
+            // predicate rather than a one-shot find (start-import.ts needs
+            // it before it knows the id is even valid).
+            contextExists: (id: string) => contexts.some((c) => c.id === id),
+          },
+          {
+            contextId: table.id,
+            s3Key: args.input.s3Key,
+            fileName: args.input.fileName,
+            mapping: args.input.mapping,
+            access: args.input.access,
+            options: args.input.options,
+            // Runs-view provenance (same rule as the workflow-run resolver
+            // at src/graphql/schemas/index.ts:1964): API-key callers get
+            // "api", everyone else (UI session) gets "ui".
+            trigger: context.user.type === "api" ? "api" : "ui",
+            totalRows: args.input.totalRows,
+          },
+        );
+      } catch (error: unknown) {
+        if (error instanceof StartImportError) {
+          throw new Error(error.code);
+        }
+        throw error;
+      }
+    };
+    mutations[`${tableNameSingular}CancelImport`] = async (_, args, context, info) => {
+      if (!context.user) {
+        throw new Error("NOT_AUTHORIZED");
+      }
+
+      const queue = await getImportQueue();
+
+      try {
+        return await cancelImport(
+          {
+            db: context.db,
+            config,
+            queue,
+            user: context.user,
+            contextExists: (id: string) => contexts.some((c) => c.id === id),
+          },
+          args.jobResultId,
+        );
+      } catch (error: unknown) {
+        if (error instanceof StartImportError) {
+          throw new Error(error.code);
+        }
+        throw error;
+      }
+    };
     mutations[`${tableNameSingular}GenerateChunks`] = async (_, args, context, info) => {
       // Dont need to validate write access here, as we limit it to super admin only.
       const { db } = await postgresClient();
@@ -1543,9 +1652,12 @@ export function createMutations(
   // Tables that reserve their generic writes for super admins (core-schema
   // `apiWrites: "super_admin"`). validateWriteAccess lets any logged-in user
   // edit a rights_mode "public" row, which is right for context items and
-  // wrong for shared_artifacts, where "public" is the sentinel for
-  // public/password shares and the share's own REST routes decide who may
-  // change it. Reads stay generic; writes go through those routes.
+  // wrong here: for shared_artifacts, "public" is the sentinel for
+  // public/password shares, whose own REST routes decide who may change
+  // them; for context_folders there is no dedicated route at all — admins
+  // manage folders only through this same generic mutation, just gated to
+  // super admins. So the message states the actual contract (super-admin-only
+  // through this API) rather than assuming a sibling route exists.
   if (table.apiWrites === "super_admin") {
     for (const key of [
       `${tableNamePlural}CreateOne`,
@@ -1560,9 +1672,7 @@ export function createMutations(
       if (!inner) continue;
       (mutations as Record<string, any>)[key] = async (parent: any, args: any, context: any, info: any) => {
         if (context?.user?.super_admin !== true) {
-          throw new Error(
-            `${table.name.plural} rows are changed through their own API; the generic mutation is reserved for super admins.`,
-          );
+          throw new Error(`${table.name.plural} rows may only be changed by super admins through this API.`);
         }
         return inner(parent, args, context, info);
       };
