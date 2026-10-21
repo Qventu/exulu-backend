@@ -1731,6 +1731,19 @@ export const processUiMessagesFlow = async ({
             const stream = result.stream.toUIMessageStream({
               messageMetadata: ({ part }) => {
                 console.log("[EXULU] part", part.type);
+                // Per-step usage, same as the chat route: the context gate
+                // (contextOccupancy) prefers lastStepInputTokens and falls
+                // back to the summed inputTokens, which counts every step's
+                // full prompt. Without this a 14-step routine turn with a
+                // ~75k-token prompt reported ~1.07M input tokens and the next
+                // step was refused with CONTEXT_COMPACTION_REQUIRED
+                // (ALGI, 2026-10-21). Last write wins across steps.
+                if (part.type === "finish-step") {
+                  return {
+                    lastStepInputTokens: part.usage.inputTokens,
+                    lastStepOutputTokens: part.usage.outputTokens,
+                  };
+                }
                 if (part.type === "finish") {
                   return finishTurnMetadata({ totalUsage: part.totalUsage, startedAt: startTime });
                 }
