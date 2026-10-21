@@ -164,6 +164,11 @@ describe("context_folders schema", () => {
     const contextIdsField = schema.fields.find((f) => f.name === "context_ids");
     expect(contextIdsField?.type).toBe("json");
     expect(contextIdsField?.required).toBe(true);
+    // "[]" (a truthy string) makes map-types.ts's json branch emit
+    // `.defaultTo("[]")`, so a CreateOne that omits context_ids stores an
+    // empty array rather than NULL — required because the generated
+    // GraphQL output type is JSON! (non-null).
+    expect(contextIdsField?.default).toBe("[]");
     const sortOrderField = schema.fields.find((f) => f.name === "sort_order");
     expect(sortOrderField?.default).toBe(0);
   });

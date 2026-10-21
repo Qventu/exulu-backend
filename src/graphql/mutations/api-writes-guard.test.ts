@@ -85,13 +85,13 @@ describe("apiWrites: super_admin", () => {
     if (!resolver) return;
     const context = { db: makeDb(), user: { id: 2, super_admin: false, role: { id: "r" } }, req: {} };
     await expect(resolver(null, { id: "x", where: {}, ids: ["x"], rights_mode: "public", input: {} }, context, {})).rejects.toThrow(
-      "reserved for super admins",
+      "may only be changed by super admins",
     );
   });
 
   it("leaves tables without the flag alone", () => {
     const itemsTable: any = { name: { singular: "doc", plural: "docs" }, type: "items", RBAC: true, fields: [] };
     const plain = createMutations(itemsTable, [], [], [], {} as any) as any;
-    expect(String(plain["docsUpdateOneById"])).not.toContain("reserved for super admins");
+    expect(String(plain["docsUpdateOneById"])).not.toContain("may only be changed by super admins");
   });
 });

@@ -1543,9 +1543,12 @@ export function createMutations(
   // Tables that reserve their generic writes for super admins (core-schema
   // `apiWrites: "super_admin"`). validateWriteAccess lets any logged-in user
   // edit a rights_mode "public" row, which is right for context items and
-  // wrong for shared_artifacts, where "public" is the sentinel for
-  // public/password shares and the share's own REST routes decide who may
-  // change it. Reads stay generic; writes go through those routes.
+  // wrong here: for shared_artifacts, "public" is the sentinel for
+  // public/password shares, whose own REST routes decide who may change
+  // them; for context_folders there is no dedicated route at all — admins
+  // manage folders only through this same generic mutation, just gated to
+  // super admins. So the message states the actual contract (super-admin-only
+  // through this API) rather than assuming a sibling route exists.
   if (table.apiWrites === "super_admin") {
     for (const key of [
       `${tableNamePlural}CreateOne`,
@@ -1560,9 +1563,7 @@ export function createMutations(
       if (!inner) continue;
       (mutations as Record<string, any>)[key] = async (parent: any, args: any, context: any, info: any) => {
         if (context?.user?.super_admin !== true) {
-          throw new Error(
-            `${table.name.plural} rows are changed through their own API; the generic mutation is reserved for super admins.`,
-          );
+          throw new Error(`${table.name.plural} rows may only be changed by super admins through this API.`);
         }
         return inner(parent, args, context, info);
       };
