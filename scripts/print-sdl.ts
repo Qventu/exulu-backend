@@ -39,6 +39,7 @@ const TABLE_FACTORIES = [
   "jobResultsSchema",
   "promptLibrarySchema",
   "contextPresetsSchema",
+  "contextFoldersSchema",
   "teamsSchema",
   "entityTypeSettingsSchema",
   "promptFavoritesSchema",
@@ -54,6 +55,7 @@ const TABLE_FACTORIES = [
   "statisticsSchema",
   "rbacSchema",
   "transcriptionJobsSchema",
+  "sharedArtifactsSchema",
 ] as const;
 
 const missing = TABLE_FACTORIES.filter((name) => typeof schemas[name] !== "function");

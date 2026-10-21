@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { addCoreFields, coreSchemas } from "./core-schema";
 
 describe("shared_artifacts schema", () => {
@@ -144,6 +146,65 @@ describe("context_map_topics", () => {
     // second cluster instead of replacing the set.
     expect(schema.fields.find((f) => f.name === "context")?.unique).toBeFalsy();
     expect(schema.fields.find((f) => f.name === "context")?.index).toBe(true);
+  });
+});
+
+describe("context_folders schema", () => {
+  test("is registered with the expected shape", () => {
+    const schema = coreSchemas.get().contextFoldersSchema();
+    expect(schema.name.plural).toBe("context_folders");
+    expect(schema.name.singular).toBe("context_folder");
+    expect(schema.apiWrites).toBe("super_admin");
+    expect(schema.RBAC).toBeFalsy();
+    const fieldNames = schema.fields.map((f) => f.name);
+    expect(fieldNames.slice(0, 5)).toEqual(["name", "description", "icon", "sort_order", "context_ids"]);
+    const nameField = schema.fields.find((f) => f.name === "name");
+    expect(nameField?.required).toBe(true);
+    expect(nameField?.index).toBe(true);
+    const contextIdsField = schema.fields.find((f) => f.name === "context_ids");
+    expect(contextIdsField?.type).toBe("json");
+    expect(contextIdsField?.required).toBe(true);
+    // "[]" (a truthy string) makes map-types.ts's json branch emit
+    // `.defaultTo("[]")`, so a CreateOne that omits context_ids stores an
+    // empty array rather than NULL — required because the generated
+    // GraphQL output type is JSON! (non-null).
+    expect(contextIdsField?.default).toBe("[]");
+    const sortOrderField = schema.fields.find((f) => f.name === "sort_order");
+    expect(sortOrderField?.default).toBe(0);
+  });
+});
+
+describe("context_folders wiring (boot + GraphQL)", () => {
+  // Being registered in coreSchemas.get() (tested above) is not enough on its
+  // own: src/postgres/init-exulu-db.ts's `up` and src/exulu/routes.ts's
+  // createSDL call each build their own explicit list of tables (neither is
+  // exported, and `up` needs a live Postgres client, `createExpressRoutes` a
+  // whole tool registry — no seam to call either in a unit test), so a table
+  // left out of core-schema.ts's neighbours here is never created on boot and
+  // never gets the generic GraphQL CRUD, even though it is "registered".
+  // shared_artifacts was wired into both in the same way (see git 8bc6628,
+  // fc1b70a); this is the same invariant-over-source pattern as
+  // init-exulu-db.destructive.test.ts and claim-check/gdpr-paths.test.ts.
+  function region(source: string, from: string, to: string): string {
+    const start = source.indexOf(from);
+    const end = source.indexOf(to, start + from.length);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return source.slice(start, end);
+  }
+
+  test("init-exulu-db creates the table on boot, like every core table", () => {
+    const source = readFileSync(join(__dirname, "init-exulu-db.ts"), "utf8");
+    expect(source).toMatch(/\bcontextFoldersSchema,/); // destructured off coreSchemas.get()
+    const schemasArray = region(source, "const schemas = [", "];");
+    expect(schemasArray).toContain("contextFoldersSchema(),");
+  });
+
+  test("routes.ts lists it in the generic GraphQL CRUD (createSDL)", () => {
+    const source = readFileSync(join(__dirname, "..", "exulu", "routes.ts"), "utf8");
+    expect(source).toMatch(/\bcontextFoldersSchema,/); // destructured off coreSchemas.get()
+    const sdlTables = region(source, "const schema = createSDL(", "contexts ?? [],\n    tools,");
+    expect(sdlTables).toContain("contextFoldersSchema(),");
   });
 });
 

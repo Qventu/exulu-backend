@@ -253,6 +253,7 @@ const {
   rbacSchema,
   promptLibrarySchema,
   contextPresetsSchema,
+  contextFoldersSchema,
   teamsSchema,
   entityTypeSettingsSchema,
   promptFavoritesSchema,
@@ -342,6 +343,12 @@ export const createExpressRoutes = async (
       jobResultsSchema(),
       promptLibrarySchema(),
       contextPresetsSchema(),
+      // Knowledge folders (2026-10): UI-only grouping of knowledge contexts
+      // for the IMP's folder view. apiWrites: "super_admin" (core-schema.ts)
+      // reserves the generic CreateOne/UpdateOne*/RemoveOne*/CopyOneById
+      // mutations for super admins; reads stay generic for every
+      // authenticated user, same split as sharedArtifactsSchema below.
+      contextFoldersSchema(),
       teamsSchema(),
       entityTypeSettingsSchema(),
       promptFavoritesSchema(),

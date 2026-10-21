@@ -5,6 +5,7 @@ export type ExuluTableDefinition = {
     type?:
     | "skills"
     | "context_presets"
+    | "context_folders"
     | "feedback"
     | "test_cases"
     | "eval_sets"
@@ -47,6 +48,7 @@ export type ExuluTableDefinition = {
       plural:
       | "skills"
       | "context_presets"
+      | "context_folders"
       | "feedback"
       | "test_cases"
       | "eval_sets"
@@ -86,6 +88,7 @@ export type ExuluTableDefinition = {
       singular:
       | "skill"
       | "context_preset"
+      | "context_folder"
       | "feedback"
       | "test_case"
       | "eval_set"
