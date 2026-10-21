@@ -1,6 +1,6 @@
 # Server-side bulk import (large CSVs) — design
 
-**Status:** approved 2026-10-21 (permissions, threshold, license refusal confirmed by the operator); plans next.
+**Status:** backend implemented 2026-10-21
 **Date:** 2026-10-21
 **Author:** daniel.claessen (with Claude Fable 5.1)
 **Extends:** `2026-07-15-bulk-import-design.md` (client-side wizard, ≤100 rows),
