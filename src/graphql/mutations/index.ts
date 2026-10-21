@@ -1178,32 +1178,51 @@ export function createMutations(
     // Any authenticated user may start/cancel a server-side bulk import for
     // this context -- no super_admin gate (unlike ExecuteSource above):
     // per-row write checks happen in the worker (worker-deps.ts's canWrite),
-    // not here. Both mutations share the same "import" queue handle; a
-    // missing queues licence (ExuluQueues.register throws synchronously)
-    // surfaces as QUEUES_NOT_LICENSED rather than an opaque license error.
+    // not here. Both mutations share the same "import" queue handle, built
+    // once here rather than duplicating the { add, getJob } adapter in each
+    // resolver.
+    //
+    // Only `ExuluQueues.register(...)` itself throws the missing-licence
+    // error (ee/queues/queues.ts:92-95, a synchronous throw) -- that's the
+    // only failure QUEUES_NOT_LICENSED should ever mask. `.use()` throws
+    // separately (e.g. no Redis server configured, or a connection timeout)
+    // and must surface as-is: swallowing a real Redis outage behind
+    // "QUEUES_NOT_LICENSED" would send an operator chasing a licensing
+    // problem that doesn't exist.
     const getImportQueue = async () => {
+      let registered;
       try {
-        return await ExuluQueues.register(global_queues.import, { worker: 1, queue: 1 }, 1, 6 * 3600).use();
+        registered = ExuluQueues.register(global_queues.import, { worker: 1, queue: 1 }, 1, 6 * 3600);
       } catch (error: unknown) {
         throw new Error("QUEUES_NOT_LICENSED");
       }
+
+      let importQueue;
+      try {
+        importQueue = await registered.use();
+      } catch (error: unknown) {
+        console.error("[EXULU] import queue unavailable", error);
+        throw error;
+      }
+
+      return {
+        add: (name: string, data: unknown, opts: unknown) => importQueue.queue.add(name, data, opts as any),
+        getJob: (id: string) => importQueue.queue.getJob(id),
+      };
     };
     mutations[`${tableNameSingular}StartImport`] = async (_, args, context, info) => {
       if (!context.user) {
         throw new Error("NOT_AUTHORIZED");
       }
 
-      const importQueue = await getImportQueue();
+      const queue = await getImportQueue();
 
       try {
         return await startImport(
           {
             db: context.db,
             config,
-            queue: {
-              add: (name: string, data: unknown, opts: unknown) => importQueue.queue.add(name, data, opts as any),
-              getJob: (id: string) => importQueue.queue.getJob(id),
-            },
+            queue,
             user: context.user,
             // Mirrors ExecuteSource's own `exists` lookup above, as a
             // predicate rather than a one-shot find (start-import.ts needs
@@ -1236,17 +1255,14 @@ export function createMutations(
         throw new Error("NOT_AUTHORIZED");
       }
 
-      const importQueue = await getImportQueue();
+      const queue = await getImportQueue();
 
       try {
         return await cancelImport(
           {
             db: context.db,
             config,
-            queue: {
-              add: (name: string, data: unknown, opts: unknown) => importQueue.queue.add(name, data, opts as any),
-              getJob: (id: string) => importQueue.queue.getJob(id),
-            },
+            queue,
             user: context.user,
             contextExists: (id: string) => contexts.some((c) => c.id === id),
           },

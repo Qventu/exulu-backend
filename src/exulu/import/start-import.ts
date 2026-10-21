@@ -1,15 +1,17 @@
 import { randomUUID } from "node:crypto";
 import type { ExuluConfig } from "@SRC/exulu/app/index";
+import { serializeError } from "@SRC/utils/serialize-error";
 import type { ColumnMapping } from "./mapping";
 import type { BatchAccess } from "./rows";
-import { mergeMetadataRaw } from "./worker-deps";
+import { mergeMetadataRaw, parseMetadata } from "./worker-deps";
 import type { ImportUser } from "./worker-deps";
 
 /**
  * `user.role` / `user.team` on the acting user arrive either as a bare uuid
  * string or a hydrated `{ id, ... }` row (mirrors worker-deps.ts's `idOf`,
  * duplicated locally rather than imported so this module stays limited to
- * the one sanctioned import from worker-deps.ts, `mergeMetadataRaw`).
+ * the two sanctioned imports from worker-deps.ts, `mergeMetadataRaw` and
+ * `parseMetadata`).
  */
 function idOrSelf(value: unknown): unknown {
   if (value != null && typeof value === "object" && "id" in (value as Record<string, unknown>)) {
@@ -18,19 +20,14 @@ function idOrSelf(value: unknown): unknown {
   return value;
 }
 
-/** `job_results.trigger_metadata` arrives as a jsonb object or (defensively) a JSON string. */
-function parseMetadata(value: unknown): Record<string, any> {
-  if (value == null) return {};
-  let parsed: unknown = value;
-  if (typeof value === "string") {
-    try {
-      parsed = JSON.parse(value);
-    } catch {
-      return {};
-    }
-  }
-  return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, any>) : {};
-}
+/**
+ * The `rights_mode` values `canWrite` (worker-deps.ts) and `validateWriteAccess`
+ * (src/graphql/mutations/index.ts) both understand -- kept identical to
+ * mutations/index.ts's own `VALID_RIGHTS_MODES` (duplicated rather than
+ * imported, since importing from the GraphQL mutations module would pull
+ * GraphQL into this dependency-injected, Redis/Postgres-free module).
+ */
+const VALID_RIGHTS_MODES = ["private", "users", "roles", "teams", "public"];
 
 export type StartImportArgs = {
   contextId: string;
@@ -69,6 +66,8 @@ export class StartImportError extends Error {
       | "CONTEXT_NOT_FOUND"
       | "IMPORT_ALREADY_RUNNING"
       | "IMPORT_S3_KEY_OUTSIDE_BUCKET"
+      | "INVALID_RIGHTS_MODE"
+      | "IMPORT_NOT_FOUND"
       | "NOT_AUTHORIZED",
   ) {
     super(code);
@@ -92,6 +91,10 @@ export async function startImport(
 
   if (!contextExists(args.contextId)) {
     throw new StartImportError("CONTEXT_NOT_FOUND");
+  }
+
+  if (!VALID_RIGHTS_MODES.includes(args.access.rights_mode)) {
+    throw new StartImportError("INVALID_RIGHTS_MODE");
   }
 
   // s3Key arrives in the frontend's "bucket/key" form (uploadFile's return
@@ -150,42 +153,55 @@ export async function startImport(
     }),
   });
 
-  await queue.add(
-    "import",
-    {
-      label,
-      type: "import",
-      // BullMqJobData.trigger is a STATISTICS_LABELS value, which has no
-      // "ui" member -- "api" here is just that field's required value for
-      // this queue path, unrelated to the job_results row's own ui|api
-      // `trigger` column above (which records real run provenance).
-      trigger: "api",
-      timeoutInSeconds: 6 * 3600,
-      // Required: bullmq.validate (src/validators/bullmq.ts) throws without
-      // an `inputs` key, even though the import branch ignores it (its
-      // inputs live on the job_results row's trigger_metadata instead).
-      inputs: {},
-      jobResultId: id,
-      context: args.contextId,
-      user: user.id,
-      role: idOrSelf(user.role),
-    },
-    {
-      jobId: id,
-      attempts: 1,
-      removeOnComplete: 5000,
-      removeOnFail: 5000,
-    },
-  );
+  try {
+    await queue.add(
+      "import",
+      {
+        label,
+        type: "import",
+        // BullMqJobData.trigger is a STATISTICS_LABELS value, which has no
+        // "ui" member -- "api" here is just that field's required value for
+        // this queue path, unrelated to the job_results row's own ui|api
+        // `trigger` column above (which records real run provenance).
+        trigger: "api",
+        timeoutInSeconds: 6 * 3600,
+        // Required: bullmq.validate (src/validators/bullmq.ts) throws without
+        // an `inputs` key, even though the import branch ignores it (its
+        // inputs live on the job_results row's trigger_metadata instead).
+        inputs: {},
+        jobResultId: id,
+        context: args.contextId,
+        user: user.id,
+        role: idOrSelf(user.role),
+      },
+      {
+        jobId: id,
+        attempts: 1,
+        removeOnComplete: 5000,
+        removeOnFail: 5000,
+      },
+    );
+  } catch (error: unknown) {
+    // The row was already inserted "waiting" -- a failed enqueue must not
+    // leave it stuck there blocking the context's one-running-import gate
+    // (IMPORT_ALREADY_RUNNING) forever. Mark it failed with the real reason
+    // and rethrow so the caller still sees the original error.
+    await db("job_results")
+      .where({ id })
+      .update({ state: "failed", error: JSON.stringify(serializeError(error)) });
+    throw error;
+  }
 
   return { jobResultId: id };
 }
 
 /**
- * Cancels a running (or still-queued) import. Idempotent: a missing row or
- * one already in a terminal state is treated as nothing-to-cancel rather
- * than an error, since a double-click or a race with the worker's own
- * completion should never surface as a hard failure to the caller.
+ * Cancels a running (or still-queued) import. A missing row is an error
+ * (IMPORT_NOT_FOUND) -- the caller passed a jobResultId that was never
+ * started, which is a real mistake worth surfacing. A row already in a
+ * terminal state (completed/failed/cancelled), by contrast, is treated as
+ * nothing-to-cancel rather than an error: a double-click or a race with the
+ * worker's own completion should never fail the caller.
  */
 export async function cancelImport(
   deps: StartImportDeps,
@@ -194,7 +210,10 @@ export async function cancelImport(
   const { db, queue, user } = deps;
 
   const row = await db("job_results").where({ id: jobResultId }).first();
-  if (!row || (row.state !== "waiting" && row.state !== "active")) {
+  if (!row) {
+    throw new StartImportError("IMPORT_NOT_FOUND");
+  }
+  if (row.state !== "waiting" && row.state !== "active") {
     return { ok: true };
   }
 
@@ -214,7 +233,14 @@ export async function cancelImport(
 
   if (row.state === "waiting") {
     const job = await queue.getJob?.(jobResultId);
-    await job?.remove();
+    try {
+      await job?.remove();
+    } catch (error: unknown) {
+      // cancelRequested is already persisted above -- a failed remove (e.g.
+      // the worker grabbed the lock between our select and this call) must
+      // not fail the cancel; the worker will see the flag and honour it.
+      console.error("[EXULU] failed to remove queued import job after cancel", error);
+    }
     await db("job_results")
       .where({ id: jobResultId })
       .whereIn("state", ["waiting"])

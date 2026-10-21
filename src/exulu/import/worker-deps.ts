@@ -180,7 +180,7 @@ export async function lookupExisting(
 }
 
 /** `job_results.metadata` / `trigger_metadata` arrive as jsonb objects or strings. */
-function parseMetadata(value: unknown): Record<string, any> {
+export function parseMetadata(value: unknown): Record<string, any> {
   if (value == null) return {};
   let parsed: unknown = value;
   if (typeof value === "string") {

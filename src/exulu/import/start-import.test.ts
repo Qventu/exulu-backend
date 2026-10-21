@@ -105,7 +105,7 @@ describe("startImport", () => {
   });
 
   it("inserts a waiting job_results row and enqueues the import job on the happy path", async () => {
-    const { deps, calls, queue } = makeDeps({}, { first: undefined });
+    const { deps, calls, queue, builder } = makeDeps({}, { first: undefined });
 
     const result = await startImport(deps, baseArgs);
     expect(result).toEqual({ jobResultId: "job-1" });
@@ -158,6 +158,34 @@ describe("startImport", () => {
       removeOnComplete: 5000,
       removeOnFail: 5000,
     });
+
+    // F3 missing assertion: the row must exist before the job is enqueued
+    // against it -- never the reverse.
+    expect(builder.insert.mock.invocationCallOrder[0]).toBeLessThan(
+      queue.add.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("marks the row failed and rethrows when the enqueue itself fails, without leaving it waiting (F3)", async () => {
+    const { deps, calls, queue, builder } = makeDeps({}, { first: undefined });
+    const enqueueError = new Error("redis unreachable");
+    queue.add.mockRejectedValue(enqueueError);
+
+    await expect(startImport(deps, baseArgs)).rejects.toBe(enqueueError);
+
+    expect(builder.insert).toHaveBeenCalledTimes(1);
+    const failUpdate = calls["update"]!.find((c) => c[0]?.state === "failed");
+    expect(failUpdate).toBeDefined();
+    expect(JSON.parse(failUpdate![0].error).message).toBe("redis unreachable");
+  });
+
+  it("rejects an invalid access.rights_mode before any insert or enqueue (F4)", async () => {
+    const { deps, calls, queue } = makeDeps();
+    const args = { ...baseArgs, access: { rights_mode: "everyone" } as any };
+
+    await expect(startImport(deps, args)).rejects.toMatchObject({ code: "INVALID_RIGHTS_MODE" });
+    expect(calls["insert"]).toBeUndefined();
+    expect(queue.add).not.toHaveBeenCalled();
   });
 
   it("carries totalRows into metadata.total and defaults to 0 when absent", async () => {
@@ -228,6 +256,33 @@ describe("cancelImport", () => {
     );
     const stateUpdate = calls["update"]!.find((c) => "state" in c[0]!)!;
     expect(stateUpdate[0]).toEqual({ state: "cancelled" });
+
+    // F3 missing assertion: the cancelled-state update must only ever apply
+    // while the row is still "waiting" (CAS guard against a race with the
+    // worker picking the job up in between).
+    expect(calls["whereIn"]).toEqual([["state", ["waiting"]]]);
+  });
+
+  it("logs and continues when job.remove() fails after cancelRequested is persisted (F6)", async () => {
+    const remove = jest.fn(async () => {
+      throw new Error("job locked by worker");
+    });
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const { deps, calls, queue } = makeDeps(
+      { user: { id: 7, super_admin: false } },
+      { first: runningRow("waiting", 7) },
+    );
+    queue.getJob.mockResolvedValue({ remove });
+
+    const result = await cancelImport(deps, "job-1");
+    expect(result).toEqual({ ok: true });
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(consoleErrorSpy).toHaveBeenCalled();
+
+    const stateUpdate = calls["update"]!.find((c) => "state" in c[0]!)!;
+    expect(stateUpdate[0]).toEqual({ state: "cancelled" });
+
+    consoleErrorSpy.mockRestore();
   });
 
   it("only flags cancelRequested (no remove, no state change) when the row is already active", async () => {
@@ -261,9 +316,9 @@ describe("cancelImport", () => {
     await expect(cancelImport(deps, "job-1")).resolves.toEqual({ ok: true });
   });
 
-  it("is a no-op when the row does not exist", async () => {
+  it("throws IMPORT_NOT_FOUND when the row does not exist (F2)", async () => {
     const { deps, calls } = makeDeps({}, { first: undefined });
-    await expect(cancelImport(deps, "missing")).resolves.toEqual({ ok: true });
+    await expect(cancelImport(deps, "missing")).rejects.toMatchObject({ code: "IMPORT_NOT_FOUND" });
     expect(calls["update"]).toBeUndefined();
   });
 
