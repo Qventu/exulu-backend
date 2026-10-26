@@ -61,9 +61,23 @@ describe("jsonToInboundEmail", () => {
     expect(email.attachments[0].content.toString()).toBe("%PDF-1.4 single");
   });
 
-  it("ignores attachments that are neither an array nor an attachment object", () => {
-    expect(jsonToInboundEmail({ from: "a@b.c", attachments: "nope" }).attachments).toEqual([]);
-    expect(jsonToInboundEmail({ from: "a@b.c", attachments: { note: "no file here" } }).attachments).toEqual([]);
+  it("rejects attachments that are neither an array nor an attachment object, naming the shape", () => {
+    // A silently dropped attachment looked like a successful run with a bad
+    // answer (ALGI, 2026-10-23); a shape violation is a payload error now.
+    expect(() => jsonToInboundEmail({ from: "a@b.c", attachments: "nope" })).toThrow(/attachments must be an array/);
+    expect(() => jsonToInboundEmail({ from: "a@b.c", attachments: { note: "no file here" } })).toThrow(/attachments must be an array/);
+    expect(() => jsonToInboundEmail({ from: "a@b.c", attachments: [42] })).toThrow(/attachments\[0\]/);
+  });
+
+  it("rejects an attachment without content_base64 instead of storing an empty file", () => {
+    expect(() => jsonToInboundEmail({ from: "a@b.c", attachments: [{ filename: "x.pdf", content_type: "application/pdf" }] }))
+      .toThrow(/"x.pdf".*content_base64/);
+  });
+
+  it("accepts a missing or empty attachments field", () => {
+    expect(jsonToInboundEmail({ from: "a@b.c" }).attachments).toEqual([]);
+    expect(jsonToInboundEmail({ from: "a@b.c", attachments: [] }).attachments).toEqual([]);
+    expect(jsonToInboundEmail({ from: "a@b.c", attachments: null }).attachments).toEqual([]);
   });
 
   it("throws on malformed base64 attachment", () => {

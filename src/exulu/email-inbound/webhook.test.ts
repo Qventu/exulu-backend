@@ -55,6 +55,27 @@ describe("createRoutineWebhookHandler", () => {
     );
   });
 
+  it("400s a JSON payload whose shape is invalid, naming the problem, without persisting or enqueuing", async () => {
+    const deps = makeDeps();
+    const res = makeRes();
+    const body = Buffer.from(JSON.stringify({ from: "a@b.com", attachments: "I26100025.pdf" }), "utf8");
+    await createRoutineWebhookHandler(deps)(makeReq({ body }) as any, res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.detail).toMatch(/attachments must be an array/);
+    expect(deps.putRawPayload).not.toHaveBeenCalled();
+    expect(deps.enqueueIntake).not.toHaveBeenCalled();
+  });
+
+  it("400s a JSON payload with a malformed from, without enqueuing", async () => {
+    const deps = makeDeps();
+    const res = makeRes();
+    const body = Buffer.from(JSON.stringify({ subject: "no sender" }), "utf8");
+    await createRoutineWebhookHandler(deps)(makeReq({ body }) as any, res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.detail).toMatch(/from/);
+    expect(deps.enqueueIntake).not.toHaveBeenCalled();
+  });
+
   it("401s when signing is enabled and the signature is missing", async () => {
     const deps = makeDeps({ resolveTrigger: async () => trigger({ signing_secret: "enc" }) });
     const res = makeRes();

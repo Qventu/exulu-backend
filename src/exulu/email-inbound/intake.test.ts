@@ -12,7 +12,7 @@ jest.mock("@SRC/uppy", () => ({
 }));
 
 const saveChatSpy = jest.fn(async () => undefined);
-jest.mock("@SRC/exulu/provider", () => ({
+jest.mock("@SRC/exulu/generate-stream", () => ({
   saveChat: (...args: any[]) => saveChatSpy(...args),
 }));
 
@@ -22,11 +22,17 @@ jest.mock("@SRC/exulu/routines/run-session", () => ({
 }));
 
 const agentSpy = jest.fn(async () => ({ id: "agent-1", provider: "prov-1" }));
-jest.mock("@SRC/exulu/app/singleton", () => ({
-  exuluApp: { get: () => ({ agent: (...args: any[]) => agentSpy(...args) }) },
-}));
-
 const queueAddSpy = jest.fn(async () => ({ id: "bull-1" }));
+// Routines require a registered queue since the queue became a workflow
+// field; the fixture workflow names "q1" and the app exposes it.
+jest.mock("@SRC/exulu/app/singleton", () => ({
+  exuluApp: {
+    get: () => ({
+      agent: (...args: any[]) => agentSpy(...args),
+      queues: () => [{ queue: { name: "q1", add: (...args: any[]) => queueAddSpy(...args) }, retries: 3, timeoutInSeconds: 180 }],
+    }),
+  },
+}));
 
 // db fake: chainable builders recorded per table; .first() answers come
 // from a per-table FIFO the test seeds.
@@ -115,6 +121,7 @@ const workflowRow = {
   name: "Spare Parts Handler",
   agent: "agent-1",
   rights_mode: "roles",
+  queue: "q1",
 };
 const deps = { config: { fileUploads: {} } as any };
 const payload = { s3Key: "inbound-webhook/raw-1.eml", triggerId: "trg-1", format: "eml" as const };

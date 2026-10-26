@@ -29,10 +29,19 @@ const parseFrom = (from: unknown): { address: string; name?: string } => {
   throw new Error("Invalid payload: `from` must be an email address or { address, name }.");
 };
 
-const decodeAttachment = (a: any): { filename: string; contentType: string; content: Buffer } => {
+const describeShape = (v: unknown): string =>
+  v === null ? "null" : Array.isArray(v) ? "array" : typeof v === "object" ? `object with keys [${Object.keys(v as object).join(", ")}]` : typeof v;
+
+const decodeAttachment = (a: any, index: number): { filename: string; contentType: string; content: Buffer } => {
+  if (!a || typeof a !== "object" || Array.isArray(a)) {
+    throw new Error(`Invalid payload: attachments[${index}] must be an object { filename, content_type, content_base64 } (got ${describeShape(a)}).`);
+  }
   const filename = typeof a?.filename === "string" && a.filename ? a.filename : "attachment";
   const contentType = typeof a?.content_type === "string" && a.content_type ? a.content_type : "application/octet-stream";
-  const b64 = typeof a?.content_base64 === "string" ? a.content_base64 : "";
+  if (typeof a?.content_base64 !== "string" || !a.content_base64) {
+    throw new Error(`Invalid attachment "${filename}": content_base64 is missing or empty.`);
+  }
+  const b64: string = a.content_base64;
   // Node is lenient with base64; validate round-trip to reject junk.
   const content = Buffer.from(b64, "base64");
   if (b64 && content.toString("base64").replace(/=+$/, "") !== b64.replace(/\s|=+$/g, "")) {
@@ -84,14 +93,20 @@ export function jsonToInboundEmail(raw: unknown): InboundEmail {
   // Node-RED flow does: object for one file, array for several — every
   // one-PDF inquiry lost its PDF, 2026-10-13 and 2026-10-23). Accept both;
   // anything that is not an attachment-shaped object stays ignored.
+  // Anything else is a payload error — a silently dropped attachment looked
+  // like a successful run with a bad answer, which is worse than a failed run.
   const looksLikeAttachment = (a: unknown): boolean =>
     !!a && typeof a === "object" && !Array.isArray(a) &&
     (typeof (a as any).content_base64 === "string" || typeof (a as any).filename === "string");
-  const rawAttachments: unknown[] = Array.isArray(obj.attachments)
-    ? obj.attachments
-    : looksLikeAttachment(obj.attachments)
-      ? [obj.attachments]
-      : [];
+  let rawAttachments: unknown[];
+  if (obj.attachments === undefined || obj.attachments === null) rawAttachments = [];
+  else if (Array.isArray(obj.attachments)) rawAttachments = obj.attachments;
+  else if (looksLikeAttachment(obj.attachments)) rawAttachments = [obj.attachments];
+  else {
+    throw new Error(
+      `Invalid payload: attachments must be an array of { filename, content_type, content_base64 } (got ${describeShape(obj.attachments)}).`,
+    );
+  }
   const attachments = rawAttachments.map(decodeAttachment);
   const headers = new Map<string, string>([["message-id", messageId]]);
   return {
