@@ -44,6 +44,28 @@ describe("jsonToInboundEmail", () => {
     expect(() => jsonToInboundEmail({ from: "@" })).toThrow(/from/i);
   });
 
+  it("accepts a single attachment object, not only an array (one-attachment mails from Node-RED)", () => {
+    // ALGI's Node-RED flow serialises `attachments` as an object when a mail
+    // carries exactly one attachment and as an array otherwise; the object
+    // form was silently dropped, so every one-PDF inquiry lost its PDF.
+    const content = Buffer.from("%PDF-1.4 single").toString("base64");
+    const email = jsonToInboundEmail({
+      from: "sabrina@example.com",
+      subject: "WG: I26100025",
+      text: "anbei unsere Anfrage als PDF-Anhang",
+      attachments: { filename: "I26100025.20261022.pdf", content_type: "application/pdf", content_base64: content },
+    });
+    expect(email.attachments).toHaveLength(1);
+    expect(email.attachments[0].filename).toBe("I26100025.20261022.pdf");
+    expect(email.attachments[0].contentType).toBe("application/pdf");
+    expect(email.attachments[0].content.toString()).toBe("%PDF-1.4 single");
+  });
+
+  it("ignores attachments that are neither an array nor an attachment object", () => {
+    expect(jsonToInboundEmail({ from: "a@b.c", attachments: "nope" }).attachments).toEqual([]);
+    expect(jsonToInboundEmail({ from: "a@b.c", attachments: { note: "no file here" } }).attachments).toEqual([]);
+  });
+
   it("throws on malformed base64 attachment", () => {
     expect(() =>
       jsonToInboundEmail({ from: "a@b.com", attachments: [{ filename: "x", content_base64: "!!!not-base64!!!" }] }),

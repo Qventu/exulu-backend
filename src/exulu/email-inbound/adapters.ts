@@ -79,7 +79,20 @@ export function jsonToInboundEmail(raw: unknown): InboundEmail {
   const html = typeof obj.html === "string" ? obj.html : undefined;
   const text = typeof obj.text === "string" && obj.text ? obj.text : html ? htmlToText(html) : "";
   const messageId = typeof obj.message_id === "string" && obj.message_id ? obj.message_id : `<${randomUUID()}@webhook.local>`;
-  const attachments = Array.isArray(obj.attachments) ? obj.attachments.map(decodeAttachment) : [];
+  // `attachments` is documented as an array, but a sender that serialises a
+  // mail with exactly one attachment may pass a single object instead (ALGI's
+  // Node-RED flow does: object for one file, array for several — every
+  // one-PDF inquiry lost its PDF, 2026-10-13 and 2026-10-23). Accept both;
+  // anything that is not an attachment-shaped object stays ignored.
+  const looksLikeAttachment = (a: unknown): boolean =>
+    !!a && typeof a === "object" && !Array.isArray(a) &&
+    (typeof (a as any).content_base64 === "string" || typeof (a as any).filename === "string");
+  const rawAttachments: unknown[] = Array.isArray(obj.attachments)
+    ? obj.attachments
+    : looksLikeAttachment(obj.attachments)
+      ? [obj.attachments]
+      : [];
+  const attachments = rawAttachments.map(decodeAttachment);
   const headers = new Map<string, string>([["message-id", messageId]]);
   return {
     messageId,
