@@ -54,14 +54,34 @@ export type RenderTranscriptOptions = {
   timestamps?: boolean;
 };
 
-export const renderTranscript = (
-  segments: RawSegment[],
-  speakers: SpeakerMap,
-  options: RenderTranscriptOptions = {},
-): string => {
-  if (!segments || segments.length === 0) return "";
+/**
+ * One speaker's uninterrupted turn: consecutive segments by the same
+ * (post-rename) speaker, collapsed, carrying the time span they cover.
+ *
+ * Shared by `renderTranscript` and the transcript chunker so the stored
+ * `transcript_text` and the embedded chunks are built from the same notion of
+ * a block — a chunk's text then reads exactly like the passage the reading
+ * view shows, and its `end` lets retrieval cite the span, not just its start.
+ */
+export type TranscriptBlock = {
+  /** Display label: the renamed speaker, or the raw one when unmapped. */
+  speaker: string;
+  start: number;
+  end: number;
+  text: string;
+};
 
-  const blocks: { speaker: string; start: number; text: string }[] = [];
+/**
+ * Collapse segments into speaker blocks. Empty/whitespace-only segments are
+ * skipped entirely, so they never open a block or extend one's time span.
+ */
+export const transcriptBlocks = (
+  segments: RawSegment[] | null | undefined,
+  speakers: SpeakerMap,
+): TranscriptBlock[] => {
+  if (!segments || segments.length === 0) return [];
+
+  const blocks: TranscriptBlock[] = [];
   for (const seg of segments) {
     const text = (seg.text ?? "").trim();
     if (!text) continue;
@@ -69,16 +89,24 @@ export const renderTranscript = (
     const last = blocks[blocks.length - 1];
     if (last && last.speaker === label) {
       last.text = `${last.text} ${text}`.trim();
+      last.end = seg.end;
     } else {
-      blocks.push({ speaker: label, start: seg.start, text });
+      blocks.push({ speaker: label, start: seg.start, end: seg.end, text });
     }
   }
 
-  return blocks
+  return blocks;
+};
+
+export const renderTranscript = (
+  segments: RawSegment[],
+  speakers: SpeakerMap,
+  options: RenderTranscriptOptions = {},
+): string =>
+  transcriptBlocks(segments, speakers)
     .map((b) =>
       options.timestamps
         ? `${b.speaker} [${formatClock(b.start)}]: ${b.text}`
         : `${b.speaker}: ${b.text}`,
     )
     .join("\n");
-};

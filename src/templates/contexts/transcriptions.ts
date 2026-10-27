@@ -1,4 +1,5 @@
 import { ExuluContext } from "@SRC/exulu/context";
+import { transcriptChunker } from "@SRC/exulu/transcription/transcript-chunker";
 
 /**
  * Built-in ExuluContext for storing diarized audio transcripts produced by
@@ -48,6 +49,11 @@ export const transcriptionsContext = new ExuluContext({
   ],
   sources: [],
   active: true,
+  // Without this the built-in defaultChunker runs, and it reads `content` /
+  // `description` / `name` — none of which a transcript has. Every saved
+  // transcript then embedded a single title-only chunk, leaving all three
+  // search methods unable to match anything that was actually said.
+  chunker: transcriptChunker,
   configuration: {
     calculateVectors: "onInsert",
     defaultRightsMode: "private",

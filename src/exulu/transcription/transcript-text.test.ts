@@ -1,4 +1,10 @@
-import { effectiveSegments, formatClock, renderTranscript, type RawSegment } from "./transcript-text";
+import {
+  effectiveSegments,
+  formatClock,
+  renderTranscript,
+  transcriptBlocks,
+  type RawSegment,
+} from "./transcript-text";
 
 const seg = (start: number, end: number, text: string, speaker: string): RawSegment => ({
   start,
@@ -163,5 +169,44 @@ describe("renderTranscript with timestamps", () => {
   it("is off by default so existing callers are unchanged", () => {
     const out = renderTranscript([seg(1278, 1299, "Hi", "SPEAKER_00")], {});
     expect(out).toBe("SPEAKER_00: Hi");
+  });
+});
+
+describe("transcriptBlocks", () => {
+  it("returns no blocks for absent or empty segments", () => {
+    expect(transcriptBlocks(null, {})).toEqual([]);
+    expect(transcriptBlocks(undefined, {})).toEqual([]);
+    expect(transcriptBlocks([], {})).toEqual([]);
+  });
+
+  it("carries the time span of a single segment", () => {
+    expect(transcriptBlocks([seg(1.5, 4.25, "Hello", "SPEAKER_00")], { SPEAKER_00: "Daniel" })).toEqual([
+      { speaker: "Daniel", start: 1.5, end: 4.25, text: "Hello" },
+    ]);
+  });
+
+  it("extends a collapsed block's end to the last segment it absorbed", () => {
+    const blocks = transcriptBlocks(
+      [
+        seg(0, 2, "Hi.", "SPEAKER_00"),
+        seg(2, 7, "How are you?", "SPEAKER_00"),
+        seg(7, 9, "Fine.", "SPEAKER_01"),
+      ],
+      { SPEAKER_00: "Daniel", SPEAKER_01: "Alex" },
+    );
+
+    expect(blocks).toEqual([
+      { speaker: "Daniel", start: 0, end: 7, text: "Hi. How are you?" },
+      { speaker: "Alex", start: 7, end: 9, text: "Fine." },
+    ]);
+  });
+
+  it("does not let a skipped empty segment extend the block's span", () => {
+    const blocks = transcriptBlocks(
+      [seg(0, 2, "Hi.", "SPEAKER_00"), seg(2, 99, "   ", "SPEAKER_00")],
+      { SPEAKER_00: "Daniel" },
+    );
+
+    expect(blocks).toEqual([{ speaker: "Daniel", start: 0, end: 2, text: "Hi." }]);
   });
 });
