@@ -5,7 +5,7 @@
 import type { Request, Response } from "express";
 import { randomUUID } from "node:crypto";
 import type { WorkflowTriggerRow } from "./types";
-import { detectPayloadFormat, extractMultipartMimePart } from "./adapters";
+import { detectPayloadFormat, extractMultipartMimePart, jsonToInboundEmail } from "./adapters";
 import { isReplay, verifyPayloadSignature } from "./verify-signature";
 
 export const EMAIL_INBOUND_S3_PREFIX = "inbound-webhook/";
@@ -91,6 +91,18 @@ export const createRoutineWebhookHandler =
         format = "eml";
       } else if (kind === "json") {
         if (!rawBody.length) throw new Error("Empty JSON body.");
+        // Validate the documented JSON shape here, synchronously, so the
+        // sender gets a 400 with the reason instead of a 200 for a payload
+        // the intake would later reject or, worse, half-read (an
+        // `attachments` object instead of an array lost every one-PDF
+        // inquiry for weeks while the runs showed as successful).
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(rawBody.toString("utf8"));
+        } catch {
+          throw new Error("Body is not valid JSON.");
+        }
+        jsonToInboundEmail(parsed);
         payloadBytes = rawBody;
         format = "json";
       } else {

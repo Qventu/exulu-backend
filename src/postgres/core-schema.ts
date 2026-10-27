@@ -101,6 +101,28 @@ const agentSessionsSchema: ExuluTableDefinition = {
       type: "text",
       required: false,
     },
+    // Chat-list activity (see src/exulu/session-activity.ts). All three stay
+    // NULL on existing rows, so no historical conversation starts out looking
+    // unread.
+    {
+      // Non-null while a turn is producing an answer.
+      name: "generating_since",
+      type: "date",
+      required: false,
+    },
+    {
+      // When the most recent answer finished.
+      name: "last_answer_at",
+      type: "date",
+      required: false,
+    },
+    {
+      // When someone last had the session open. last_answer_at later than
+      // this is an answer nobody has read.
+      name: "last_seen_at",
+      type: "date",
+      required: false,
+    },
   ],
 };
 

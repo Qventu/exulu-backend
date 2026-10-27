@@ -261,3 +261,22 @@ describe("claim_checks table", () => {
     expect(table.graphql).toBe(false);
   });
 });
+
+describe("agent_sessions schema (chat list activity)", () => {
+  test("carries the three nullable timestamps a chat list reads", () => {
+    const schema = coreSchemas.get().agentSessionsSchema();
+    for (const name of ["generating_since", "last_answer_at", "last_seen_at"]) {
+      expect(schema.fields.find((f) => f.name === name)).toMatchObject({
+        type: "date",
+        required: false,
+      });
+    }
+  });
+
+  test("leaves them null for existing sessions, so nothing backfills as unread", () => {
+    const schema = coreSchemas.get().agentSessionsSchema();
+    for (const name of ["generating_since", "last_answer_at", "last_seen_at"]) {
+      expect(schema.fields.find((f) => f.name === name)).not.toHaveProperty("default");
+    }
+  });
+});

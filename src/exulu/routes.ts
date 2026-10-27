@@ -81,6 +81,10 @@ import { mapStreamErrorMessage } from "./context-budget.ts";
 import { markStreamActive,
   clearStreamActive,
   isStreamActive } from "./active-streams.ts";
+import { persistThroughDisconnect } from "./stream-persistence.ts";
+import { markSessionGenerating,
+  markSessionAnswered,
+  markSessionIdle } from "./session-activity.ts";
 import { resumeRoutineRunIfWaiting } from "@SRC/exulu/routines/run-state";
 import { compactSession,
   CompactionInsufficientError } from "./compact-session.ts";
@@ -888,6 +892,9 @@ export const createExpressRoutes = async (
         );
 
         if (headers.session) markStreamActive(headers.session as string);
+        // The chat list shows this conversation as working from here on.
+        // Not awaited — a badge must never delay an answer.
+        void markSessionGenerating(db, headers.session as string);
         const turnStartedAt = Date.now();
         let result: Awaited<ReturnType<typeof generateStream>>;
         try {
@@ -912,6 +919,9 @@ export const createExpressRoutes = async (
           });
         } catch (err) {
           if (headers.session) clearStreamActive(headers.session as string);
+          // Nothing was produced, so the row goes quiet rather than promising
+          // an answer that does not exist.
+          void markSessionIdle(db, headers.session as string);
           // Rethrowing here rendered Express' HTML error page in the chat UI. Answer
           // with a status + plain-text body the AI SDK transport surfaces as err.message.
           console.error(
@@ -922,10 +932,6 @@ export const createExpressRoutes = async (
           res.status(status).send(body);
           return;
         }
-
-        // consume the stream to ensure it runs to completion & triggers onFinish
-        // even when the client response is aborted:
-        result.stream.consumeStream(); // no await
 
         // The claim-check fragment needs the turn's retrieval tool results,
         // but `messageMetadata`'s `finish` branch only ever receives the
@@ -969,6 +975,15 @@ export const createExpressRoutes = async (
         });
 
         result.stream.pipeUIMessageStreamToResponse<ChatUIMessage>(res, {
+          // The turn must still be saved when the viewer leaves mid-answer —
+          // onFinish below is driven by the response writer, which a departed
+          // client stalls forever. This drains a server-side tee instead, so
+          // onFinish always runs with the complete answer. It replaces a
+          // `result.stream.consumeStream()` call that claimed to do this and
+          // could not: that drains a different tee branch (the raw
+          // fullStream), one onFinish does not sit on. See
+          // stream-persistence.ts.
+          ...persistThroughDisconnect(),
           messageMetadata: ({ part }) => {
             // Accumulates on every part; returns the fragment only on
             // `finish`, and `{}` on everything else (including every part of
@@ -1010,6 +1025,7 @@ export const createExpressRoutes = async (
           onError: (error) => {
             console.error("[EXULU] chat response error.", error);
             if (headers.session) clearStreamActive(headers.session as string);
+            void markSessionIdle(db, headers.session as string);
             let message: string;
             if (error == null) message = "unknown error";
             else if (typeof error === "string") message = error;
@@ -1036,6 +1052,14 @@ export const createExpressRoutes = async (
                 messages: messages,
                 model: resolvedModelId,
               });
+              // Only a turn that actually produced something counts as an
+              // answer waiting to be read — a stream that died empty has its
+              // shell dropped by saveChat, and must not light up the list.
+              if (responseMessage?.parts?.length) {
+                await markSessionAnswered(db, headers.session as string);
+              } else {
+                await markSessionIdle(db, headers.session as string);
+              }
               clearSessionCurrentTask(headers.session as string).catch(() => { });
               // Routine-run sessions (spec §5.5): an answered approval card
               // resumes the paused run — CAS winner enqueues the continuation.

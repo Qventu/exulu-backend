@@ -335,6 +335,10 @@ export class SentenceChunker extends BaseChunker {
       return [];
     }
 
+    // This method frees the tokenizer when it finishes, so a reused instance
+    // (chunkBatch calls chunk() per text) starts without an encoder.
+    await this.tokenizer.ensure();
+
     // Get prepared sentences with token counts
     const sentences = await this._prepareSentences(text);
     if (!sentences.length) {

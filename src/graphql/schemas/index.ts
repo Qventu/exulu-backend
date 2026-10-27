@@ -1165,6 +1165,14 @@ type PageInfo {
     setTranscriptsSettings(input: TranscriptsSettingsInput!): TranscriptsSettingsInfo!
     `;
 
+  // Chat-list activity: the viewer telling the server "I have this
+  // conversation open", which clears the answer-waiting badge. A mutation
+  // rather than a generic agent_sessionsUpdateOneById because the timestamp
+  // must come from the server clock (see mutations/mark-session-seen.ts).
+  mutationDefs += `
+    agentSessionMarkSeen(id: ID!): Boolean!
+    `;
+
   mutationDefs += `
     memoryConflictsScan(contextId: ID!): MemoryConflictScanResult!
     memoryConflictResolve(id: ID!, action: MemoryConflictAction!, keepId: ID, merged: MemoryMergeInput): MemoryConflict!
