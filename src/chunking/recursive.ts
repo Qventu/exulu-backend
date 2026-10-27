@@ -654,6 +654,10 @@ export class RecursiveChunker extends BaseChunker {
    * @returns {Promise<RecursiveChunk[]>} A promise that resolves to an array of RecursiveChunk objects
    */
   public async chunk(text: string): Promise<RecursiveChunk[]> {
+
+    // This method frees the tokenizer when it finishes, so a reused instance
+    // (chunkBatch calls chunk() per text) starts without an encoder.
+    await this.tokenizer.ensure();
     const result = await this._recursiveChunk(text, 0, 0);
 
     // If prefix is provided, prepend it to each chunk's text and update token count
