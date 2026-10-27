@@ -45,6 +45,7 @@ import {
   filterLivePresets,
 } from "@SRC/exulu/transcripts-settings";
 import { parseSettingsInput } from "./transcripts-settings-input";
+import { markSessionSeenForViewer } from "./mark-session-seen";
 
 // Same allow-list as utils/check-item-write-access.ts — the modes a client
 // may explicitly set on create.
@@ -1627,6 +1628,21 @@ export function createMutations(
         };
       };
     }
+  }
+
+  // Chat-list activity (spec: session-activity.ts). Registered on the
+  // agent_sessions pass only, which is also how the resolver gets the table
+  // definition applyAccessControl needs without importing core-schema here.
+  if (table.name.plural === "agent_sessions") {
+    mutations["agentSessionMarkSeen"] = async (_, args, context) => {
+      const { db } = await postgresClient();
+      return markSessionSeenForViewer({
+        db,
+        table,
+        user: context?.user,
+        id: args?.id,
+      });
+    };
   }
 
   // Global mutation, registered the same way as the global queries in
