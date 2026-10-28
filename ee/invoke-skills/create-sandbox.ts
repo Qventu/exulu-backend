@@ -983,7 +983,7 @@ export async function createSessionSandbox(
         description:
             'Write content to a file in the sandbox. Creates parent directories if needed. ' +
             'Paths are always resolved against the session sandbox root — both relative paths ' +
-            '("skills/foo.md") and leading-slash paths ("/skills/foo.md") work and reach the same file. ' +
+            '("skills/<Skill name>/SKILL.md") and leading-slash paths ("/skills/<Skill name>/SKILL.md") work and reach the same file. ' +
             'When the path is under the session artifact tree, the file is also uploaded to S3 ' +
             'and a short-lived presigned URL is returned in the tool output.',
         inputSchema: z.object({
@@ -1017,7 +1017,8 @@ export async function createSessionSandbox(
         description:
             'Read the contents of a file from the sandbox. ' +
             'Paths are always resolved against the session sandbox root — both relative paths ' +
-            '("skills/foo.md") and leading-slash paths ("/skills/foo.md") work and reach the same file. ' +
+            '("skills/<Skill name>/SKILL.md") and leading-slash paths ("/skills/<Skill name>/SKILL.md") work and reach the same file. ' +
+            'Skills live in a folder per skill: "skills/<Skill name>/SKILL.md", never "skills/<Skill name>.md". ' +
             'If the file does not exist, the error message is surfaced verbatim.',
         inputSchema: z.object({
             path: z.string().describe('The path of the file to read. Relative paths and leading-slash paths are both resolved against the session sandbox root.'),
