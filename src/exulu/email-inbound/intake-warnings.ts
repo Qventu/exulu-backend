@@ -2,9 +2,15 @@ import type { InboundEmail } from "./types";
 
 export type IntakeWarning = "attachment_mentioned_but_none_received";
 
-/** German + English phrasings that announce an attachment in the body. */
+/**
+ * German + English phrasings that announce an attachment in the body.
+ * Deliberately NOT the bare word "Anlage": in ALGI's mails it almost always
+ * means the elevator installation ("unsere Anlage 1622223", "keine echte
+ * Anlage"), which produced a false warning on 2026-10-28; only the phrase
+ * "als Anlage" announces an attachment.
+ */
 const MENTIONS_ATTACHMENT =
-  /\b(anbei|anliegend|beigef[üu]gt|im anhang|als anhang|anhang|anlage|attached|attachment|enclosed)\b/i;
+  /\b(anbei|anliegend|beigef[üu]gt|im anhang|als anhang|anhang|als anlage|attached|attachment|enclosed)\b/i;
 
 export const INTAKE_WARNING_TEXTS: Record<IntakeWarning, string> = {
   attachment_mentioned_but_none_received:
