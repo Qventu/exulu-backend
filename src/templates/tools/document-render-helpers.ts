@@ -86,6 +86,25 @@ export async function pdfToText(pdf: Buffer): Promise<string> {
 }
 
 /**
+ * Number of pages of a PDF via poppler's pdfinfo ("Pages: N"). Cheap (no
+ * rendering, no text extraction) — used to enforce the attachment page cap
+ * before any OCR starts.
+ */
+export async function pdfPageCount(pdf: Buffer): Promise<number> {
+  const dir = await mkdtemp(join(tmpdir(), "exulu-pdfinfo-"));
+  try {
+    const inputPath = join(dir, "input.pdf");
+    await writeFile(inputPath, pdf);
+    const { stdout } = await execFileAsync("pdfinfo", [inputPath], { timeout: 30_000, maxBuffer: 1_000_000 });
+    const match = /^Pages:\s+(\d+)/m.exec(stdout);
+    if (!match) throw new Error("pdfinfo did not report a page count");
+    return Number(match[1]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
  * Render one PDF page to PNG via poppler's pdftoppm.
  * -scale-to bounds the long edge, so no separate image library is needed.
  * Returns null when the requested page is beyond the document's last page

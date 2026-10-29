@@ -159,6 +159,9 @@ export const createParseDocumentTool = ({
       // text-layer paths below stay as the fallback.
       if (exuluConfig.attachments?.documentProcessor) {
         const extracted = await extractDocument({ bytes, filename: safeName, exuluConfig, attribution: { user } });
+        if (extracted.tooLong) {
+          return { error: extracted.text };
+        }
         if (extracted.engine === "document-processor") {
           totalPages = extracted.pages.length;
           const range = resolvePageRange(pages, totalPages, safeName);

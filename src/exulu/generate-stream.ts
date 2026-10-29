@@ -133,7 +133,9 @@ const processFilePartsInMessages = async (
                             attribution: { user: offloadCtx.user },
                         });
                         console.log(
-                            `[EXULU] Extracted ${filename} via ${extracted.engine} (${extracted.pages.length} page(s), ${extracted.text.length} chars)`,
+                            extracted.tooLong
+                                ? `[EXULU] ${filename} refused: ${extracted.tooLong.pageCount} pages > cap ${extracted.tooLong.maxPages}`
+                                : `[EXULU] Extracted ${filename} via ${extracted.engine} (${extracted.pages.length} page(s), ${extracted.text.length} chars)`,
                         );
 
                         // Cap + offload (spec §2): a 400-page manual becomes a session

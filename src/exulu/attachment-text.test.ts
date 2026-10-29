@@ -1,4 +1,4 @@
-import { extractDocument, pagesToText, validateAttachmentsConfig } from "./attachment-text";
+import { attachmentMaxPages, extractDocument, pagesToText, validateAttachmentsConfig } from "./attachment-text";
 import type { ExuluConfig } from "./app";
 
 const withProcessor = {
@@ -6,6 +6,7 @@ const withProcessor = {
 } as unknown as ExuluConfig;
 
 const bytes = Buffer.from("%PDF-1.4 fake");
+const twoPages = async () => 2;
 
 describe("extractDocument", () => {
   it("uses the configured OCR/VLM processor and prefers the VLM-corrected page text", async () => {
@@ -15,7 +16,7 @@ describe("extractDocument", () => {
     ]);
     const officeParse = jest.fn();
 
-    const result = await extractDocument({ bytes, filename: "Anfrage.pdf", exuluConfig: withProcessor, attribution: { userId: 14 }, process, officeParse });
+    const result = await extractDocument({ bytes, filename: "Anfrage.pdf", exuluConfig: withProcessor, attribution: { userId: 14 }, process, officeParse, countPages: twoPages });
 
     expect(result.engine).toBe("document-processor");
     expect(result.pages).toEqual([
@@ -44,7 +45,7 @@ describe("extractDocument", () => {
     const process = jest.fn().mockRejectedValue(new Error("Advanced document processing is an enterprise feature"));
     const officeParse = jest.fn().mockResolvedValue("text layer");
 
-    const result = await extractDocument({ bytes, filename: "Anfrage.pdf", exuluConfig: withProcessor, process, officeParse });
+    const result = await extractDocument({ bytes, filename: "Anfrage.pdf", exuluConfig: withProcessor, process, officeParse, countPages: twoPages });
 
     expect(result.engine).toBe("officeparser");
     expect(result.text).toBe("text layer");
@@ -54,7 +55,7 @@ describe("extractDocument", () => {
     const process = jest.fn().mockResolvedValue([{ page: 1, content: "   ", headings: [] }]);
     const officeParse = jest.fn().mockResolvedValue("");
 
-    const result = await extractDocument({ bytes, filename: "leer.pdf", exuluConfig: withProcessor, process, officeParse });
+    const result = await extractDocument({ bytes, filename: "leer.pdf", exuluConfig: withProcessor, process, officeParse, countPages: twoPages });
 
     expect(result.engine).toBe("officeparser");
     expect(result.text).toBe("");
@@ -92,5 +93,36 @@ describe("validateAttachmentsConfig", () => {
     expect(validateAttachmentsConfig(unknown, licensed)).toEqual([
       expect.stringMatching(/processor\.name must be one of/),
     ]);
+  });
+});
+
+describe("attachment page cap", () => {
+  it("refuses a PDF over the cap with a notice and without calling the processor", async () => {
+    const process = jest.fn();
+    const officeParse = jest.fn();
+    const result = await extractDocument({
+      bytes, filename: "Handbuch.pdf", exuluConfig: withProcessor, process, officeParse, countPages: async () => 100,
+    });
+    expect(result.tooLong).toEqual({ pageCount: 100, maxPages: 25 });
+    expect(result.pages).toEqual([]);
+    expect(result.text).toContain('"Handbuch.pdf" has 100 pages');
+    expect(result.text).toContain("limit for attachments is 25 pages");
+    expect(process).not.toHaveBeenCalled();
+    expect(officeParse).not.toHaveBeenCalled();
+  });
+
+  it("does not count pages for non-PDF files or without a processor", async () => {
+    const countPages = jest.fn();
+    const process = jest.fn().mockResolvedValue([{ page: 1, content: "docx text", headings: [] }]);
+    await extractDocument({ bytes, filename: "Angebot.docx", exuluConfig: withProcessor, process, countPages });
+    await extractDocument({ bytes, filename: "Handbuch.pdf", exuluConfig: {} as ExuluConfig, officeParse: async () => "x", countPages });
+    expect(countPages).not.toHaveBeenCalled();
+  });
+
+  it("reads EXULU_ATTACHMENT_MAX_PAGES and falls back to 25 on nonsense", () => {
+    expect(attachmentMaxPages({})).toBe(25);
+    expect(attachmentMaxPages({ EXULU_ATTACHMENT_MAX_PAGES: "40" })).toBe(40);
+    expect(attachmentMaxPages({ EXULU_ATTACHMENT_MAX_PAGES: "0" })).toBe(25);
+    expect(attachmentMaxPages({ EXULU_ATTACHMENT_MAX_PAGES: "viele" })).toBe(25);
   });
 });
