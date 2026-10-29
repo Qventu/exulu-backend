@@ -92,3 +92,41 @@ export async function extractDocument(input: ExtractDocumentInput): Promise<Extr
   const text = (await (input.officeParse ?? defaultOfficeParse)(input.bytes)).trim();
   return { pages: [{ page: 1, text }], text, engine: "officeparser" };
 }
+
+const PROCESSOR_NAMES = new Set(["liteparse", "mistral", "officeparser"]);
+
+/**
+ * Boot-time check for `attachments.documentProcessor` (called from
+ * ExuluApp.create). The feature is opt-in and must be explicit: an OCR
+ * engine, the OCR model for the "mistral" engine, a VLM model when a VLM
+ * pass is wanted, and the enterprise licence. Anything incomplete is an
+ * error at start-up, never a silent fall-back to the text layer at run time.
+ * Returns the problems found; empty when the config is absent or valid.
+ */
+export function validateAttachmentsConfig(
+  config: ExuluConfig | undefined,
+  license: { "advanced-document-processing": boolean },
+): string[] {
+  const processorConfig = config?.attachments?.documentProcessor;
+  if (!processorConfig) return [];
+  const problems: string[] = [];
+  const name = processorConfig.processor?.name;
+  if (!name || !PROCESSOR_NAMES.has(name)) {
+    problems.push(`attachments.documentProcessor.processor.name must be one of ${[...PROCESSOR_NAMES].join(", ")} (got ${JSON.stringify(name)})`);
+  }
+  if (name === "mistral" && !processorConfig.processor.model?.trim()) {
+    problems.push('attachments.documentProcessor.processor.model (the OCR model_name from config.litellm.yaml, e.g. "vertex-ocr") is required for the "mistral" engine');
+  }
+  if (processorConfig.vlm !== undefined) {
+    if (!processorConfig.vlm.model?.trim()) {
+      problems.push('attachments.documentProcessor.vlm.model (a LiteLLM model_name, e.g. "vertex-gemini-2.5-flash") is required when vlm is set');
+    }
+    if (!(Number.isInteger(processorConfig.vlm.concurrency) && processorConfig.vlm.concurrency > 0)) {
+      problems.push("attachments.documentProcessor.vlm.concurrency must be a positive integer");
+    }
+  }
+  if (!license["advanced-document-processing"]) {
+    problems.push("attachments.documentProcessor needs the enterprise licence (advanced-document-processing); set EXULU_ENTERPRISE_LICENSE or remove the attachments config");
+  }
+  return problems;
+}

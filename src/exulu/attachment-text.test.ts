@@ -1,4 +1,4 @@
-import { extractDocument, pagesToText } from "./attachment-text";
+import { extractDocument, pagesToText, validateAttachmentsConfig } from "./attachment-text";
 import type { ExuluConfig } from "./app";
 
 const withProcessor = {
@@ -63,5 +63,34 @@ describe("extractDocument", () => {
   it("joins a single page without a page marker", () => {
     expect(pagesToText([{ page: 1, text: " nur eine Seite " }])).toBe("nur eine Seite");
     expect(pagesToText([])).toBe("");
+  });
+});
+
+describe("validateAttachmentsConfig", () => {
+  const licensed = { "advanced-document-processing": true };
+
+  it("accepts an absent config (feature off) and a complete one", () => {
+    expect(validateAttachmentsConfig(undefined, { "advanced-document-processing": false })).toEqual([]);
+    expect(validateAttachmentsConfig({} as ExuluConfig, { "advanced-document-processing": false })).toEqual([]);
+    expect(validateAttachmentsConfig(withProcessor, licensed)).toEqual([]);
+  });
+
+  it("names every missing piece: engine, OCR model, VLM model, concurrency, licence", () => {
+    const broken = {
+      attachments: { documentProcessor: { processor: { name: "mistral" }, vlm: { model: " ", concurrency: 0 } } },
+    } as unknown as ExuluConfig;
+    const problems = validateAttachmentsConfig(broken, { "advanced-document-processing": false });
+    expect(problems).toHaveLength(4);
+    expect(problems.join("\n")).toMatch(/processor\.model/);
+    expect(problems.join("\n")).toMatch(/vlm\.model/);
+    expect(problems.join("\n")).toMatch(/vlm\.concurrency/);
+    expect(problems.join("\n")).toMatch(/enterprise licence/);
+  });
+
+  it("rejects an unknown engine", () => {
+    const unknown = { attachments: { documentProcessor: { processor: { name: "tesseract" } } } } as unknown as ExuluConfig;
+    expect(validateAttachmentsConfig(unknown, licensed)).toEqual([
+      expect.stringMatching(/processor\.name must be one of/),
+    ]);
   });
 });
