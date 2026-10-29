@@ -19,6 +19,8 @@ import { createImageGenerationWidgetTool } from "@SRC/templates/tools/image-gene
 import { parseImageGenerationModels } from "@SRC/exulu/litellm/parse-image-models.ts";
 import { resolve } from "node:path";
 import { isValidPostgresName } from "@SRC/validators/postgres-name.ts";
+import type { DocumentProcessorConfig } from "@EE/python/documents/processing/doc_processor.ts";
+import { validateAttachmentsConfig } from "../attachment-text";
 import type { ExuluEval } from "../evals";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import { getTableName, type ExuluContext, type ExuluContextSource } from "../context";
@@ -132,6 +134,19 @@ export type ExuluConfig = {
   };
   privacy?: {
     systemPromptPersonalization?: boolean;
+  };
+  /**
+   * Documents the model receives inline — chat uploads, routine mail
+   * attachments and parse_document. With `documentProcessor` set, the same
+   * OCR + VLM engine the knowledge bases use (ExuluDocumentProcessor) extracts
+   * the pages, so scans and images inside PDFs are read too; without it only
+   * the text layer is read (officeparser). Enterprise licence required for
+   * the processor; it falls back to the text layer when unavailable. PDFs
+   * over EXULU_ATTACHMENT_MAX_PAGES pages (default 50) are refused with a
+   * notice instead of being read while the request waits.
+   */
+  attachments?: {
+    documentProcessor?: DocumentProcessorConfig;
   };
   /**
    * Audit logging. When enabled, structured audit events (starting with one
@@ -309,6 +324,21 @@ export class ExuluApp {
     const license = checkLicense()
     if (!license["queues"] && ExuluQueues.list.size > 0) {
       throw new Error(`[EXULU] You are not licensed to use queues but have registered the following queues: ${Array.from(ExuluQueues.list.keys()).join(", ")}. Please set your EXULU_ENTERPRISE_LICENSE env variable.`);
+    }
+
+    // Attachments through the OCR + VLM processor are opt-in and must be
+    // configured completely (engine, OCR model, VLM model, licence) — an
+    // incomplete config fails the boot instead of silently reading only the
+    // text layer at run time.
+    const attachmentProblems = validateAttachmentsConfig(config, license);
+    if (attachmentProblems.length > 0) {
+      throw new Error(`[EXULU] Invalid attachments.documentProcessor config:\n- ${attachmentProblems.join("\n- ")}`);
+    }
+    if (config?.attachments?.documentProcessor) {
+      const { processor, vlm } = config.attachments.documentProcessor;
+      console.log(`[EXULU] Attachments: OCR via ${processor.name}${processor.model ? ` (${processor.model})` : ""}${vlm ? `, VLM ${vlm.model} (concurrency ${vlm.concurrency})` : ", no VLM pass"}.`);
+    } else {
+      console.log("[EXULU] Attachments: text layer only (officeparser); set attachments.documentProcessor for OCR + VLM.");
     }
 
     if (redisServer.host?.length && redisServer.port?.length) {
