@@ -4,6 +4,7 @@ import { guardRedisStartup, logRedisErrors } from "@EE/queues/redis-startup.ts";
 import { Job, Worker, type JobState } from "bullmq";
 import { bullmq } from "@SRC/validators/bullmq.ts";
 import { serializeError } from "@SRC/utils/serialize-error.ts";
+import { jsonbSafeStringify } from "@SRC/utils/jsonb-safe.ts";
 import { finishTurnMetadata } from "@SRC/exulu/turn-metadata.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 import { ExuluStorage } from "@SRC/exulu/storage.ts";
@@ -705,8 +706,8 @@ export const createWorkers = async (
                   .where({ id: jobResultId })
                   .update({
                     result:
-                      messages.length > 0 ? JSON.stringify(messages[messages.length - 1]) : null,
-                    metadata: JSON.stringify({
+                      messages.length > 0 ? jsonbSafeStringify(messages[messages.length - 1]) : null,
+                    metadata: jsonbSafeStringify({
                       messages,
                       ...metadata,
                       tokens,
@@ -1374,8 +1375,9 @@ export const createWorkers = async (
           .where({ job_id: job.id, state: JOB_STATUS_ENUM.active })
           .update({
             state: JOB_STATUS_ENUM.completed,
-            result: returnvalue.result != null ? JSON.stringify(returnvalue.result) : null,
-            metadata: returnvalue.metadata != null ? JSON.stringify(returnvalue.metadata) : null,
+            // jsonb rejects the NUL escape; a raw attachment read can carry it (2026-10-29).
+            result: returnvalue.result != null ? jsonbSafeStringify(returnvalue.result) : null,
+            metadata: returnvalue.metadata != null ? jsonbSafeStringify(returnvalue.metadata) : null,
           });
 
         // Cap the table as rows become terminal (every Nth, idempotent).

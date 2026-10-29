@@ -11,6 +11,7 @@ import { listS3ObjectsByPrefix, getS3ObjectBytes, uploadFile, getPresignedUrl, t
 import { isIgnoredArtifactPath, capArtifacts, needsDownload } from './artifact-filter'
 import { getNpmGlobalRoot } from '@SRC/exulu/system-dependencies.ts'
 import { buildSkillEnv } from './skill-env'
+import { isBinaryDocumentPath, looksBinary, binaryReadHint } from './binary-file-guard'
 import { selectGrantedVariables, selectRowsToDecrypt, deriveWithheldNames } from './variable-grants'
 import { readLiteLLMOsEnvironNames } from '@SRC/exulu/litellm/os-environ-names'
 import { getAuditLogger } from '@SRC/exulu/audit/logger'
@@ -1025,7 +1026,16 @@ export async function createSessionSandbox(
         }),
         execute: async ({ path }) => {
             const resolvedPath = resolveSessionPath(path, sessionDir)
+            // Binary documents never go to the model as raw bytes (see
+            // binary-file-guard.ts). Returned, not thrown: a throw fails the
+            // whole step in a routine, a hint lets the agent self-correct.
+            if (isBinaryDocumentPath(resolvedPath)) {
+                return { content: '', error: binaryReadHint(path) }
+            }
             const content = await customSandbox.readFile(resolvedPath)
+            if (looksBinary(content)) {
+                return { content: '', error: binaryReadHint(path) }
+            }
             return { content }
         },
     })
