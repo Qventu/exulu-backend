@@ -103,10 +103,10 @@ describe("attachment page cap", () => {
     const result = await extractDocument({
       bytes, filename: "Handbuch.pdf", exuluConfig: withProcessor, process, officeParse, countPages: async () => 100,
     });
-    expect(result.tooLong).toEqual({ pageCount: 100, maxPages: 25 });
+    expect(result.tooLong).toEqual({ pageCount: 100, maxPages: 50 });
     expect(result.pages).toEqual([]);
     expect(result.text).toContain('"Handbuch.pdf" has 100 pages');
-    expect(result.text).toContain("limit for attachments is 25 pages");
+    expect(result.text).toContain("limit for attachments is 50 pages");
     expect(process).not.toHaveBeenCalled();
     expect(officeParse).not.toHaveBeenCalled();
   });
@@ -119,10 +119,10 @@ describe("attachment page cap", () => {
     expect(countPages).not.toHaveBeenCalled();
   });
 
-  it("reads EXULU_ATTACHMENT_MAX_PAGES and falls back to 25 on nonsense", () => {
-    expect(attachmentMaxPages({})).toBe(25);
+  it("reads EXULU_ATTACHMENT_MAX_PAGES and falls back to 50 on nonsense", () => {
+    expect(attachmentMaxPages({})).toBe(50);
     expect(attachmentMaxPages({ EXULU_ATTACHMENT_MAX_PAGES: "40" })).toBe(40);
-    expect(attachmentMaxPages({ EXULU_ATTACHMENT_MAX_PAGES: "0" })).toBe(25);
-    expect(attachmentMaxPages({ EXULU_ATTACHMENT_MAX_PAGES: "viele" })).toBe(25);
+    expect(attachmentMaxPages({ EXULU_ATTACHMENT_MAX_PAGES: "0" })).toBe(50);
+    expect(attachmentMaxPages({ EXULU_ATTACHMENT_MAX_PAGES: "viele" })).toBe(50);
   });
 });

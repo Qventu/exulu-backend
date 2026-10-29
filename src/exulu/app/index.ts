@@ -142,7 +142,7 @@ export type ExuluConfig = {
    * the pages, so scans and images inside PDFs are read too; without it only
    * the text layer is read (officeparser). Enterprise licence required for
    * the processor; it falls back to the text layer when unavailable. PDFs
-   * over EXULU_ATTACHMENT_MAX_PAGES pages (default 25) are refused with a
+   * over EXULU_ATTACHMENT_MAX_PAGES pages (default 50) are refused with a
    * notice instead of being read while the request waits.
    */
   attachments?: {

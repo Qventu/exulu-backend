@@ -33,10 +33,10 @@ export type ExtractedDocument = {
 /**
  * Page cap for PDFs that go through the OCR + VLM processor inline, i.e.
  * while a chat request waits (ALGI, 2026-10-29: a 100-page manual would
- * block the answer for minutes). EXULU_ATTACHMENT_MAX_PAGES, default 25.
+ * block the answer for minutes). EXULU_ATTACHMENT_MAX_PAGES, default 50.
  * Longer documents are refused with a clear notice — never partially read.
  */
-export const DEFAULT_ATTACHMENT_MAX_PAGES = 25;
+export const DEFAULT_ATTACHMENT_MAX_PAGES = 50;
 
 export function attachmentMaxPages(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.EXULU_ATTACHMENT_MAX_PAGES;
