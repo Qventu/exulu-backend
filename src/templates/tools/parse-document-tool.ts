@@ -7,6 +7,7 @@ import type { ExuluConfig } from "@SRC/exulu/app";
 import type { User } from "@EXULU_TYPES/models/user";
 import { convertLegacyOfficeToModern, isLegacyOfficeFormat, pdfToText } from "./document-render-helpers";
 import { sessionFilePrefix } from "@SRC/exulu/session-files";
+import { extractDocument } from "@SRC/exulu/attachment-text";
 
 const DEFAULT_LIMIT = 250;
 const MAX_CONTENT_CHARS = 16_000;
@@ -49,6 +50,25 @@ const OFFICE_EXTENSIONS = new Set([
 ]);
 
 const pagesPattern = /^(\d+)(?:-(\d+))?$/;
+
+/** "3" or "2-5" → [start, end] within totalPages, or a tool error. */
+function resolvePageRange(
+  pages: string | undefined,
+  totalPages: number,
+  safeName: string,
+): [number, number] | { error: string } {
+  if (!pages) return [1, totalPages];
+  const m = pagesPattern.exec(pages.trim());
+  if (!m) return { error: `Invalid pages "${pages}" — use "3" or "2-5".` };
+  const range: [number, number] = [Number(m[1]), Number(m[2] ?? m[1])];
+  if (range[0] < 1 || range[0] > range[1]) {
+    return { error: `Invalid pages "${pages}" — start must be at least 1 and not greater than the end.` };
+  }
+  if (range[0] > totalPages) {
+    return { error: `Page range starts at ${range[0]} but "${safeName}" has only ${totalPages} page${totalPages === 1 ? "" : "s"}.` };
+  }
+  return range;
+}
 
 const BINARY_DOCUMENT_EXTENSION_PATTERN = new RegExp(
   `([^\\s"'\`]+\\.(?:pdf|${[...OFFICE_EXTENSIONS].map((ext) => ext.slice(1)).join("|")}))\\b`,
@@ -131,9 +151,27 @@ export const createParseDocumentTool = ({
       }
       const bytes = Buffer.from(await res.arrayBuffer());
 
-      let fullText: string;
+      let fullText: string | undefined;
       let totalPages: number | undefined;
-      if (ext === ".pdf") {
+
+      // An instance with attachments.documentProcessor (OCR + VLM, the engine
+      // the knowledge bases use) reads scans and images inside pages too; the
+      // text-layer paths below stay as the fallback.
+      if (exuluConfig.attachments?.documentProcessor) {
+        const extracted = await extractDocument({ bytes, filename: safeName, exuluConfig, attribution: { user } });
+        if (extracted.engine === "document-processor") {
+          totalPages = extracted.pages.length;
+          const range = resolvePageRange(pages, totalPages, safeName);
+          if (!Array.isArray(range)) return range;
+          const multiPage = totalPages > 1;
+          fullText = extracted.pages
+            .filter(({ page }) => page >= range[0] && page <= range[1])
+            .map(({ page, text }) => (multiPage ? `--- page ${page} ---\n${text.trim()}` : text.trim()))
+            .join("\n");
+        }
+      }
+
+      if (fullText === undefined && ext === ".pdf") {
         const raw = await pdfToText(bytes);
         const pageTexts = raw.replace(/\f$/, "").split("\f");
         totalPages = pageTexts.length;
@@ -155,24 +193,14 @@ export const createParseDocumentTool = ({
               "to a knowledge base with a document processor for full OCR.",
           };
         }
-        let range: [number, number] = [1, totalPages];
-        if (pages) {
-          const m = pagesPattern.exec(pages.trim());
-          if (!m) return { error: `Invalid pages "${pages}" — use "3" or "2-5".` };
-          range = [Number(m[1]), Number(m[2] ?? m[1])];
-          if (range[0] < 1 || range[0] > range[1]) {
-            return { error: `Invalid pages "${pages}" — start must be at least 1 and not greater than the end.` };
-          }
-          if (range[0] > totalPages) {
-            return { error: `Page range starts at ${range[0]} but "${safeName}" has only ${totalPages} page${totalPages === 1 ? "" : "s"}.` };
-          }
-        }
+        const range = resolvePageRange(pages, totalPages, safeName);
+        if (!Array.isArray(range)) return range;
         fullText = pageTexts
           .map((text, i) => ({ page: i + 1, text }))
           .filter(({ page }) => page >= range[0] && page <= range[1])
           .map(({ page, text }) => `--- page ${page} ---\n${text.trim()}`)
           .join("\n");
-      } else {
+      } else if (fullText === undefined) {
         // officeparser only reads the modern XML formats; .doc/.xls/.ppt/.rtf
         // need converting first even though OFFICE_EXTENSIONS accepts them.
         const officeBytes = isLegacyOfficeFormat(ext)
@@ -185,7 +213,7 @@ export const createParseDocumentTool = ({
         fullText = String(extracted);
       }
 
-      const lines = fullText.split("\n");
+      const lines = (fullText ?? "").split("\n");
       const start = (offset ?? 1) - 1;
       const requested = limit ?? DEFAULT_LIMIT;
       const sliced = lines.slice(start, start + requested);

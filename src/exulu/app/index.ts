@@ -19,6 +19,7 @@ import { createImageGenerationWidgetTool } from "@SRC/templates/tools/image-gene
 import { parseImageGenerationModels } from "@SRC/exulu/litellm/parse-image-models.ts";
 import { resolve } from "node:path";
 import { isValidPostgresName } from "@SRC/validators/postgres-name.ts";
+import type { DocumentProcessorConfig } from "@EE/python/documents/processing/doc_processor.ts";
 import type { ExuluEval } from "../evals";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import { getTableName, type ExuluContext, type ExuluContextSource } from "../context";
@@ -132,6 +133,17 @@ export type ExuluConfig = {
   };
   privacy?: {
     systemPromptPersonalization?: boolean;
+  };
+  /**
+   * Documents the model receives inline — chat uploads, routine mail
+   * attachments and parse_document. With `documentProcessor` set, the same
+   * OCR + VLM engine the knowledge bases use (ExuluDocumentProcessor) extracts
+   * the pages, so scans and images inside PDFs are read too; without it only
+   * the text layer is read (officeparser). Enterprise licence required for
+   * the processor; it falls back to the text layer when unavailable.
+   */
+  attachments?: {
+    documentProcessor?: DocumentProcessorConfig;
   };
   /**
    * Audit logging. When enabled, structured audit events (starting with one

@@ -17,7 +17,7 @@ import { resolveOcr } from '@SRC/exulu/resolve-ocr';
 import type { ResolveOcrInput } from '@SRC/exulu/resolve-ocr';
 import { resolveModel } from '@SRC/exulu/resolve-model';
 
-type DocumentProcessorConfig = {
+export type DocumentProcessorConfig = {
   vlm?: {
     /**
      * LiteLLM model_name for the VLM page-validation pass (declared in
@@ -60,7 +60,7 @@ type DocumentProcessorConfig = {
   }
 }
 
-type ProcessedPage = {
+export type ProcessedPage = {
   page: number;
   content: string;
   headings?: any;
@@ -68,7 +68,7 @@ type ProcessedPage = {
   vlm_corrected_text?: string;
   vlm_validated?: boolean;
 }
-type ProcessedDocument = ProcessedPage[];
+export type ProcessedDocument = ProcessedPage[];
 
 type ProcessorOutput = {
   markdown: string,

@@ -27,7 +27,7 @@ import { setSessionCurrentTask } from "./task-description.ts";
 import { autoDeclineStaleApprovals } from "./auto-decline-stale-approvals";
 import { sliceHistoryAtCheckpoint, deriveContextBudget, contextOccupancy, ContextCompactionRequiredError } from "./context-budget";
 import { guardExtractedFileText } from "./tool-output-offload";
-import { parseOfficeAsync } from "officeparser";
+import { extractDocument } from "./attachment-text";
 import { credentialGuardrailBlock } from "./auth/guardrail";
 import { convertExuluToolsToAiSdkTools } from "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts";
 import type { Request } from "express";
@@ -108,8 +108,9 @@ const processFilePartsInMessages = async (
                     }
                     const filename = classified.filename;
 
-                    // For document files, fetch content and extract text using officeparser
-                    console.log(`[EXULU] Converting file part to text using officeparser: ${filename}`);
+                    // For document files, fetch content and extract the text (OCR + VLM
+                    // processor when configured, officeparser otherwise — attachment-text.ts).
+                    console.log(`[EXULU] Converting file part to text: ${filename}`);
                     try {
                         // Fetch the file content from the URL
                         const response = await fetch(url);
@@ -123,18 +124,21 @@ const processFilePartsInMessages = async (
                             };
                         }
 
-                        // Get the file as a buffer
-                        const arrayBuffer = await response.arrayBuffer();
+                        const bytes = Buffer.from(await response.arrayBuffer());
 
-                        // Parse the document using officeparser
-                        const extractedText = await parseOfficeAsync(arrayBuffer, {
-                            outputErrorToConsole: false,
-                            newlineDelimiter: "\n",
+                        const extracted = await extractDocument({
+                            bytes,
+                            filename,
+                            exuluConfig: offloadCtx.exuluConfig,
+                            attribution: { user: offloadCtx.user },
                         });
+                        console.log(
+                            `[EXULU] Extracted ${filename} via ${extracted.engine} (${extracted.pages.length} page(s), ${extracted.text.length} chars)`,
+                        );
 
                         // Cap + offload (spec §2): a 400-page manual becomes a session
                         // file + preview instead of megabytes of inline prompt.
-                        const guardedText = await guardExtractedFileText(filename, String(extractedText), offloadCtx);
+                        const guardedText = await guardExtractedFileText(filename, extracted.text, offloadCtx);
 
                         // Return as text part with extracted content wrapped in XML-like tags
                         return {
