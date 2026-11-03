@@ -11,6 +11,13 @@ export interface PublicAgentView {
   slug: string;
   guest_auth_mode: GuestAuthMode;
   guest_has_cover: boolean;
+  /**
+   * Presence flags only, deliberately not the storage keys — same shape as
+   * guest_has_cover. The bytes are served by /public-agents/:id/animation/:kind
+   * so a guest never sees an internal object path.
+   */
+  guest_has_idle_animation: boolean;
+  guest_has_responding_animation: boolean;
 }
 
 /**
@@ -26,6 +33,8 @@ export const publicAgentView = (
     welcomemessage?: string | null;
     guest_auth_mode?: string | null;
     guest_cover_image?: string | null;
+    animation_idle?: string | null;
+    animation_responding?: string | null;
   },
   slug: string,
 ): PublicAgentView => ({
@@ -37,6 +46,8 @@ export const publicAgentView = (
   slug,
   guest_auth_mode: (row.guest_auth_mode as GuestAuthMode) || "regular",
   guest_has_cover: !!row.guest_cover_image,
+  guest_has_idle_animation: !!row.animation_idle,
+  guest_has_responding_animation: !!row.animation_responding,
 });
 
 export type GuestGate =

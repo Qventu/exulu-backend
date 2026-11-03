@@ -5621,6 +5621,10 @@ export const createExpressRoutes = async (
         "model",
         "guest_auth_mode",
         "guest_cover_image",
+        // Presence only — publicAgentView turns these into booleans and the
+        // bytes are served by /public-agents/:id/animation/:kind.
+        "animation_idle",
+        "animation_responding",
       );
     const views = await Promise.all(
       rows.map(async (row) =>
@@ -5669,6 +5673,49 @@ export const createExpressRoutes = async (
     res.setHeader("Cache-Control", "public, max-age=300");
     res.send(bytes);
   });
+
+  // Lottie JSON for the guest chat avatar. Mirrors /cover: the projection
+  // exposes only a presence flag, the bytes come from here, and the storage
+  // key never leaves the server. Without this the guest chat falls back to the
+  // bundled default sphere, because the internal path resolves animations
+  // through an authenticated presigned-URL endpoint a guest cannot call.
+  app.get(
+    "/public-agents/:id/animation/:kind",
+    async (req: Request, res: Response) => {
+      const kind = req.params.kind;
+      if (kind !== "idle" && kind !== "responding") {
+        res.status(404).json({ detail: "Not found." });
+        return;
+      }
+      const row = await getGuestAgentById(req.params.id ?? "");
+      const key =
+        kind === "idle" ? row?.animation_idle : row?.animation_responding;
+      if (!key) {
+        res.status(404).json({ detail: "Not found." });
+        return;
+      }
+      let bytes: Buffer;
+      try {
+        bytes = await getS3ObjectBytes(key, config);
+      } catch (e: any) {
+        if (
+          e?.name === "NoSuchKey" ||
+          e?.name === "NotFound" ||
+          e?.$metadata?.httpStatusCode === 404
+        ) {
+          res.status(404).json({ detail: "Animation not found." });
+          return;
+        }
+        console.error("[EXULU] public-agent animation read failed", e);
+        res.status(500).json({ detail: "Failed to read animation." });
+        return;
+      }
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Cache-Control", "public, max-age=300");
+      res.send(bytes);
+    },
+  );
 
   app.post(
     "/public-agents/:id/verify-password",
