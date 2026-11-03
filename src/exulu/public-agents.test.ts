@@ -15,6 +15,8 @@ describe("publicAgentView", () => {
       guest_auth_mode: "password",
       guest_password_hash: "$2a$10$secret",
       guest_cover_image: "s3/cover.jpg",
+      animation_idle: "s3/idle.json",
+      animation_responding: "s3/responding.json",
     } as any;
     const view = publicAgentView(row, "/agents/litellm/run");
     expect(view).toEqual({
@@ -26,9 +28,35 @@ describe("publicAgentView", () => {
       slug: "/agents/litellm/run",
       guest_auth_mode: "password",
       guest_has_cover: true,
+      guest_has_idle_animation: true,
+      guest_has_responding_animation: true,
     });
     expect(JSON.stringify(view)).not.toContain("SECRET");
     expect(JSON.stringify(view)).not.toContain("$2a$");
+  });
+
+  test("exposes animation PRESENCE but never the storage keys", () => {
+    // The guest chat needs to know an animation exists so it can request it
+    // from /public-agents/:id/animation/:kind. It must never learn where the
+    // object actually lives — same contract as guest_cover_image.
+    const view = publicAgentView(
+      {
+        id: "a3",
+        animation_idle: "s3/internal/path/idle.json",
+        animation_responding: "s3/internal/path/responding.json",
+        guest_cover_image: "s3/internal/path/cover.jpg",
+      } as any,
+      "",
+    );
+    expect(view.guest_has_idle_animation).toBe(true);
+    expect(view.guest_has_responding_animation).toBe(true);
+    expect(JSON.stringify(view)).not.toContain("s3/internal/path");
+  });
+
+  test("animation flags are false when the agent has none", () => {
+    const view = publicAgentView({ id: "a4" } as any, "");
+    expect(view.guest_has_idle_animation).toBe(false);
+    expect(view.guest_has_responding_animation).toBe(false);
   });
 
   test("null-safe defaults", () => {
@@ -42,6 +70,8 @@ describe("publicAgentView", () => {
       slug: "",
       guest_auth_mode: "regular",
       guest_has_cover: false,
+      guest_has_idle_animation: false,
+      guest_has_responding_animation: false,
     });
   });
 });
