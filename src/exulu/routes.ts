@@ -5597,6 +5597,21 @@ export const createExpressRoutes = async (
   const UUID_RE =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+  /**
+   * getS3ObjectBytes takes a BARE key — it supplies the bucket itself from
+   * config (the sibling deleteS3Object documents this as "no bucket prefix").
+   * Agent file columns, however, store the bucket-prefixed form the file
+   * picker produces, e.g.
+   *   dx-newlift-…-app_data-…/test/global/<uuid>-_EXULU_newton-agent-idle.json
+   * Passing that through unchanged asks S3 for <bucket>/<bucket>/… and gets a
+   * NoSuchKey. Same normalisation the authenticated delete path uses; a no-op
+   * for keys that are already bare, so it is safe on either shape.
+   */
+  const stripBucketPrefix = (key: string, cfg: ExuluConfig): string => {
+    const bucket = cfg.fileUploads?.s3Bucket;
+    return bucket ? key.replace(`${bucket}/`, "") : key;
+  };
+
   const getGuestAgentById = async (id: string) => {
     // Reject non-UUID ids immediately — the DB uuid cast would throw a 500.
     if (!UUID_RE.test(id)) return undefined;
@@ -5651,7 +5666,10 @@ export const createExpressRoutes = async (
     }
     let bytes: Buffer;
     try {
-      bytes = await getS3ObjectBytes(row.guest_cover_image, config);
+      bytes = await getS3ObjectBytes(
+        stripBucketPrefix(row.guest_cover_image, config),
+        config,
+      );
     } catch (e: any) {
       if (
         e?.name === "NoSuchKey" ||
@@ -5696,7 +5714,7 @@ export const createExpressRoutes = async (
       }
       let bytes: Buffer;
       try {
-        bytes = await getS3ObjectBytes(key, config);
+        bytes = await getS3ObjectBytes(stripBucketPrefix(key, config), config);
       } catch (e: any) {
         if (
           e?.name === "NoSuchKey" ||
