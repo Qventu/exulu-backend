@@ -395,9 +395,11 @@ describe("planShareUpdate with agent_slots", () => {
  * situation as GDPR's claim_checks paths — see claim-check/gdpr-paths.test.ts,
  * whose `region` helper this mirrors). So this is a source-text invariant
  * over the handler region, not a behavioural test: it locks in that a
- * non-regular row 404s, and that the 404 happens before the RBAC access
- * check runs (so no RBAC side effect ever fires for a share this endpoint is
- * not meant to serve).
+ * non-regular row 404s (before the RBAC access check runs, so no RBAC side
+ * effect ever fires for a share this endpoint is not meant to serve), and
+ * that an expired row 410s like every other read path on this resource
+ * (/meta, /content, /access) — easy to miss by hand, because the real flow
+ * hits /meta first and never reaches /panel once that already says expired.
  */
 describe("GET /shared-artifacts/:name/panel (route wiring)", () => {
   const source = readFileSync(join(__dirname, "routes.ts"), "utf8");
@@ -426,5 +428,27 @@ describe("GET /shared-artifacts/:name/panel (route wiring)", () => {
     expect(authModeCheck).toBeGreaterThan(-1);
     expect(accessCheck).toBeGreaterThan(-1);
     expect(authModeCheck).toBeLessThan(accessCheck);
+  });
+
+  // Every other read path for this resource (/meta, /content, /access) 410s
+  // an expired share. The real flow would mask a missing check here — the
+  // viewer page calls /meta first and renders "expired" before it would ever
+  // reach /panel — which is exactly why it has to be locked in on its own.
+  test("answers 410 on an expired row — not 200, not 404", () => {
+    const handler = panelHandler();
+    const expiryCheck = handler.indexOf("isExpired(row.expires_at");
+    expect(expiryCheck).toBeGreaterThan(-1);
+    const nextBraceEnd = handler.indexOf("}", expiryCheck);
+    expect(handler.slice(expiryCheck, nextBraceEnd)).toMatch(/status\(410\)/);
+  });
+
+  test("the 410 check sits between the 404-on-missing-row and the mode/access checks, like /access", () => {
+    const handler = panelHandler();
+    const notFoundCheck = handler.indexOf("if (!row)");
+    const expiryCheck = handler.indexOf("isExpired(row.expires_at");
+    const authModeCheck = handler.indexOf('auth_mode !== "regular"');
+    expect(notFoundCheck).toBeGreaterThan(-1);
+    expect(expiryCheck).toBeGreaterThan(notFoundCheck);
+    expect(authModeCheck).toBeGreaterThan(expiryCheck);
   });
 });

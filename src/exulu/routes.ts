@@ -5393,6 +5393,14 @@ export const createExpressRoutes = async (
   // Authenticates before the row lookup, so an unauthenticated caller gets
   // 401 regardless of whether the name exists or what mode it is in.
   //
+  // The 404-missing / 410-expired / mode-or-access-check ordering below
+  // mirrors /meta and /content (and /access in viewer-identity-routes.ts):
+  // expiry is checked immediately after existence and before anything
+  // mode-specific, so an expired share 410s here exactly as it does on
+  // every other read path for this resource — a viewer normally finds that
+  // out from /meta first, which is exactly why this route must not be the
+  // one place that forgets.
+  //
   // Runs the same regular-mode RBAC check as GET /content and
   // /shared-artifacts/:name/access above (viewer-identity-routes.ts): this
   // duplicates that block deliberately, for the same reason those two do —
@@ -5407,6 +5415,10 @@ export const createExpressRoutes = async (
     const row = await getSharedArtifactByName(db, req.params.name ?? "");
     if (!row) {
       res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    if (isExpired(row.expires_at, new Date())) {
+      res.status(410).json({ detail: "This link has expired." });
       return;
     }
     if (row.auth_mode !== "regular") {
