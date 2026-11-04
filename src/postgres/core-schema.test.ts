@@ -23,6 +23,13 @@ describe("shared_artifacts schema", () => {
     const nameField = schema.fields.find((f) => f.name === "name");
     expect(nameField?.unique).toBe(true);
   });
+
+  test("carries the agent_slots json field", () => {
+    const schema = coreSchemas.get().sharedArtifactsSchema();
+    const field = schema.fields.find((f) => f.name === "agent_slots");
+    expect(field).toMatchObject({ name: "agent_slots", type: "json" });
+    expect(field?.required).not.toBe(true);
+  });
 });
 
 describe("transcription_jobs schema (live recording columns)", () => {

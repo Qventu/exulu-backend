@@ -5311,6 +5311,7 @@ export const createExpressRoutes = async (
       content_type: row.content_type ?? null,
       s3key: row.s3key,
       created_by: row.created_by ?? null,
+      agent_slots: row.agent_slots ?? [],
       rbac: {
         users: rbac.filter((r) => r.access_type === "User").map((r) => ({ id: r.user_id, rights: r.rights })),
         roles: rbac.filter((r) => r.access_type === "Role").map((r) => ({ id: r.role_id, rights: r.rights })),
@@ -5378,7 +5379,52 @@ export const createExpressRoutes = async (
       auth_mode: updated.auth_mode,
       expires_at: updated.expires_at ?? null,
       rights_mode: updated.rights_mode ?? null,
+      agent_slots: updated.agent_slots ?? [],
     });
+  });
+
+  // The agent bindings for an artifact's panel, for a *viewer* rather than
+  // the creator (contrast GET /settings above, which is canManageShare-only).
+  // A public/password share 404s here — the same shape as a missing row —
+  // so this endpoint never reveals whether the panel capability exists for
+  // a share that cannot carry it; `GET /meta` is unauthenticated, so putting
+  // slots there would publish agent ids to anyone with the share name.
+  //
+  // Authenticates before the row lookup, so an unauthenticated caller gets
+  // 401 regardless of whether the name exists or what mode it is in.
+  //
+  // Runs the same regular-mode RBAC check as GET /content and
+  // /shared-artifacts/:name/access above (viewer-identity-routes.ts): this
+  // duplicates that block deliberately, for the same reason those two do —
+  // if this changes, check the other two as well.
+  app.get("/shared-artifacts/:name/panel", async (req: Request, res: Response) => {
+    const { db } = await postgresClient();
+    const auth = await requestValidators.authenticate(req);
+    if (!auth.user?.id) {
+      res.status(401).json({ detail: "Authentication required." });
+      return;
+    }
+    const row = await getSharedArtifactByName(db, req.params.name ?? "");
+    if (!row) {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    if (row.auth_mode !== "regular") {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    const rbac = await RBACResolver(
+      db,
+      "shared_artifact",
+      row.id,
+      row.rights_mode || "private",
+    );
+    const ok = await checkRecordAccess({ ...row, RBAC: rbac }, "read", auth.user);
+    if (!ok) {
+      res.status(403).json({ detail: "You don't have access to this artifact." });
+      return;
+    }
+    res.json({ agent_slots: row.agent_slots ?? [] });
   });
 
   // Create a share link. Authed as the real user; RBAC scoping for regular mode.

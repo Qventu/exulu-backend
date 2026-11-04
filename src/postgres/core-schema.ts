@@ -985,6 +985,12 @@ const sharedArtifactsSchema: ExuluTableDefinition = {
     { name: "password_hash", type: "text", required: false, hidden: true }, // bcrypt; password mode only
     { name: "expires_at", type: "date", required: false }, // null = no expiry
     { name: "content_type", type: "text", required: false },
+    // Admin/creator-assigned agent bindings for the artifact's panel (spec
+    // 2026-11-04-artifact-agent-panel). Nullable json; read back as
+    // AgentSlot[] (see shared-artifacts.ts), empty array when null.
+    // Deliberately not cleared when the row leaves "regular" auth mode —
+    // see planShareUpdate's docblock.
+    { name: "agent_slots", type: "json" },
     // `grant_viewer_identity`, `identity_granted_by` and `identity_granted_at`
     // were here. The viewer-identity capability is no longer a per-row grant:
     // `auth_mode: "regular"` carries it, because such an artifact only renders

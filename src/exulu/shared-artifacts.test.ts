@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   normalizeS3Key,
   isHtmlKey,
@@ -14,6 +16,7 @@ import {
   contentHeadersFor,
   publicMetaFor,
   getSharedArtifactByName,
+  validateAgentSlots,
 } from "./shared-artifacts";
 
 describe("normalizeS3Key", () => {
@@ -334,5 +337,94 @@ describe("validateUpdateInput / planShareUpdate with s3key", () => {
     expect(patch.content_type).toBe("text/html");
     expect(patch.auth_mode).toBe("regular");
     expect(patch.rights_mode).toBe("public");
+  });
+});
+
+describe("validateAgentSlots", () => {
+  test("accepts a well-formed list", () => {
+    const r = validateAgentSlots([{ key: "analyse", agentId: "a1" }]);
+    expect(r).toEqual({ ok: true, slots: [{ key: "analyse", agentId: "a1" }] });
+  });
+  test("accepts an empty list", () => {
+    expect(validateAgentSlots([])).toEqual({ ok: true, slots: [] });
+  });
+  test("rejects a non-array", () => {
+    expect(validateAgentSlots({ key: "a" }).ok).toBe(false);
+  });
+  test("rejects a blank or non-string key", () => {
+    expect(validateAgentSlots([{ key: "  ", agentId: "a1" }]).ok).toBe(false);
+    expect(validateAgentSlots([{ key: 7, agentId: "a1" }]).ok).toBe(false);
+  });
+  test("rejects a blank or non-string agentId", () => {
+    expect(validateAgentSlots([{ key: "a", agentId: "" }]).ok).toBe(false);
+  });
+  test("rejects duplicate keys — a button could not bind unambiguously", () => {
+    const r = validateAgentSlots([
+      { key: "analyse", agentId: "a1" },
+      { key: "analyse", agentId: "a2" },
+    ]);
+    expect(r.ok).toBe(false);
+  });
+  test("ignores unknown properties rather than storing them", () => {
+    const r = validateAgentSlots([{ key: "a", agentId: "a1", extra: 1 }]);
+    expect(r).toEqual({ ok: true, slots: [{ key: "a", agentId: "a1" }] });
+  });
+});
+
+describe("validateUpdateInput with agent_slots", () => {
+  const row = { name: "x", auth_mode: "regular", password_hash: null, rights_mode: "private", created_by: 1 };
+  test("rejects a malformed agent_slots payload", () => {
+    expect(validateUpdateInput({ agent_slots: "nope" } as any, row, new Date()).ok).toBe(false);
+  });
+});
+
+describe("planShareUpdate with agent_slots", () => {
+  const row = { name: "x", auth_mode: "regular", password_hash: null, rights_mode: "private", created_by: 1 };
+  test("writes normalised slots when given", () => {
+    const patch = planShareUpdate({ agent_slots: [{ key: "a", agentId: "a1", extra: 1 }] } as any, row, null, new Date());
+    expect(patch.agent_slots).toEqual([{ key: "a", agentId: "a1" }]);
+  });
+  test("omits the column when not given", () => {
+    expect("agent_slots" in planShareUpdate({}, row, null, new Date())).toBe(false);
+  });
+});
+
+/**
+ * GET /shared-artifacts/:name/panel lives directly in routes.ts, a factory
+ * that takes a live Postgres client and has no supertest seam (same
+ * situation as GDPR's claim_checks paths — see claim-check/gdpr-paths.test.ts,
+ * whose `region` helper this mirrors). So this is a source-text invariant
+ * over the handler region, not a behavioural test: it locks in that a
+ * non-regular row 404s, and that the 404 happens before the RBAC access
+ * check runs (so no RBAC side effect ever fires for a share this endpoint is
+ * not meant to serve).
+ */
+describe("GET /shared-artifacts/:name/panel (route wiring)", () => {
+  const source = readFileSync(join(__dirname, "routes.ts"), "utf8");
+
+  /** The panel handler's source, so each assertion sees that route only. */
+  function panelHandler(): string {
+    const start = source.indexOf('app.get("/shared-artifacts/:name/panel"');
+    const end = source.indexOf("\n  app.", start + 1);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return source.slice(start, end);
+  }
+
+  test("404s a non-regular row rather than returning an empty list", () => {
+    const handler = panelHandler();
+    const authModeCheck = handler.indexOf('auth_mode !== "regular"');
+    expect(authModeCheck).toBeGreaterThan(-1);
+    const nextBraceEnd = handler.indexOf("}", authModeCheck);
+    expect(handler.slice(authModeCheck, nextBraceEnd)).toMatch(/status\(404\)/);
+  });
+
+  test("the 404 on a non-regular row happens before the RBAC access check", () => {
+    const handler = panelHandler();
+    const authModeCheck = handler.indexOf('auth_mode !== "regular"');
+    const accessCheck = handler.indexOf("checkRecordAccess");
+    expect(authModeCheck).toBeGreaterThan(-1);
+    expect(accessCheck).toBeGreaterThan(-1);
+    expect(authModeCheck).toBeLessThan(accessCheck);
   });
 });

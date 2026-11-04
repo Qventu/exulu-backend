@@ -79,6 +79,47 @@ export type UpdateShareInput = {
   expires_at?: string | null;
   rights_mode?: string;
   rbac?: unknown;
+  agent_slots?: unknown;
+};
+
+/** One agent bound to a named slot on an artifact's panel. */
+export type AgentSlot = { key: string; agentId: string };
+
+/**
+ * Validates and normalises an `agent_slots` payload. Returns only `key` and
+ * `agentId` (unknown properties dropped, keys trimmed) so the caller never
+ * persists whatever shape the client happened to send — the same reason
+ * `planShareUpdate` slugifies `name` rather than storing it verbatim. Keys
+ * must be unique: a panel button binds to a slot by key, so a duplicate
+ * would be ambiguous.
+ */
+export const validateAgentSlots = (
+  value: unknown,
+): { ok: true; slots: AgentSlot[] } | { ok: false; message: string } => {
+  if (!Array.isArray(value)) {
+    return { ok: false, message: "agent_slots must be an array." };
+  }
+  const slots: AgentSlot[] = [];
+  const seenKeys = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) {
+      return { ok: false, message: "Each agent slot must be an object." };
+    }
+    const { key, agentId } = entry as Record<string, unknown>;
+    if (typeof key !== "string" || !key.trim()) {
+      return { ok: false, message: "Each agent slot needs a non-empty key." };
+    }
+    if (typeof agentId !== "string" || !agentId.trim()) {
+      return { ok: false, message: "Each agent slot needs a non-empty agentId." };
+    }
+    const trimmedKey = key.trim();
+    if (seenKeys.has(trimmedKey)) {
+      return { ok: false, message: "agent_slots keys must be unique." };
+    }
+    seenKeys.add(trimmedKey);
+    slots.push({ key: trimmedKey, agentId });
+  }
+  return { ok: true, slots };
 };
 
 export type ShareRowForUpdate = {
@@ -130,6 +171,10 @@ export const validateUpdateInput = (
   if (input.s3key !== undefined && (typeof input.s3key !== "string" || !input.s3key.trim())) {
     return { ok: false, message: "s3key must be a non-empty string." };
   }
+  if (input.agent_slots !== undefined) {
+    const slotsResult = validateAgentSlots(input.agent_slots);
+    if (!slotsResult.ok) return { ok: false, message: slotsResult.message };
+  }
   return { ok: true };
 };
 
@@ -158,6 +203,13 @@ export const ownsObjectKey = (
  * input.password when one was given. Leaving password mode drops the hash;
  * leaving regular mode resets rights_mode to the "public" sentinel the create
  * route writes for public/password shares.
+ *
+ * `agent_slots` is NOT reset when the row leaves regular mode, unlike
+ * rights_mode above: both readers of the column (the settings route, the
+ * panel route) gate on `auth_mode === "regular"`, so stale slots on a
+ * public/password row are unreachable, and regaining the old assignments on
+ * switching back to regular is the friendlier behaviour. This is deliberate
+ * — do not add clearing logic here.
  */
 export const planShareUpdate = (
   input: UpdateShareInput,
@@ -177,6 +229,10 @@ export const planShareUpdate = (
       input.rights_mode ?? (row.auth_mode === "regular" ? (row.rights_mode ?? "private") : "private");
   } else {
     patch.rights_mode = "public";
+  }
+  if (input.agent_slots !== undefined) {
+    const slotsResult = validateAgentSlots(input.agent_slots);
+    if (slotsResult.ok) patch.agent_slots = slotsResult.slots;
   }
   return patch;
 };
