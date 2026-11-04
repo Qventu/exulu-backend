@@ -24,10 +24,16 @@ describe("shared_artifacts schema", () => {
     expect(nameField?.unique).toBe(true);
   });
 
-  test("carries the agent_slots json field", () => {
+  // `hidden: true` here is a security boundary, not cosmetic: the generic
+  // GraphQL shared_artifacts query is read-open to any authenticated user,
+  // and a public/password share's rights_mode is forced to the "public"
+  // sentinel (planShareUpdate), so an un-hidden agent_slots would leak agent
+  // ids through that query for exactly the shares /panel's 404-masking
+  // exists to protect. Same reason password_hash (two fields up) is hidden.
+  test("carries the agent_slots json field, hidden like password_hash", () => {
     const schema = coreSchemas.get().sharedArtifactsSchema();
     const field = schema.fields.find((f) => f.name === "agent_slots");
-    expect(field).toMatchObject({ name: "agent_slots", type: "json" });
+    expect(field).toMatchObject({ name: "agent_slots", type: "json", hidden: true });
     expect(field?.required).not.toBe(true);
   });
 });
