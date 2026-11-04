@@ -203,7 +203,7 @@ import {
   ownsObjectKey,
 } from "./shared-artifacts.ts";
 import { sanitizeFilename } from "./session-files.ts";
-import { planAdoptKeys } from "./session-file-adopt.ts";
+import { planAdoptKeys, planAdoptSizeCheck, MAX_ADOPT_UPLOAD_BYTES } from "./session-file-adopt.ts";
 import { publicAgentView, evaluateGuestChatAccess } from "./public-agents.ts";
 import {
   extractClientIp,
@@ -5013,14 +5013,6 @@ export const createExpressRoutes = async (
     },
   );
 
-  // An adopt path copies S3-to-S3 and never passes through the presigned-PUT
-  // upload flow, so the client's own size check (MAX_UPLOAD_BYTES in
-  // frontend/app/(application)/chat/components/session-files/utils.ts) never
-  // runs. This is the server-side equivalent, enforced here rather than at
-  // read time -- EXULU_ATTACHMENT_MAX_PAGES is the read-time cap and an
-  // adopted file inherits that for free the first time anything reads it.
-  const MAX_ADOPT_UPLOAD_BYTES = 50 * 1024 * 1024;
-
   /**
    * POST /sessions/:sessionId/files/adopt
    * Copies the caller's own already-uploaded objects into this session's
@@ -5032,11 +5024,13 @@ export const createExpressRoutes = async (
    *
    * `planAdoptKeys` is the actual security boundary (see that module) --
    * this route trusts its verdict and nothing else. All-or-nothing: if it
-   * rejects any key for any reason, nothing is copied and the response is
+   * rejects any key for any reason (including an oversized batch or a
+   * filename collision within it), nothing is copied and the response is
    * 403 with the `rejected` list for diagnostics. A partial copy would leave
    * the user looking at a files panel missing a document they watched
-   * themselves attach, with nothing on screen to say why. The same
-   * all-or-nothing rule applies to the size cap below, for the same reason.
+   * themselves attach, with nothing on screen to say why. `planAdoptSizeCheck`
+   * applies the identical all-or-nothing rule to the live size-check pass
+   * below, which `planAdoptKeys` can't do itself (it never touches S3).
    *
    * Body: { keys: string[] }
    * Response: { adopted: Array<{ key: string; name: string }>; rejected: Array<{ key: string; reason: string }> }
@@ -5054,12 +5048,21 @@ export const createExpressRoutes = async (
         return;
       }
 
+      // A dropped or malformed body (not an array) is a caller bug, not "no
+      // keys" -- on this endpoint specifically, failures are security-
+      // relevant to diagnose, so it gets its own 400 rather than being
+      // indistinguishable from an empty adopt.
+      if (!Array.isArray(req.body?.keys)) {
+        res.status(400).json({ detail: "keys must be an array of strings." });
+        return;
+      }
+
       const authed = await loadSessionFilesAuth(req, res, sessionId, "write");
       if (!authed) return;
 
       const bucket = config.fileUploads.s3Bucket;
       const plan = planAdoptKeys(
-        req.body?.keys,
+        req.body.keys,
         authed.user,
         config.fileUploads.s3prefix,
         bucket,
@@ -5069,20 +5072,13 @@ export const createExpressRoutes = async (
         return;
       }
 
-      const sizeRejected: Array<{ key: string; reason: string }> = [];
+      const sizeChecks: Array<{ entry: (typeof plan.accepted)[number]; size: number | null }> = [];
       for (const entry of plan.accepted) {
-        const size = await getS3ObjectSize(entry.source, config);
-        if (size === null) {
-          sizeRejected.push({ key: entry.source, reason: "Source object not found." });
-        } else if (size > MAX_ADOPT_UPLOAD_BYTES) {
-          sizeRejected.push({
-            key: entry.source,
-            reason: `File exceeds the ${Math.floor(MAX_ADOPT_UPLOAD_BYTES / (1024 * 1024))}MB upload limit.`,
-          });
-        }
+        sizeChecks.push({ entry, size: await getS3ObjectSize(entry.source, config) });
       }
-      if (sizeRejected.length > 0) {
-        res.status(403).json({ adopted: [], rejected: sizeRejected });
+      const sizeDecision = planAdoptSizeCheck(sizeChecks, MAX_ADOPT_UPLOAD_BYTES);
+      if (!sizeDecision.proceed) {
+        res.status(403).json({ adopted: [], rejected: sizeDecision.rejected });
         return;
       }
 
@@ -5100,19 +5096,24 @@ export const createExpressRoutes = async (
       }
 
       // Same sync-to-sandbox work the upload route does, so the agent sees
-      // these files on its next turn without waiting for a cold-start restore.
-      await Promise.all(
-        adopted.map((f) =>
-          downloadKeyIntoSandbox({
+      // these files on its next turn without waiting for a cold-start
+      // restore. Sequential, not Promise.all: downloadKeyIntoSandbox reads
+      // each whole object into memory before writing it, and the batch is
+      // already capped but still large enough (MAX_ADOPT_KEYS files at
+      // MAX_ADOPT_UPLOAD_BYTES each) that running them concurrently would
+      // hold every buffer in memory at once. Best-effort either way.
+      for (const f of adopted) {
+        try {
+          await downloadKeyIntoSandbox({
             sessionId,
             userId: authed.ownerId,
             fullS3Key: f.key,
             config,
-          }).catch((err) => {
-            console.error("[SESSION-FILES] adopt sync-to-sandbox failed", err);
-          }),
-        ),
-      );
+          });
+        } catch (err) {
+          console.error("[SESSION-FILES] adopt sync-to-sandbox failed", err);
+        }
+      }
 
       res.json({ adopted, rejected: [] });
     },

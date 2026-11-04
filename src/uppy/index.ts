@@ -253,6 +253,22 @@ export const listS3ObjectsByPrefix = async (
 };
 
 /**
+ * `CopySource` is a header value, not a path parameter — the SDK does not
+ * encode it, and S3 URL-decodes whatever it receives. Encode each "/"
+ * -delimited segment on its own (never the whole string, which would
+ * escape the "/" separators themselves and point at a nonexistent key).
+ * Keys made of internal, ASCII-safe segments (uuids, "v1", fixed names)
+ * round-trip through this unchanged; a user-named filename with spaces,
+ * unicode, or other header-unsafe characters is exactly what this exists
+ * to fix.
+ */
+export const encodeS3KeyForCopySource = (key: string): string =>
+  key
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+
+/**
  * Copy an S3 object from one key to another within the same bucket.
  * Keys should NOT include the bucket prefix.
  */
@@ -268,7 +284,7 @@ export const copyS3Object = async (
   const bucket = config.fileUploads.s3Bucket;
   const command = new CopyObjectCommand({
     Bucket: bucket,
-    CopySource: `${bucket}/${sourceKey}`,
+    CopySource: `${bucket}/${encodeS3KeyForCopySource(sourceKey)}`,
     Key: destKey,
   });
   await client.send(command);
