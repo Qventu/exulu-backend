@@ -30,6 +30,7 @@ import {
   getS3ObjectContent,
   getS3ObjectBytes,
   getS3ObjectEtag,
+  getS3ObjectSize,
   getS3SignedUploadUrl,
   getPresignedUrl,
   type S3FileObject,
@@ -201,6 +202,8 @@ import {
   planShareUpdate,
   ownsObjectKey,
 } from "./shared-artifacts.ts";
+import { sanitizeFilename } from "./session-files.ts";
+import { planAdoptKeys } from "./session-file-adopt.ts";
 import { publicAgentView, evaluateGuestChatAccess } from "./public-agents.ts";
 import {
   extractClientIp,
@@ -4630,7 +4633,7 @@ export const createExpressRoutes = async (
   // ─── End Skills File Management ───────────────────────────────────────────────
 
   // ─── Session Files ────────────────────────────────────────────────────────────
-  // Five routes that power the session files side panel on the chat page.
+  // Six routes that power the session files side panel on the chat page.
   // All files live under <s3prefix>/user_<userId>/sessions/<sessionId>/, the
   // same prefix the agent's writeFile and bash artifact mirroring use. User-
   // uploaded files become visible to the agent next turn (cold-start restore
@@ -4719,22 +4722,6 @@ export const createExpressRoutes = async (
     const ownerId = authed.session.user ?? authed.user.id;
     return { ...authed, ownerId, ...buildSessionPrefixes(ownerId, sessionId) };
   };
-
-  /**
-   * Sanitize a user-supplied filename. Reject anything that escapes the
-   * intended directory; mostly defensive — Uppy normally posts to the
-   * presigned URL whose key we already control, so the filename arrives
-   * here only as a label.
-   */
-  function sanitizeFilename(name: string): string {
-    const trimmed = name.trim();
-    if (!trimmed) return "";
-    if (trimmed.includes("..")) return "";
-    if (trimmed.startsWith("/") || trimmed.startsWith("\\")) return "";
-    // Replace path separators in the basename — uploads are flat per session,
-    // no subdir creation through this route.
-    return trimmed.replace(/[\\/]/g, "_");
-  }
 
   /**
    * GET /sessions/:sessionId/files
@@ -5023,6 +5010,111 @@ export const createExpressRoutes = async (
         console.error("[SESSION-FILES] preview unexpected error", err);
         res.status(500).json({ detail: "Failed to render preview." });
       }
+    },
+  );
+
+  // An adopt path copies S3-to-S3 and never passes through the presigned-PUT
+  // upload flow, so the client's own size check (MAX_UPLOAD_BYTES in
+  // frontend/app/(application)/chat/components/session-files/utils.ts) never
+  // runs. This is the server-side equivalent, enforced here rather than at
+  // read time -- EXULU_ATTACHMENT_MAX_PAGES is the read-time cap and an
+  // adopted file inherits that for free the first time anything reads it.
+  const MAX_ADOPT_UPLOAD_BYTES = 50 * 1024 * 1024;
+
+  /**
+   * POST /sessions/:sessionId/files/adopt
+   * Copies the caller's own already-uploaded objects into this session's
+   * file prefix. Feeds the artifact-panel attach flow: an artifact iframe
+   * uploads bytes with the user's own token (not the session's) and hands
+   * the chat panel the resulting S3 keys; this is how those bytes become a
+   * session file the agent's sandbox tools can see on later turns, the same
+   * way an Uppy upload would.
+   *
+   * `planAdoptKeys` is the actual security boundary (see that module) --
+   * this route trusts its verdict and nothing else. All-or-nothing: if it
+   * rejects any key for any reason, nothing is copied and the response is
+   * 403 with the `rejected` list for diagnostics. A partial copy would leave
+   * the user looking at a files panel missing a document they watched
+   * themselves attach, with nothing on screen to say why. The same
+   * all-or-nothing rule applies to the size cap below, for the same reason.
+   *
+   * Body: { keys: string[] }
+   * Response: { adopted: Array<{ key: string; name: string }>; rejected: Array<{ key: string; reason: string }> }
+   */
+  app.post(
+    "/sessions/:sessionId/files/adopt",
+    async (req: Request, res: Response) => {
+      const sessionId = req.params.sessionId;
+      if (!sessionId) {
+        res.status(400).json({ detail: "Missing sessionId in path." });
+        return;
+      }
+      if (!config.fileUploads) {
+        res.status(500).json({ detail: "File uploads are not configured." });
+        return;
+      }
+
+      const authed = await loadSessionFilesAuth(req, res, sessionId, "write");
+      if (!authed) return;
+
+      const bucket = config.fileUploads.s3Bucket;
+      const plan = planAdoptKeys(
+        req.body?.keys,
+        authed.user,
+        config.fileUploads.s3prefix,
+        bucket,
+      );
+      if (plan.rejected.length > 0) {
+        res.status(403).json({ adopted: [], rejected: plan.rejected });
+        return;
+      }
+
+      const sizeRejected: Array<{ key: string; reason: string }> = [];
+      for (const entry of plan.accepted) {
+        const size = await getS3ObjectSize(entry.source, config);
+        if (size === null) {
+          sizeRejected.push({ key: entry.source, reason: "Source object not found." });
+        } else if (size > MAX_ADOPT_UPLOAD_BYTES) {
+          sizeRejected.push({
+            key: entry.source,
+            reason: `File exceeds the ${Math.floor(MAX_ADOPT_UPLOAD_BYTES / (1024 * 1024))}MB upload limit.`,
+          });
+        }
+      }
+      if (sizeRejected.length > 0) {
+        res.status(403).json({ adopted: [], rejected: sizeRejected });
+        return;
+      }
+
+      const adopted: Array<{ key: string; name: string }> = [];
+      try {
+        for (const entry of plan.accepted) {
+          const destKey = `${authed.fullSessionPrefix}${entry.filename}`;
+          await copyS3Object(entry.source, destKey, config);
+          adopted.push({ key: destKey, name: entry.filename });
+        }
+      } catch (err: any) {
+        console.error("[SESSION-FILES] adopt copy failed", err);
+        res.status(500).json({ detail: "Failed to copy file into session." });
+        return;
+      }
+
+      // Same sync-to-sandbox work the upload route does, so the agent sees
+      // these files on its next turn without waiting for a cold-start restore.
+      await Promise.all(
+        adopted.map((f) =>
+          downloadKeyIntoSandbox({
+            sessionId,
+            userId: authed.ownerId,
+            fullS3Key: f.key,
+            config,
+          }).catch((err) => {
+            console.error("[SESSION-FILES] adopt sync-to-sandbox failed", err);
+          }),
+        ),
+      );
+
+      res.json({ adopted, rejected: [] });
     },
   );
 

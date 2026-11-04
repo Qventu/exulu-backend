@@ -350,6 +350,33 @@ export const getS3ObjectEtag = async (
 };
 
 /**
+ * Fetch the byte size of an S3 object via HeadObject, without downloading
+ * it. Used to enforce a size cap on a copy-only path (session file adopt)
+ * that never passes through the presigned-PUT upload flow, so the client's
+ * own size check never runs. Returns null if HeadObject fails (object
+ * missing or auth error) so the caller can treat "unknown" the same as
+ * "over the limit".
+ */
+export const getS3ObjectSize = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<number | null> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const bucket = config.fileUploads.s3Bucket;
+  try {
+    const response = await client.send(
+      new HeadObjectCommand({ Bucket: bucket, Key: key }),
+    );
+    return response.ContentLength ?? null;
+  } catch {
+    return null;
+  }
+};
+
+/**
  * Read the full binary content of an S3 object as a Buffer.
  * Use for archives, images, and any non-text payload (e.g. skill bundle zips).
  */

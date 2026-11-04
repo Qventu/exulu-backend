@@ -25,3 +25,20 @@ export function sessionFilePrefix(
   const general = s3prefix ? `${s3prefix.replace(/\/+$/, "")}/` : "";
   return `${general}user_${ownerId}/sessions/${sessionId}/`;
 }
+
+/**
+ * Sanitize a user-supplied filename. Reject anything that escapes the
+ * intended directory; mostly defensive — a session-file write normally gets
+ * here either via a presigned PUT whose key we already control (the
+ * filename then arrives only as a label) or via the adopt route's own
+ * `deriveFilename` output, but both still land here before touching disk/S3.
+ */
+export function sanitizeFilename(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "";
+  if (trimmed.includes("..")) return "";
+  if (trimmed.startsWith("/") || trimmed.startsWith("\\")) return "";
+  // Replace path separators in the basename — uploads are flat per session,
+  // no subdir creation through this route.
+  return trimmed.replace(/[\\/]/g, "_");
+}
