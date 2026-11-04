@@ -210,7 +210,7 @@ Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement `AgentSlotsField`**
 
-A list of `{ key, agentId }` rows plus an add control: a free-text key input and an agent `Select` populated from `GET_AGENTS` (`frontend/app/(application)/chat/queries.ts:145`). Returns `null` when `isApp` is false — the spec hides assignment for non-app artifacts entirely.
+A list of `{ key, agentId }` rows plus an add control: a free-text key input and an agent `Select` populated from the shared `GET_AGENTS` in `frontend/queries/queries.ts:154` — not the chat feature's own copy at `app/(application)/chat/queries.ts:145`, which would couple the artifacts feature to chat internals. Returns `null` when `isApp` is false — the spec hides assignment for non-app artifacts entirely.
 
 The key is explained in its own helper text: it is what the artifact's code names, so it must not change casually. New strings go in the existing `artifacts` namespace of `frontend/messages/en.json` and `de.json` — both files, or the German UI falls back to English mid-form.
 
@@ -315,7 +315,7 @@ For each accepted key: `CopyObjectCommand` into `<fullSessionPrefix><filename>`,
 
 Server-side size cap: `HeadObjectCommand` on the source and refuse over the limit `frontend/app/(application)/chat/components/session-files/utils.ts` enforces client-side (`MAX_UPLOAD_BYTES`), since an adopt path routes around that check. Do **not** add a page-count check — `EXULU_ATTACHMENT_MAX_PAGES` is enforced at read time by `extractDocument` and is inherited for free.
 
-Refuse the whole batch with 403 when any key is rejected for ownership, so a partial copy never looks like success.
+**All-or-nothing.** If `planAdoptKeys` rejects *any* key, for any reason, copy nothing and answer 403 with the `rejected` list in the body for diagnostics. A partial copy would leave the user looking at a files panel that is missing a document they watched themselves attach, with nothing to say so. The success response therefore always has an empty `rejected`; add a test asserting that.
 
 - [ ] **Step 5: Run the tests and the gates**
 
@@ -567,7 +567,9 @@ git commit -m "refactor(chat): parameterise the session URL destination"
 
 **Interfaces:**
 - Consumes: `ChatShellContext` + `ChatShellContextValue` from `chat/components/chat-shell.tsx`; `HistoryRail` + `HistoryRailPaths`; `SessionScreen`; Task 6's `sessionPath`.
-- Produces: `AgentPanel` with props `{ agent: Agent; initialSession: AgentSession | null; initialMessages: UIMessage[]; artifactName: string; open: boolean; onClose: () => void; onWidthChange: (width: number) => void }`.
+- Produces: `AgentPanel` with props `{ agent: Agent; initialSession: AgentSession | null; initialMessages: UIMessage[]; artifactName: string; open: boolean; onClose: () => void; onWidthChange: (width: number) => void; onProgress: (reason: "tool" | "turn") => void }`.
+
+`onProgress` is declared here but not yet called — Task 10 owns the hook that fires it. It belongs on this component because the chat controller only exists inside the panel; the viewer cannot reach it. Declare the prop, accept it, and leave it unused this task (one line in the test asserting it is optional-safe is enough).
 
 **Pattern to copy:** `frontend/app/public/agents/[id]/components/public-chat-shell.tsx` already supplies `ChatShellContext` itself and passes `HistoryRailPaths` with `?session=<sid>`. That is this task, with a different base path. Do **not** reimplement the controller the way `use-public-chat-session.ts` did.
 
@@ -636,11 +638,13 @@ git commit -m "feat(artifacts): agent panel host beside the artifact"
 - Create: `frontend/app/(application)/artifacts/open/[name]/viewer-client.test.tsx`
 
 **Interfaces:**
-- Consumes: Task 1's `agent_slots` (via the backend `/meta` or `/settings` response), Task 5's `panel` prop, Task 7's `AgentPanel`.
+- Consumes: Task 1's `GET /shared-artifacts/:name/panel`, Task 5's `panel` prop, Task 7's `AgentPanel`.
 - Produces: `ArtifactViewerProps` gains `slots: ResolvedSlot[]`, `initialSession: AgentSession | null`, `initialMessages: UIMessage[]`, where
-  `type ResolvedSlot = { key: string; agentId: string; label: string }` — the join of Task 1's `AgentSlot` with the agent's display name. The page accepts `?agent=<slotKey>` and `?session=<id>` search params.
+  `type ResolvedSlot = { key: string; label: string; agent: Agent }`. The page accepts `?agent=<slotKey>` and `?session=<id>` search params.
 
-**Two slot types, deliberately.** `AgentSlot { key, agentId }` is the stored and transported-to-the-server shape. `PanelSlot { key, label }` from Task 4 is what crosses the channel into the artifact — **agent ids never reach the frame**. `ResolvedSlot` is the viewer's internal join of the two; map it down to `PanelSlot` when passing `panel.slots` to `ArtifactFrame`.
+**`ResolvedSlot` carries the whole `Agent`, not just its id**, because `AgentPanel` (Task 7) needs the `Agent` object that `SessionScreen` and `HistoryRail` both take. Resolving it again client-side would be a second fetch of data the page already holds.
+
+**Three slot types, deliberately.** `AgentSlot { key, agentId }` is the stored shape and what crosses the wire to the server. `PanelSlot { key, label }` from Task 4 is what crosses the channel into the artifact — **agent ids never reach the frame**. `ResolvedSlot { key, label, agent }` is the viewer's internal join; map it down to `PanelSlot` when passing `panel.slots` to `ArtifactFrame`.
 
 **Out of scope here:** `?q=` on the artifact page. The spec lists it as optional, and Task 9 gives the panel a seed channel that does not need it.
 
@@ -671,7 +675,8 @@ Expected: FAIL — no CTA is rendered.
 
 Keep the existing meta → credential → content sequence exactly as it is; the file's header comment explains why each step is in that order. Then, only for `auth_mode === "regular"` **and** `meta.is_html`:
 
-- fetch the reachable agents (`GET_AGENTS` via `fetchGraphQLServerSide`) and keep only slots whose `agentId` is present;
+- read the slots from `GET /shared-artifacts/:name/panel` with the viewer's JWT (the same credential the page already mints for `regular` mode);
+- fetch the reachable agents (`GET_AGENTS` from `frontend/queries/queries.ts` via `fetchGraphQLServerSide`) and build a `ResolvedSlot` per slot whose `agentId` is present, dropping the rest — this is where "only agents the user may reach are offered" is enforced;
 - when `?session=` is given, load it the way `chat/[agent]/[session]/page.tsx` does (`GET_AGENT_SESSION_BY_ID` then `GET_AGENT_MESSAGES`) and **discard it unless its `agent` matches the slot's agent**, which is Review Focus 4.
 
 - [ ] **Step 4: CTA in `viewer-client.tsx`**
@@ -797,7 +802,8 @@ git commit -m "feat(artifacts): prefill and attach from an artifact open request
 **Files:**
 - Create: `frontend/app/(application)/artifacts/open/[name]/use-turn-progress.ts`
 - Create: `frontend/app/(application)/artifacts/open/[name]/use-turn-progress.test.ts`
-- Modify: `frontend/app/(application)/artifacts/open/[name]/viewer-client.tsx` (feed `progressNonce` to the frame)
+- Modify: `frontend/app/(application)/artifacts/open/[name]/agent-panel.tsx` (call the hook, fire `onProgress`)
+- Modify: `frontend/app/(application)/artifacts/open/[name]/viewer-client.tsx` (count `onProgress` into `progressNonce` for the frame)
 
 **Interfaces:**
 - Consumes: `controller.messages` and `controller.status` from `ChatSessionController`.
@@ -826,6 +832,8 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement the hook**
 
 Track seen `toolCallId`s in a ref so each terminal transition bumps exactly once, and watch the status transition with a `prevStatusRef`, as `hooks.ts:1130` already does.
+
+**Where it is called:** inside `AgentPanel` (Task 7), which is the only place the controller exists — `SessionScreen` instantiates it and the viewer never sees it. The panel calls `onProgress(reason)` on each bump; the viewer counts those into the `progressNonce` it hands `ArtifactFrame`.
 
 - [ ] **Step 4: Review Focus 3 — a turn that finishes after the panel closed**
 
