@@ -34,6 +34,22 @@ describe("bundled.generated.ts", () => {
     }
   });
 
+  // Artifact authors receive these files verbatim; the repo's own unit tests
+  // over template code (templates/imp-channel.test.ts) are a gate on THIS
+  // backend, not something an author can run — they keep running from the
+  // source tree and must not ship. The second half of this test is what keeps
+  // the first from passing vacuously once the excluded file is renamed away.
+  test("the repo's own tests over template code do not ship inside a skill", () => {
+    const isTest = (file: string) => /\.test\.(ts|tsx|js|mjs|cjs)$/.test(file);
+    for (const skill of BUNDLED_SKILLS) {
+      expect(Object.keys(skill.files).filter(isTest)).toEqual([]);
+    }
+    const onDisk = collectBundledSkills(SOURCE_ROOT);
+    expect(onDisk.map((s) => s.name)).toEqual(BUNDLED_SKILLS.map((s) => s.name));
+    const sourceTests = readdirSync(join(SOURCE_ROOT, "imp-artifact-apps", "templates")).filter(isTest);
+    expect(sourceTests.length).toBeGreaterThan(0);
+  });
+
   test("the hash follows the content", () => {
     const a = { name: "x", files: { "SKILL.md": "YQ==" } };
     const b = { name: "x", files: { "SKILL.md": "Yg==" } };

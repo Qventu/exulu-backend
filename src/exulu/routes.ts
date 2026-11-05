@@ -200,6 +200,7 @@ import {
   canManageShare,
   validateUpdateInput,
   planShareUpdate,
+  readAgentSlots,
   ownsObjectKey,
 } from "./shared-artifacts.ts";
 import { sanitizeFilename } from "./session-files.ts";
@@ -5404,7 +5405,9 @@ export const createExpressRoutes = async (
       content_type: row.content_type ?? null,
       s3key: row.s3key,
       created_by: row.created_by ?? null,
-      agent_slots: row.agent_slots ?? [],
+      // Coerced, not `?? []`: see readAgentSlots on why a stored non-array is
+      // a real possibility and why a reader has to survive one.
+      agent_slots: readAgentSlots(row.agent_slots),
       rbac: {
         users: rbac.filter((r) => r.access_type === "User").map((r) => ({ id: r.user_id, rights: r.rights })),
         roles: rbac.filter((r) => r.access_type === "Role").map((r) => ({ id: r.role_id, rights: r.rights })),
@@ -5448,6 +5451,19 @@ export const createExpressRoutes = async (
     }
     const newHash = input.password ? await hashSharePassword(String(input.password)) : null;
     const patch = planShareUpdate(input, row, newHash, now);
+    // `agent_slots` is a `jsonb` column, and knex's `prepBindings` is the
+    // identity function for pg — so a raw JS array reaches node-postgres'
+    // `prepareValue`, which serialises it as a POSTGRES ARRAY LITERAL, not as
+    // JSON: `[{key,agentId}]` becomes `{"{\"key\":…}"}`, which is not valid
+    // JSON and so 500s the write, and `[]` becomes `{}`, which IS valid JSON
+    // but an object — silently corrupting the column for every reader (see
+    // readAgentSlots). Stringified here, at the db boundary, exactly as every
+    // other json-array write on this file does (image_keys, revised_prompts,
+    // tags, history) and as the generic mutation layer does for json-typed
+    // fields (graphql/mutations/index.ts). Deliberately NOT inside
+    // planShareUpdate: that stays a pure domain-patch builder, with no
+    // knowledge of how a column is encoded.
+    if (patch.agent_slots !== undefined) patch.agent_slots = JSON.stringify(patch.agent_slots);
     if (typeof patch.name === "string" && patch.name !== row.name) {
       const taken = await getSharedArtifactByName(db, patch.name);
       if (taken) {
@@ -5472,7 +5488,7 @@ export const createExpressRoutes = async (
       auth_mode: updated.auth_mode,
       expires_at: updated.expires_at ?? null,
       rights_mode: updated.rights_mode ?? null,
-      agent_slots: updated.agent_slots ?? [],
+      agent_slots: readAgentSlots(updated.agent_slots),
     });
   });
 
@@ -5529,7 +5545,7 @@ export const createExpressRoutes = async (
       res.status(403).json({ detail: "You don't have access to this artifact." });
       return;
     }
-    res.json({ agent_slots: row.agent_slots ?? [] });
+    res.json({ agent_slots: readAgentSlots(row.agent_slots) });
   });
 
   // Create a share link. Authed as the real user; RBAC scoping for regular mode.

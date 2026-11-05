@@ -122,6 +122,42 @@ export const validateAgentSlots = (
   return { ok: true, slots };
 };
 
+/**
+ * Coerces a stored `agent_slots` column into a list, for READERS.
+ *
+ * Defensive on purpose. `agent_slots` is a `jsonb` column, and the write
+ * path once handed knex a raw JS array: knex's `prepBindings` is the
+ * identity function for pg, so node-postgres serialised it as a POSTGRES
+ * ARRAY LITERAL rather than JSON — `[]` became the perfectly valid JSON
+ * *object* `{}`. Any database that took a sharing save during that window
+ * holds `{}` here, and every reader of this column types it as `AgentSlot[]`
+ * and then calls `.some`/`.map` on it: the sharing dialog threw on reopen,
+ * the panel never appeared, and the next save round-tripped `{}` back as the
+ * request body and was rejected 400 — the share could never be fixed through
+ * the UI again. The write is stringified now (see the PATCH route), and this
+ * is what makes an already-corrupt row self-heal: readers see `[]`, the
+ * dialog loads, and the next save overwrites the column with real JSON.
+ *
+ * Shape only — the entries themselves were normalised by `validateAgentSlots`
+ * on the way in.
+ */
+export const readAgentSlots = (value: unknown): AgentSlot[] => {
+  // A `jsonb` read comes back parsed, so a string here means the column holds
+  // a JSON *string* (a double-stringified write) — unwrap one level, then
+  // apply the same shape check.
+  const parsed =
+    typeof value === "string"
+      ? (() => {
+          try {
+            return JSON.parse(value) as unknown;
+          } catch {
+            return null;
+          }
+        })()
+      : value;
+  return Array.isArray(parsed) ? (parsed as AgentSlot[]) : [];
+};
+
 export type ShareRowForUpdate = {
   name: string;
   auth_mode: string;

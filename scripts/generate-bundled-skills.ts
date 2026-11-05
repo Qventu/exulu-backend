@@ -11,6 +11,16 @@ import { join, relative, resolve } from "node:path";
 const ROOT = resolve(process.cwd(), "src", "skills", "bundled");
 const OUT = join(ROOT, "..", "bundled.generated.ts");
 
+/**
+ * Files that live beside a bundled skill's templates but must NOT ship inside
+ * it. Today that is the repo's own unit tests over template code
+ * (`templates/imp-channel.test.ts`): they are this backend's gate on a file
+ * artifact authors copy, they keep running from the source tree, and shipping
+ * them would hand an artifact author a Jest suite they have no runner for.
+ */
+const SHIPS_IN_BUNDLE = (relativePath: string): boolean =>
+  !/\.test\.(ts|tsx|js|mjs|cjs)$/.test(relativePath);
+
 function walk(dir: string): string[] {
   return readdirSync(dir)
     .sort()
@@ -27,7 +37,9 @@ export function collectBundledSkills(root = ROOT): Array<{ name: string; files: 
     .map((name) => {
       const files: Record<string, string> = {};
       for (const file of walk(join(root, name))) {
-        files[relative(join(root, name), file).split("\\").join("/")] = readFileSync(file).toString("base64");
+        const key = relative(join(root, name), file).split("\\").join("/");
+        if (!SHIPS_IN_BUNDLE(key)) continue;
+        files[key] = readFileSync(file).toString("base64");
       }
       return { name, files };
     });

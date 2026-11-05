@@ -240,14 +240,29 @@ navigation by design, so the host cannot tell which case it's in by watching
 alone.
 
 **The contract that closes the gap, if you need it to:** handshake only after
-your own document's `load` event has fired (wrap the call to `connectImp` in
-a `window.onload` check, or simply don't call it from code that runs before
-`load` — `templates/app.html`'s inline script and the Vite template's
-`DOMContentLoaded`-gated mount both already satisfy this by construction, so
-most artifacts get it for free). Following this contract does **not**, on its
-own, close the gap — the host has no way to observe that a given artifact
-honours it, so it cannot yet treat such a client any differently from one
-that doesn't.
+your own document's `load` event has fired — wrap the call to `connectImp` in
+a `window.onload` check, or otherwise keep it out of code that runs before
+`load`.
+
+**No template here does that, and that is correct for today's rule.** Both
+ship the opposite ordering on purpose: `templates/app.html`'s inline script
+gates `start()` on `DOMContentLoaded`, and the Vite template's mount
+(`references/build-setup.md`) gates on `DOMContentLoaded` too — both fire
+*before* `load`, so both handshake with their own `load` still to come, which
+is exactly the ordering today's retirement rule is built around. They are the
+documents the strict single-navigation rule would **break** — the mirror fix
+rejected above, and the version-gated form recommended below:
+their own `load`, arriving moments after the handshake, would retire their
+brand-new port and kill the channel for the rest of the session — the mirror
+failure this gap's two orderings are pinned against. So moving to the
+post-load contract is a deliberate change a client makes to its own code, not
+something it already has; and a client that makes it must also *declare* it
+(see the next paragraph), because a host that cannot tell the two orderings
+apart must keep applying the lenient rule to everyone.
+
+Following this contract does **not**, on its own, close the gap — the host has
+no way to observe that a given artifact honours it, so it cannot yet treat
+such a client any differently from one that doesn't.
 
 That observability is the missing half, and it is a **recommended, not yet
 implemented** follow-up on the host side: bump the identity *request* itself

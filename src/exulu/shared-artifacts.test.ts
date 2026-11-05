@@ -17,6 +17,8 @@ import {
   publicMetaFor,
   getSharedArtifactByName,
   validateAgentSlots,
+  readAgentSlots,
+  type AgentSlot,
 } from "./shared-artifacts";
 
 describe("normalizeS3Key", () => {
@@ -386,6 +388,102 @@ describe("planShareUpdate with agent_slots", () => {
   });
   test("omits the column when not given", () => {
     expect("agent_slots" in planShareUpdate({}, row, null, new Date())).toBe(false);
+  });
+});
+
+describe("readAgentSlots (defensive read of a jsonb column)", () => {
+  test("passes a well-formed list through", () => {
+    const stored: AgentSlot[] = [{ key: "analyse", agentId: "a1" }];
+    expect(readAgentSlots(stored)).toEqual(stored);
+  });
+
+  // The exact corruption the raw-array write produced: node-postgres
+  // serialises `[]` as the Postgres array literal `{}`, which Postgres accepts
+  // for a jsonb column as a valid JSON *object*. Every reader of this column
+  // types it `AgentSlot[]` and calls `.some`/`.map` on it, so without this an
+  // already-saved share is permanently broken in the UI — the dialog throws on
+  // reopen and the next save posts `{}` and is rejected 400.
+  test("coerces the `{}` an empty raw-array write left behind to an empty list", () => {
+    expect(readAgentSlots({})).toEqual([]);
+  });
+
+  test("coerces a populated object, a null and an undefined column to an empty list", () => {
+    expect(readAgentSlots({ "0": { key: "a", agentId: "a1" } })).toEqual([]);
+    expect(readAgentSlots(null)).toEqual([]);
+    expect(readAgentSlots(undefined)).toEqual([]);
+  });
+
+  test("unwraps a column holding a JSON string (a double-stringified write)", () => {
+    expect(readAgentSlots('[{"key":"a","agentId":"a1"}]')).toEqual([
+      { key: "a", agentId: "a1" },
+    ]);
+  });
+
+  test("a string that is not JSON at all is an empty list, not a throw", () => {
+    expect(readAgentSlots("{\"{\\\"key\\\":\\\"a\\\"}\"}")).toEqual([]);
+    expect(readAgentSlots("nope")).toEqual([]);
+  });
+});
+
+/**
+ * The PATCH route's own write of `agent_slots`, as a source-text invariant.
+ *
+ * Why a source invariant and not a behavioural test: `planShareUpdate` is
+ * pure and already tested, and the bug this locks down is not in it — it is
+ * in what the ROUTE does with the patch before handing it to knex. No backend
+ * test touches a database, and the type system cannot see it either (the
+ * patch is `Record<string, unknown>` and knex takes anything), so there is no
+ * other gate available. Same technique, and the same reason, as the /panel
+ * route's wiring tests below.
+ *
+ * What it protects: `agent_slots` is `jsonb`, knex's `prepBindings` is the
+ * identity function for pg, and node-postgres then serialises a JS array as a
+ * POSTGRES ARRAY LITERAL rather than JSON — `[{key,agentId}]` becomes
+ * `{"{\"key\":…}"}` (invalid JSON, so the write 500s) and `[]` becomes `{}`
+ * (valid JSON, but an object, so the column is silently corrupted for every
+ * reader). This class of bug survived eleven task reviews; it needs a gate.
+ */
+describe("PATCH /shared-artifacts/:name — the agent_slots write site", () => {
+  const source = readFileSync(join(__dirname, "routes.ts"), "utf8");
+
+  /** The PATCH handler's source, so each assertion sees that route only. */
+  function patchHandler(): string {
+    const start = source.indexOf('app.patch("/shared-artifacts/:name"');
+    const end = source.indexOf("\n  app.", start + 1);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return source.slice(start, end);
+  }
+
+  test("stringifies agent_slots rather than handing knex a raw JS array", () => {
+    expect(patchHandler()).toContain("JSON.stringify(patch.agent_slots)");
+  });
+
+  test("the stringify happens before the patch reaches .update()", () => {
+    const handler = patchHandler();
+    const stringify = handler.indexOf("JSON.stringify(patch.agent_slots)");
+    const update = handler.indexOf(".update(patch)");
+    expect(stringify).toBeGreaterThan(-1);
+    expect(update).toBeGreaterThan(-1);
+    expect(stringify).toBeLessThan(update);
+  });
+
+  // Guarded, because planShareUpdate omits the key entirely when the body did
+  // not carry it (its own test asserts that) — an unguarded stringify would
+  // write the literal string "undefined" into the column on EVERY patch.
+  test("the stringify is guarded on the column actually being in the patch", () => {
+    const handler = patchHandler();
+    const guard = handler.indexOf("patch.agent_slots !== undefined");
+    const stringify = handler.indexOf("JSON.stringify(patch.agent_slots)");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(stringify);
+  });
+
+  // Both reads of this column go through readAgentSlots, so a database that
+  // already took a raw-array save recovers instead of staying broken.
+  test("both readers coerce the stored column instead of trusting it", () => {
+    expect(patchHandler()).toContain("readAgentSlots(updated.agent_slots)");
+    expect(source).toContain("readAgentSlots(row.agent_slots)");
   });
 });
 
