@@ -102,6 +102,24 @@ describe("connectImp", () => {
     });
   });
 
+  test("a denial during the initial handshake rejects connectImp", async () => {
+    const { fakePort, connecting } = openChannel();
+    fakePort.deliver({ type: "exulu:identity:denied", v: IDENTITY_V, reason: "not-logged-in" });
+    await expect(connecting).rejects.toThrow("Identity denied: not-logged-in");
+  });
+
+  test("a denial during refresh() resolves { ok: false, reason }, it does not reject", async () => {
+    // Unchanged v1 contract: refresh() never throws — a caller checks
+    // `result.ok` and decides whether to show "reload the IMP tab" itself.
+    const { fakePort, connecting } = openChannel();
+    fakePort.deliver(grantMessage());
+    const channel = await connecting;
+
+    const refreshing = channel.refresh();
+    fakePort.deliver({ type: "exulu:identity:denied", v: IDENTITY_V, reason: "session-expired" });
+    expect(await refreshing).toEqual({ ok: false, reason: "session-expired" });
+  });
+
   test("registers the message listener before posting the first request", async () => {
     // Load-bearing v1 behaviour: the parent answers at most once per frame
     // load, so a reply landing before this iframe is listening is lost for
@@ -185,6 +203,21 @@ describe("connectImp", () => {
     expect(channel.host).toEqual({ panel: false, slots: [] });
   });
 
+  test("a host:info message stamped with the wrong version is ignored", async () => {
+    // Same `data.v !== CHANNEL_V` guard as viewport/progress, applied to
+    // host:info specifically — stamped IDENTITY_V (1) rather than CHANNEL_V.
+    const { fakePort, connecting } = openChannel();
+    fakePort.deliver({
+      type: "exulu:host:info",
+      v: IDENTITY_V,
+      panel: true,
+      slots: [{ key: "analyse", label: "Analyse" }],
+    });
+    fakePort.deliver(grantMessage());
+    const channel = await connecting;
+    expect(channel.host).toEqual({ panel: false, slots: [] });
+  });
+
   test("onViewport and onProgress return working unsubscribes", async () => {
     const { fakePort, connecting } = openChannel();
     fakePort.deliver(grantMessage());
@@ -225,6 +258,49 @@ describe("connectImp", () => {
     const rejected = channel.openPanel("other-slot");
     fakePort.deliver({ type: "exulu:panel:open:ack", v: CHANNEL_V, slot: "other-slot", accepted: false, reason: "unknown-slot" });
     expect(await rejected).toBe(false);
+  });
+
+  test("openPanel puts items and files on the wire, not just prompt", async () => {
+    // `items`/`files` are exactly what the attachment chain carries end to
+    // end; a dropped array here would surface downstream as "the agent
+    // didn't get my documents" with nothing pointing back to this call.
+    const { fakePort, connecting } = openChannel();
+    fakePort.deliver(grantMessage());
+    const channel = await connecting;
+
+    const opening = channel.openPanel("analyse", {
+      prompt: "Summarise this",
+      items: ["item-1", "item-2"],
+      files: ["file-1"],
+    });
+    expect(fakePort.sent).toEqual([
+      {
+        type: "exulu:panel:open",
+        v: CHANNEL_V,
+        slot: "analyse",
+        prompt: "Summarise this",
+        items: ["item-1", "item-2"],
+        files: ["file-1"],
+      },
+    ]);
+    fakePort.deliver({ type: "exulu:panel:open:ack", v: CHANNEL_V, slot: "analyse", accepted: true });
+    expect(await opening).toBe(true);
+  });
+
+  test("a panel:open:ack message stamped with the wrong version is ignored", async () => {
+    // Same `data.v !== CHANNEL_V` guard, applied to the ack specifically. If
+    // the wrong-version message below were read, it would resolve `opening`
+    // to `false` right away and delete the slot's waiter — leaving the
+    // correctly versioned ack that follows with nothing to settle, so
+    // `await opening` would come back `false` instead of `true`.
+    const { fakePort, connecting } = openChannel();
+    fakePort.deliver(grantMessage());
+    const channel = await connecting;
+
+    const opening = channel.openPanel("analyse");
+    fakePort.deliver({ type: "exulu:panel:open:ack", v: IDENTITY_V, slot: "analyse", accepted: false });
+    fakePort.deliver({ type: "exulu:panel:open:ack", v: CHANNEL_V, slot: "analyse", accepted: true });
+    expect(await opening).toBe(true);
   });
 
   test("openPanel resolves false rather than hanging when no ack arrives", async () => {
@@ -271,5 +347,34 @@ describe("connectImp", () => {
       ok: true,
       grant: { token: "tok-3", backendOrigin: "https://backend.example", user: { email: "a@b.com", name: "A" } },
     });
+  });
+
+  test("re-asks every 300ms until the channel arrives, and stops asking once settled", async () => {
+    // Load-bearing in the COMMON case, not an edge case: the parent's own
+    // listener doesn't exist until its bundle has hydrated, while this
+    // iframe runs as soon as the parent's HTML is parsed, so without this
+    // retry the handshake simply fails on a normal page load.
+    jest.useFakeTimers();
+    const fakeWindow = createFakeWindow();
+    const fakePort = createFakePort();
+    const connecting = connectImp(fakeWindow.win, 10_000);
+
+    expect(fakeWindow.posted).toHaveLength(1); // the initial ask(), before any retry fires
+
+    await jest.advanceTimersByTimeAsync(300);
+    expect(fakeWindow.posted).toHaveLength(2);
+    await jest.advanceTimersByTimeAsync(300);
+    expect(fakeWindow.posted).toHaveLength(3);
+
+    // The channel (and then the grant) finally arrive.
+    fakeWindow.deliver({ data: { type: "exulu:identity:channel", v: IDENTITY_V }, ports: [fakePort.port] });
+    fakePort.deliver(grantMessage());
+    await connecting;
+
+    // Settling must stop the interval — advancing well past several more
+    // retry windows posts nothing further.
+    const postedAtSettle = fakeWindow.posted.length;
+    await jest.advanceTimersByTimeAsync(900);
+    expect(fakeWindow.posted).toHaveLength(postedAtSettle);
   });
 });

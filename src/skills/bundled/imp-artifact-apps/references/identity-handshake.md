@@ -59,8 +59,8 @@ navigation of the frame cannot intercept it.
    grant.** The parent queues `exulu:host:info` (and, if a panel is already
    open, `exulu:panel:viewport`) on the port synchronously as part of the same
    handoff that transfers it — both land before the grant, which waits on a
-   backend round-trip. `connectImp`'s `connect()` resolves on the grant and
-   reads `host.panel`/`host.slots` off these earlier messages; do not
+   backend round-trip. `connectImp`'s returned promise resolves on the grant
+   and reads `host.panel`/`host.slots` off these earlier messages; do not
    restructure that expectation (e.g. by resolving before the grant, or by
    re-reading host info later).
 4. **One refresh per auth failure, single-flighted.** The identity exchange
