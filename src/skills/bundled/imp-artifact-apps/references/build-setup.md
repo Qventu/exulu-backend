@@ -52,10 +52,14 @@ if (document.readyState === "loading") document.addEventListener("DOMContentLoad
 else mount();
 ```
 
-Port `identity` and `client` from `templates/app.html` into `src/lib/` (as
-TypeScript modules), construct **one** client at the top level once the
-handshake resolves, and pass it down. `App` renders three states: connecting,
-blocked (handshake denied or timed out — "reload the IMP tab"), ready.
+Copy `templates/imp-channel.ts` into `src/lib/` as-is — don't port the
+handshake out of `templates/app.html` by hand, and don't re-derive it; see
+`references/identity-handshake.md` for the full channel (identity plus the
+agent panel) `connectImp` implements. Port `client` from `templates/app.html`
+into `src/lib/` as its own TypeScript module (it has no v2 counterpart to
+copy), construct **one** client at the top level once `connectImp` resolves,
+and pass it down. `App` renders three states: connecting, blocked (handshake
+denied or timed out — "reload the IMP tab"), ready.
 
 Check the build before publishing:
 

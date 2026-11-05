@@ -16,11 +16,18 @@ Read this file fully, then the reference that matches the step you are on:
 
 - `references/instance-side.md` — what lives in code (ExuluContext, ExuluTool, a code
   agent, queues) versus in the database (Routine rows, UI agents), and why
-- `references/identity-handshake.md` — who is looking, and how the token is refreshed
+- `references/identity-handshake.md` — who is looking, how the token is refreshed, and
+  the agent-panel channel (slots, viewport, progress, opening a panel with a prefill)
 - `references/imp-api.md` — contexts, filters, mutations, routines, agent messages, uploads
 - `references/publishing.md` — share modes, the Artifacts page, the publish script, updates
 - `references/build-setup.md` — Vite single-file build for apps too big for one hand-written file
 - `templates/app.html` — a working skeleton: handshake, client, session-lost banner
+- `templates/imp-channel.ts` — **copy this in, don't write a handshake by hand.** The
+  artifact-side client for both the identity handshake and the agent-panel channel
+  (`connectImp`), with one `port.onmessage` dispatcher so a host announcement arriving
+  mid-refresh is never dropped. Drop it into `src/lib/` on the Vite build path
+  (`references/build-setup.md`); the plain `app.html` template still inlines the
+  identity-only handshake for the no-build case, since a `.ts` module needs a bundler.
 - `scripts/publish-artifact` — upload + publish (or update) from the command line
 
 ## The IMP documentation is the authority
@@ -86,6 +93,13 @@ IMP page (parent)            artifact iframe (your app)
 The template implements 1–5. Keep one client per page and route every call
 through it; the refresh is single-flighted on purpose.
 
+The same port can carry a second, separate channel: which agent "slots" are
+assigned to this artifact, the artifact's own viewport width, when an agent
+turn made progress, and a request to open a panel with a prefilled prompt and
+attachments (never submitted on the user's behalf). `templates/imp-channel.ts`
+implements both channels behind `connectImp` with one shared dispatcher — see
+`references/identity-handshake.md` for the message table and the semantics.
+
 ## Workflow
 
 1. **Pin the job.** One sentence: who opens the app, what they decide or see,
@@ -101,8 +115,11 @@ through it; the refresh is single-flighted on purpose.
    Say plainly when a request needs instance work and a deploy, not just a file.
 3. **Scaffold.** Copy `templates/app.html` for a small app. For anything with
    screens, components or a UI library, set up the Vite single-file build
-   (`references/build-setup.md`) and port the template's `identity` and
-   `client` modules as-is.
+   (`references/build-setup.md`) and copy `templates/imp-channel.ts` into
+   `src/lib/` as-is — don't hand-roll the handshake. If the app will offer an
+   "open the agent" button, read `references/identity-handshake.md`'s agent
+   panel section first: `host.panel` is `false` on the published share route,
+   so that button must hide itself there.
 4. **Model the state.** Put the app's own state (decisions, pins, progress) on
    the row it belongs to, in one JSON field, as a small overlay
    (`{ "<scope>:<id>": { value, by, at } }`), and re-read the row after each
@@ -156,9 +173,18 @@ script. What works and what to do instead:
 
 ## Rules learned the hard way
 
+- Copy `templates/imp-channel.ts` rather than writing a handshake by hand,
+  on the Vite build path. Its one `port.onmessage` dispatcher, set once, is
+  what stops a host announcement (viewport, progress, an open-panel ack)
+  from being silently dropped while a token refresh is in flight — a bug a
+  hand-rolled client is one `port.onmessage = ...` away from reintroducing.
 - Register the `message` listener **before** posting the first identity
   request, and keep re-posting every 300 ms until answered: the IMP page
   answers once per frame load and may not be listening yet when the frame runs.
+- An "open the agent" button must check `host.panel` before rendering at
+  all: `false` on the published share route (no panel exists there) and on
+  any in-shell artifact with no agents assigned. Don't render a button that
+  could never be acked.
 - An expired viewer token does **not** come back as HTTP 401 from `/graphql`.
   It is HTTP 500 with an error whose message starts with "Context creation
   failed". Treat both as "refresh once, then retry"; a second failure means the
