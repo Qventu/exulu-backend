@@ -26,6 +26,36 @@ export const applyAccessControl = (
 ) => {
   const tableNamePlural = table.name.plural.toLowerCase();
 
+  // An agents-scoped API key is a PUBLIC credential — the storefront chat widget
+  // ships it in the page source of every shop page. It exists so a browser can run
+  // one specific agent; it is not an identity that may read stored conversations.
+  //
+  // This has to sit above everything else, including the super-admin bypass, because
+  // neither of the usual guards catches it: `agent_messages` carries no RBAC at all
+  // (so the query would be returned unfiltered), and on `agent_sessions` the key is
+  // the `created_by` of every row the widget opens, which short-circuits the RBAC
+  // check in checkRecordAccess.
+  //
+  // Reads only. CreateOne does not run through applyAccessControl, so the widget can
+  // still open a session — it just can never read one back.
+  //
+  // Narrowed to nothing rather than thrown: applyAccessControl is also called from
+  // markSessionSeenForViewer, where a caller without access previously got a graceful
+  // "not visible". This file ships to every Exulu deployment, so an unknown caller
+  // should degrade to an empty result, not to a 500. Empty fails just as closed.
+  if (
+    user?.type === "api" &&
+    (user as { scope_mode?: string }).scope_mode === "agents" &&
+    (tableNamePlural === "agent_sessions" || tableNamePlural === "agent_messages")
+  ) {
+    console.error(
+      "==== Access control: agents-scoped API key refused on conversation table. ====",
+      user?.id,
+      table.name.plural,
+    );
+    return query.whereRaw("1 = 0");
+  }
+
   // If a user is super admin, they can see everything, except if
   // the table is agent_sessions, in which case we always enforce
   // the regular rbac rules set for the session (defaults to private).
