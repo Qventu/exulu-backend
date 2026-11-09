@@ -211,6 +211,115 @@ export function unknownPaths(schema: z.ZodTypeAny, value: unknown): string[] {
 }
 
 /**
+ * Walks a zod issue's `path` into the value it was raised against, to
+ * recover the actual leaf value a `leafViolations` caller rejected — zod's
+ * own issue objects carry this for an `invalid_type` issue (baked into the
+ * message text) but not for `invalid_value` (an enum mismatch has no
+ * `received` field at all in zod 4.3.6, confirmed empirically), so
+ * `leafViolations` cannot rely on the issue alone for "what was rejected"
+ * and has to re-derive it from the original value instead.
+ */
+function valueAtPath(value: unknown, path: readonly PropertyKey[]): unknown {
+  let current: unknown = value;
+  for (const segment of path) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = (current as Record<PropertyKey, unknown>)[segment];
+  }
+  return current;
+}
+
+/**
+ * One present top-level key's value, found to fail its OWN declared
+ * sub-schema. `path` is that key plus zod's own issue path underneath it
+ * (so a violation inside `meta.source` under key `budget_gesamt` reports
+ * `"budget_gesamt.meta.source"`); `expected` is zod's own issue message —
+ * type/enum vocabulary only, never a database's; `received` is the actual
+ * leaf value, recovered via `valueAtPath` since zod does not always carry it
+ * (see above).
+ */
+export type LeafViolation = {
+  path: string;
+  expected: string;
+  received: unknown;
+};
+
+/**
+ * Closes the gap `unknownPaths` was never built to cover: a present key
+ * whose value is structurally the right KIND (an object where an object was
+ * declared, say) but wrong at the leaf — an enum member that isn't one of
+ * the declared options, a string where a number belongs. `unknownPaths`'s
+ * own doc comment says plainly it cannot see this ("a bare scalar... there
+ * is nothing declared to compare against"); this is the design spec's own
+ * named example (Part A: `felder.budget_gesamt.konfidenz: expected "low" |
+ * "medium" | "high", got "sehr hoch"`), and without this function that
+ * value would reach a write unflagged.
+ *
+ * Deliberately scoped to "each PRESENT top-level key, checked in full
+ * against its own declared sub-schema" — never "the whole value against the
+ * whole top-level schema". The write helper's merge (spec Part B) is
+ * shallow at the top level: a patch legitimately omits top-level keys it
+ * isn't touching, and running the WHOLE schema's `.safeParse()` against a
+ * partial patch would reject that as a missing required field even though
+ * the patch is correct. Checking only the keys that are actually present
+ * sidesteps that for both shapes this module supports:
+ * - `z.object({ a: A, b: B })`: a present `a` is checked in full against
+ *   `A`; an absent `b` is never visited, so its absence is never an error.
+ * - `z.record(string, Feld)`: every key is legal by definition (no
+ *   "unknown key" question to ask), so every present key is checked in
+ *   full against `Feld`.
+ *
+ * Checking "in full" is what lets this see past the one-level depth cap
+ * `unknownPaths`/`unknownChildPaths` document for themselves — a violation
+ * three levels deep inside one key's declared shape is still caught here,
+ * because `subSchema.safeParse()` recurses through its own whole subtree in
+ * one call. Only `.success`/`.error.issues` are ever read from that call;
+ * `.data` (the thing that would silently have the undeclared keys stripped
+ * out of it, since zod's `z.object()` strips rather than errors on those by
+ * default) is never touched — this function answers "is it valid", nothing
+ * it returns is ever written anywhere.
+ */
+export function leafViolations(schema: z.ZodTypeAny, value: unknown): LeafViolation[] {
+  if (!isPlainObject(value)) return [];
+
+  const base = unwrap(schema);
+  const def = base.def as AnyDef;
+
+  let subSchemaFor: (key: string) => z.ZodTypeAny | undefined;
+  if (def.type === "record") {
+    const valueType = def.valueType as z.ZodTypeAny;
+    subSchemaFor = () => valueType;
+  } else if (def.type === "object") {
+    const shape = def.shape as Record<string, z.ZodTypeAny>;
+    subSchemaFor = (key) => shape[key];
+  } else {
+    // Nothing declared to check a leaf against — same fallback unknownPaths
+    // uses for a schema this module cannot see a shape in at the top level.
+    return [];
+  }
+
+  const violations: LeafViolation[] = [];
+  for (const [key, inner] of Object.entries(value)) {
+    const subSchema = subSchemaFor(key);
+    // An object schema's unnamed key has no declared sub-schema to check
+    // against — that is unknownPaths's job, not this function's.
+    if (!subSchema) continue;
+
+    const result = subSchema.safeParse(inner);
+    if (result.success) continue;
+
+    for (const issue of result.error.issues) {
+      const issuePath = issue.path.map(String);
+      violations.push({
+        path: [key, ...issuePath].join("."),
+        expected: issue.message,
+        received: issue.path.length > 0 ? valueAtPath(inner, issue.path) : inner,
+      });
+    }
+  }
+  return violations;
+}
+
+/**
  * Preserves a `.describe()` text across a rebuild. zod's clone (what every
  * wrapper/combinator constructor below produces) is a fresh instance, and
  * `.describe()`'s text lives in a registry keyed by instance identity, not

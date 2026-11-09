@@ -1,5 +1,5 @@
 import type { ExuluContextFieldDefinition } from "./context";
-import { mergeJson, schemaPaths, unknownPaths } from "./json-field-schema";
+import { leafViolations, mergeJson, schemaPaths, unknownPaths, type LeafViolation } from "./json-field-schema";
 
 /**
  * The single chokepoint both write paths (the generated tool's
@@ -25,12 +25,30 @@ import { mergeJson, schemaPaths, unknownPaths } from "./json-field-schema";
  *
  * 2. **Validate only the incoming value, never the stored one.** A row
  *    written before a field declared a schema may already hold a shape the
- *    schema would reject. `unknownPaths` is only ever called on `input`'s
- *    values; `existing` is read (by `mergeJson`) but never checked. Checking
- *    `existing` would make a merge that only touches already-valid keys fail
- *    on a stored key nobody is even trying to change — turning on validation
- *    would then make old rows permanently unwritable, which is worse than
- *    not validating at all.
+ *    schema would reject. `unknownPaths`/`leafViolations` are only ever
+ *    called on `input`'s values; `existing` is read (by `mergeJson`) but
+ *    never checked. Checking `existing` would make a merge that only
+ *    touches already-valid keys fail on a stored key nobody is even trying
+ *    to change — turning on validation would then make old rows permanently
+ *    unwritable, which is worse than not validating at all.
+ *
+ * Two checks run against the incoming value, in order, because they answer
+ * different questions and one is cheap to get wrong in the other's
+ * direction:
+ * - `unknownPaths` — is this path even one the schema recognises (an
+ *   unnamed key, or an object/record declared where a scalar was supplied)?
+ * - `leafViolations` — for a path the schema DOES recognise, does the leaf
+ *   value satisfy what was declared there (an enum member, a type)? This is
+ *   the design spec's own Part A example (`felder.budget_gesamt.konfidenz:
+ *   expected "low" | "medium" | "high", got "sehr hoch"`) — `unknownPaths`
+ *   alone cannot see it (see its own doc comment), so without this second
+ *   check that value would reach a write unflagged. It runs ONLY the
+ *   present top-level key's own sub-schema, never the whole schema against
+ *   the whole patch — a merge patch legitimately omits top-level keys it
+ *   isn't touching, and the whole-schema version would wrongly reject that
+ *   as a missing required field. See `leafViolations`' own doc comment in
+ *   `json-field-schema.ts` for why that distinction matters and how both
+ *   shapes (`z.object()`, `z.record()`) resolve it the same way.
  */
 
 export type PrepareItemWriteArgs = {
@@ -79,12 +97,33 @@ function refusalMessage(
 }
 
 /**
+ * The four-part refusal for a `leafViolations` finding. Unlike
+ * `refusalMessage` above, "what is available instead" here is the valid
+ * VALUES at that leaf (an enum's members, a type name), not valid PATHS —
+ * the path itself is fine; it's the value that is wrong — and zod's own
+ * issue message already names that set, so it is used directly rather than
+ * reaching for `schemaPaths`, which only ever describes paths. `received` is
+ * appended explicitly because zod does not always carry it on the issue
+ * itself (an enum mismatch has no `received` field in zod 4.3.6 — see
+ * `leafViolations`' own comment) — without it, the model would be told what
+ * was expected but not shown what it actually sent.
+ */
+function leafRefusalMessage(fieldName: string, violations: LeafViolation[]): string {
+  const parts = violations.map((violation) => {
+    const got = JSON.stringify(violation.received);
+    return `"${fieldName}.${violation.path}": ${violation.expected} (got ${got})`;
+  });
+  return `Write to field "${fieldName}" rejected: ${parts.join("; ")}.`;
+}
+
+/**
  * Checks and shapes one write's values. For each key in `input`:
  *
  * - If its field is `type: "json"` and declares a `schema`, the incoming
- *   value is checked with `unknownPaths` (not `existing` — see module doc).
- *   Any unknown path refuses the *entire* write (fail fast; a write is one
- *   unit, not a bag of independently-committable fields).
+ *   value is checked with `unknownPaths`, then (only if that passes)
+ *   `leafViolations` (not `existing` either way — see module doc). Either
+ *   check finding something refuses the *entire* write (fail fast; a write
+ *   is one unit, not a bag of independently-committable fields).
  * - If the key is named in `merge`, the stored value and the incoming patch
  *   are combined with `mergeJson` — but only when the incoming value is
  *   itself a plain object. A merge-listed field handed something else (no
@@ -112,6 +151,11 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
       const badPaths = unknownPaths(schema, value);
       if (badPaths.length > 0) {
         return { ok: false, message: refusalMessage(key, badPaths, schema) };
+      }
+
+      const violations = leafViolations(schema, value);
+      if (violations.length > 0) {
+        return { ok: false, message: leafRefusalMessage(key, violations) };
       }
     }
 

@@ -188,33 +188,81 @@ describe("prepareItemWrite", () => {
     expect(result).toEqual({ ok: true, values: { name: "Acme" } });
   });
 
-  // --- Known limitation, verified directly rather than assumed -----------
+  // --- Formerly a known limitation, now closed (coordinator ruling) ------
   //
   // unknownPaths (Task 1) catches an unnamed key and an object/record "kind"
   // mismatch (object declared, scalar supplied). It does NOT validate a
   // scalar value against its declared leaf type — an enum member, a string
   // vs number, etc. — because that was never its contract (see its own doc
   // comment: "a bare scalar... there is nothing declared to compare
-  // against"). That gap reaches this write path unchanged: a malformed enum
-  // value on an otherwise well-shaped patch is NOT refused here.
+  // against"). That gap used to reach this write path unchanged.
   //
-  // This is reported, not papered over, per the task brief. Fixing it
-  // correctly needs per-leaf value validation (not full schema.safeParse()
-  // on the whole patch, which would wrongly reject a valid MERGE patch that
-  // omits other required top-level keys on a non-record object schema) and
-  // is a bigger design call than this task's assigned interface
-  // (mergeJson + unknownPaths + schemaPaths) covers. See task-3-report.md.
-  test("KNOWN LIMITATION: a malformed enum value is not refused (unknownPaths does not check leaf types)", () => {
+  // Closed via `leafViolations` (json-field-schema.ts): checks each PRESENT
+  // top-level key's value against its own declared sub-schema, in full —
+  // never the whole schema against the whole patch, which would wrongly
+  // reject a valid merge patch that omits other required top-level keys.
+  // This is the inverted form of the original gap-report test: same input,
+  // now refused instead of silently written.
+  test("a malformed enum value is refused, naming the field, path, valid values, and what was sent", () => {
     const input = { felder: { budget_gesamt: { wert: "1000", konfidenz: "sehr hoch" } } };
 
     const result = prepareItemWrite({ fields, existing: null, input });
 
-    // Documents the current, real behaviour — this is NOT the desired end
-    // state (the spec's own Part A example expects exactly this value
-    // rejected with "expected low|medium|high, got sehr hoch"). If this
-    // assertion ever flips to `false`, the limitation has been closed
-    // upstream and this test (and the note above) should be deleted, not
-    // "fixed" to match new behaviour.
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.message).toContain("felder");
+    expect(result.message).toContain("budget_gesamt.konfidenz");
+    expect(result.message).toContain("low");
+    expect(result.message).toContain("medium");
+    expect(result.message).toContain("high");
+    expect(result.message).toContain("sehr hoch");
+    const lower = result.message.toLowerCase();
+    for (const forbidden of ["jsonb", "sql", "syntax error", "postgres", "select ", "::"]) {
+      expect(lower).not.toContain(forbidden);
+    }
+  });
+
+  test("a valid partial merge patch passes even though the object-shaped json field declares other required keys", () => {
+    // Guards against an over-strict leaf check: an OBJECT-shaped (not
+    // record) json field with two required top-level keys, patched on only
+    // one of them, must not be refused for the other's absence.
+    const pitchSchema = z.object({
+      budget_gesamt: z.object({ wert: z.string(), konfidenz: z.enum(["low", "medium", "high"]) }),
+      zielgruppe: z.object({ wert: z.string(), konfidenz: z.enum(["low", "medium", "high"]) }),
+    });
+    const pitchFields: ExuluContextFieldDefinition[] = [
+      { name: "pitch", type: "json", schema: pitchSchema },
+    ];
+    const existing = {
+      pitch: {
+        budget_gesamt: { wert: "OLD", konfidenz: "low" },
+        zielgruppe: { wert: "UNTOUCHED", konfidenz: "medium" },
+      },
+    };
+    const input = { pitch: { budget_gesamt: { wert: "NEW", konfidenz: "high" } } };
+
+    const result = prepareItemWrite({ fields: pitchFields, existing, input, merge: ["pitch"] });
+
+    expect(result).toEqual({
+      ok: true,
+      values: {
+        pitch: {
+          budget_gesamt: { wert: "NEW", konfidenz: "high" },
+          zielgruppe: { wert: "UNTOUCHED", konfidenz: "medium" },
+        },
+      },
+    });
+  });
+
+  test("an absent key is never an error — an empty merge patch is accepted untouched", () => {
+    const existing = { felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } };
+    const input = { felder: {} };
+
+    const result = prepareItemWrite({ fields, existing, input, merge: ["felder"] });
+
+    expect(result).toEqual({
+      ok: true,
+      values: { felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } },
+    });
   });
 });

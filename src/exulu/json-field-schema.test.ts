@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { loosenForTransport, mergeJson, schemaPaths, unknownPaths } from "./json-field-schema";
+import { leafViolations, loosenForTransport, mergeJson, schemaPaths, unknownPaths } from "./json-field-schema";
 
 // Shape mirrors the M&V pitch matrix the spec is built around: a json field
 // that is a record of entries, each entry a small fixed object.
@@ -76,6 +76,75 @@ describe("unknownPaths", () => {
     // Same disagreement-in-kind reasoning, one level up: an object schema
     // was declared for "a", a scalar was supplied.
     expect(unknownPaths(z.object({ a: feld }), { a: "not an object" })).toEqual(["a"]);
+  });
+});
+
+describe("leafViolations", () => {
+  // Coordinator ruling (Task 3): validate each PRESENT top-level key's value
+  // against its own declared sub-schema, in full. An absent key is never an
+  // error — that is what keeps this safe for a shallow top-level merge
+  // patch, which legitimately omits keys it is not touching.
+
+  test("object shape: a present key's leaf value that fails its own sub-schema is reported", () => {
+    const schemaObj = z.object({ a: feld, b: z.string() });
+    const violations = leafViolations(schemaObj, { a: { wert: "x", konfidenz: "not-valid" } });
+    expect(violations).toEqual([
+      { path: "a.konfidenz", expected: expect.stringContaining("low"), received: "not-valid" },
+    ]);
+  });
+
+  test("record shape: a present key's leaf value that fails Feld is reported", () => {
+    // The spec's own motivating example, pinned exactly: felder.budget_gesamt.konfidenz
+    // with an enum value that isn't one of the declared options.
+    const violations = leafViolations(schema, { budget_gesamt: { wert: "1000", konfidenz: "sehr hoch" } });
+    expect(violations).toEqual([
+      {
+        path: "budget_gesamt.konfidenz",
+        expected: expect.stringContaining("low"),
+        received: "sehr hoch",
+      },
+    ]);
+  });
+
+  test("a valid partial patch passes even though the object schema declares other keys", () => {
+    // Guards against an over-strict implementation that runs the WHOLE
+    // schema's safeParse() against the patch (which would wrongly demand
+    // "b" too) instead of checking only the key that is actually present.
+    const schemaObj = z.object({ a: feld, b: z.string() });
+    expect(leafViolations(schemaObj, { a: { wert: "x", konfidenz: "low" } })).toEqual([]);
+  });
+
+  test("an absent key is never an error, even for an empty patch", () => {
+    const schemaObj = z.object({ a: feld, b: z.string() });
+    expect(leafViolations(schemaObj, {})).toEqual([]);
+  });
+
+  test("sees past unknownPaths's own one-level depth cap, because the sub-schema check recurses", () => {
+    // feld here nests a further object (`meta`) — unknownChildPaths never
+    // looks inside it (Task 1's documented cap), but subSchema.safeParse()
+    // validates its whole subtree in one call.
+    const feldWithMeta = z.object({ wert: z.string(), meta: z.object({ source: z.enum(["sap", "manual"]) }) });
+    const schemaWithMeta = z.record(z.string(), feldWithMeta);
+    const violations = leafViolations(schemaWithMeta, {
+      budget_gesamt: { wert: "1000", meta: { source: "excel" } },
+    });
+    expect(violations).toEqual([
+      {
+        path: "budget_gesamt.meta.source",
+        expected: expect.stringContaining("sap"),
+        received: "excel",
+      },
+    ]);
+  });
+
+  test("an unnamed key on an object schema is not this function's job (unknownPaths's, instead)", () => {
+    const schemaObj = z.object({ a: z.string() });
+    expect(leafViolations(schemaObj, { typo: "x" })).toEqual([]);
+  });
+
+  test("returns [] for a non-object value and for a schema with no checkable top level", () => {
+    expect(leafViolations(z.object({ a: z.string() }), "not an object")).toEqual([]);
+    expect(leafViolations(z.string(), { a: "x" })).toEqual([]);
   });
 });
 
