@@ -57,10 +57,14 @@ describe("prepareItemWrite", () => {
     expect(result).toEqual({ ok: true, values: { notes: { a: 9, b: 2 } } });
   });
 
-  test("a merge-listed field whose incoming value is not an object falls back to replace", () => {
+  test("a merge-listed, SCHEMA-LESS field whose incoming value is not an object falls back to replace", () => {
     // Degenerate input the spec never anticipates a caller sending — merging
     // a non-object patch has no defined meaning, so this does not merge into
     // whatever is stored; it replaces, the same as an un-merge-listed field.
+    // This is specifically the schema-LESS case ("notes" has no declared
+    // schema): a schema-carrying field's non-object value is refused
+    // outright instead (see the "Critical 1" tests below) — this module has
+    // no basis to refuse anything about a field's shape without a schema.
     const existing = { notes: { a: 1 } };
     const input = { notes: "a plain string, not a patch" };
 
@@ -182,10 +186,18 @@ describe("prepareItemWrite", () => {
   });
 
   test("a non-json field is never touched by merge or schema logic", () => {
-    const input = { name: "Acme" };
-    const result = prepareItemWrite({ fields, existing: { name: "Old Co" }, input, merge: ["name"] });
+    // Task 3 review, Important 4: must use an OBJECT fixture, or this test
+    // can never reach the merge branch at all regardless of the type gate —
+    // a string can never satisfy `isPlainObject`, so the old string fixture
+    // passed even with the gate missing entirely. With an object value,
+    // "name" being listed in `merge` must NOT cause a merge with `existing`
+    // (merge is a `json`-field-only concept, spec Part B) — the field is
+    // replaced wholesale, losing `existing.name.b`, exactly like a normal
+    // non-merge-listed write would.
+    const input = { name: { a: 1 } };
+    const result = prepareItemWrite({ fields, existing: { name: { a: 1, b: 2 } }, input, merge: ["name"] });
 
-    expect(result).toEqual({ ok: true, values: { name: "Acme" } });
+    expect(result).toEqual({ ok: true, values: { name: { a: 1 } } });
   });
 
   // --- Formerly a known limitation, now closed (coordinator ruling) ------
@@ -264,5 +276,139 @@ describe("prepareItemWrite", () => {
       ok: true,
       values: { felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } },
     });
+  });
+
+  // --- Second re-review round: Critical 1 -----------------------------
+  //
+  // unknownPaths/leafViolations both correctly return "nothing wrong" for a
+  // non-plain-object value against ANY schema (there's nothing to check
+  // paths/leaves against) — but for a schema that DOES declare an object or
+  // record shape, that "nothing to check" must not read as "write it
+  // through". Before this fix, a merge-listed field given a bare string/
+  // array/null/number fell through to a silent REPLACE, deleting the entire
+  // stored object with an `ok: true` verdict.
+  describe("Critical 1: a non-plain-object value on an object/record-schema field is refused, not waved through", () => {
+    test.each([
+      ["a string", "oops"],
+      ["an array", [1, 2, 3]],
+      ["null", null],
+      ["a number", 42],
+    ])("merge-listed, value is %s", (_label, value) => {
+      const existing = { felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } };
+      const input = { felder: value };
+
+      const result = prepareItemWrite({ fields, existing, input, merge: ["felder"] });
+
+      // Must be refused — NOT `ok: true` with the stored object silently
+      // replaced/destroyed, which was the exact defect reported.
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error(`expected a refusal, got values.felder = ${JSON.stringify(result.values.felder)}`);
+      expect(result.message).toContain("felder");
+    });
+
+    test("also refused on a plain REPLACE (not merge-listed) — the shape check is unconditional", () => {
+      const result = prepareItemWrite({ fields, existing: null, input: { felder: "oops" } });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.message).toContain("felder");
+      expect(result.message).toContain("object");
+    });
+
+    test("the refusal names the field, what was sent, and the valid paths (four-part contract)", () => {
+      const result = prepareItemWrite({ fields, existing: null, input: { felder: [1, 2, 3] } });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.message).toContain("felder");
+      expect(result.message).toContain("array"); // what was rejected / why
+      expect(result.message).toContain("<key>.wert"); // what's available instead
+      expect(result.message).toContain("<key>.konfidenz");
+      const lower = result.message.toLowerCase();
+      for (const forbidden of ["jsonb", "sql", "syntax error", "postgres", "select ", "::"]) {
+        expect(lower).not.toContain(forbidden);
+      }
+    });
+
+    test("a non-object-or-record schema (array-rooted) is untouched by the shape check — documented inertness, not this round's fix", () => {
+      // requiresPlainObject is deliberately narrow: an array- or union-
+      // rooted json field schema is validated by NOTHING in this module
+      // today (ledgered for the final review, not fixed this round). A
+      // bare array value against such a schema must not be refused by a
+      // check that doesn't apply to it.
+      const arraySchema = z.array(z.string());
+      const arrayFields: ExuluContextFieldDefinition[] = [{ name: "tags", type: "json", schema: arraySchema }];
+
+      const result = prepareItemWrite({ fields: arrayFields, existing: null, input: { tags: ["a", "b"] } });
+
+      expect(result).toEqual({ ok: true, values: { tags: ["a", "b"] } });
+    });
+  });
+
+  // --- Second re-review round: Important 2 ----------------------------
+  //
+  // Coordinator's added clause: for a merge-listed field, a patch's own
+  // top-level null-valued entry is a deletion (spec Part B / mergeJson),
+  // not a value — exempt from both checks, or every deletion is refused,
+  // and the refusal's own "here are the valid paths" message induces a
+  // destructive repair (resend without `merge`, which replaces the WHOLE
+  // field and destroys every key the deletion wasn't touching).
+  describe("Important 2: null-as-delete is usable on a schema-carrying, merge-listed field", () => {
+    test("a merge patch that deletes one record entry via null is accepted, not refused", () => {
+      const existing = {
+        felder: {
+          budget_gesamt: { wert: "OLD", konfidenz: "low" },
+          zielgruppe: { wert: "KEEP", konfidenz: "medium" },
+        },
+      };
+      const input = { felder: { budget_gesamt: null } };
+
+      const result = prepareItemWrite({ fields, existing, input, merge: ["felder"] });
+
+      expect(result).toEqual({
+        ok: true,
+        values: { felder: { zielgruppe: { wert: "KEEP", konfidenz: "medium" } } },
+      });
+    });
+
+    test("a deletion can be combined with a valid same-call update to another key", () => {
+      const existing = {
+        felder: {
+          budget_gesamt: { wert: "OLD", konfidenz: "low" },
+          zielgruppe: { wert: "OLD", konfidenz: "medium" },
+        },
+      };
+      const input = { felder: { budget_gesamt: null, zielgruppe: { wert: "NEW", konfidenz: "high" } } };
+
+      const result = prepareItemWrite({ fields, existing, input, merge: ["felder"] });
+
+      expect(result).toEqual({
+        ok: true,
+        values: { felder: { zielgruppe: { wert: "NEW", konfidenz: "high" } } },
+      });
+    });
+
+    test("the SAME null entry is still flagged normally on a plain REPLACE (no delete sentinel outside merge)", () => {
+      // Spec Part B only defines null-as-delete for merge. Without `merge`,
+      // this is just a value, and `null` where an object ("feld") belongs
+      // is exactly the kind-mismatch unknownPaths already catches.
+      const input = { felder: { budget_gesamt: null } };
+
+      const result = prepareItemWrite({ fields, existing: null, input });
+
+      expect(result.ok).toBe(false);
+    });
+  });
+
+  // --- Second re-review round: Minor (overridden to required) ---------
+  test("a refusal message never throws building itself, even on a value JSON.stringify can't handle", () => {
+    // Minor: JSON.stringify throws on a BigInt. A pure helper whose whole
+    // job is producing a clean refusal must not itself throw.
+    expect(() => prepareItemWrite({ fields, existing: null, input: { felder: 10n as unknown } })).not.toThrow();
+
+    const result = prepareItemWrite({ fields, existing: null, input: { felder: 10n as unknown } });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.message).toContain("felder");
   });
 });

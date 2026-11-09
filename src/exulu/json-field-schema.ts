@@ -309,14 +309,86 @@ export function leafViolations(schema: z.ZodTypeAny, value: unknown): LeafViolat
 
     for (const issue of result.error.issues) {
       const issuePath = issue.path.map(String);
+      const expectedSet = describeExpectedValues(issue);
       violations.push({
         path: [key, ...issuePath].join("."),
-        expected: issue.message,
+        expected: expectedSet ? `expected one of ${expectedSet}` : issue.message,
         received: issue.path.length > 0 ? valueAtPath(inner, issue.path) : inner,
       });
     }
   }
   return violations;
+}
+
+type AnyIssue = { code: string } & Record<string, unknown>;
+
+/**
+ * Derives a "valid values" set directly from an issue's own data, for the
+ * cases where zod's `message` text does not carry one at all. An `enum`
+ * mismatch's message already names its members (`Invalid option: expected
+ * one of "low"|"medium"|"high"` — confirmed empirically), so `leafViolations`
+ * is fine falling back to it there; a **union of literals** — a common way
+ * to spell the same "one of these values" constraint — does not: zod 4.3.6's
+ * top-level `invalid_union` issue message is the bare string `"Invalid
+ * input"`, with no set at all (confirmed empirically). The per-branch detail
+ * IS there, just one level down, in `issue.errors` (one array of issues per
+ * union branch) — this walks that structure rather than re-deriving the set
+ * from the schema tree a second time, since zod already computed exactly
+ * this when it evaluated each branch.
+ *
+ * Deliberately conservative: if the issue is not itself (or every branch of
+ * a union is not) a simple `invalid_value`-with-`values` issue, this returns
+ * `undefined` and the caller falls back to zod's own `message` — reporting
+ * nothing invented is better than reporting a partial, possibly misleading
+ * set for a union with a non-literal branch (an object, a number range).
+ */
+function describeExpectedValues(issue: unknown): string | undefined {
+  const anyIssue = issue as AnyIssue;
+
+  if (anyIssue.code === "invalid_value" && Array.isArray(anyIssue.values) && anyIssue.values.length > 0) {
+    return (anyIssue.values as unknown[]).map((value) => JSON.stringify(value)).join(" | ");
+  }
+
+  if (anyIssue.code === "invalid_union" && Array.isArray(anyIssue.errors)) {
+    const parts: string[] = [];
+    for (const branchIssues of anyIssue.errors as unknown[]) {
+      const branchArray = branchIssues as AnyIssue[];
+      const first = branchArray[0];
+      if (!first || !Array.isArray(first.values) || first.values.length === 0) return undefined;
+      parts.push(...(first.values as unknown[]).map((value) => JSON.stringify(value)));
+    }
+    return parts.length > 0 ? parts.join(" | ") : undefined;
+  }
+
+  return undefined;
+}
+
+/**
+ * Whether `schema`'s unwrapped top level commits to a plain-object shape —
+ * `z.object()` or `z.record()`, the only two kinds `unknownPaths` and
+ * `leafViolations` each special-case. Exists for `prepareItemWrite`
+ * (Task 3 review, Critical): both of those functions *correctly* return `[]`
+ * for a non-plain-object value (there is nothing to check paths or leaves
+ * against), but "nothing to check" must not be read by a caller as "nothing
+ * is wrong" — a `json` field declaring an object/record shape that receives
+ * a bare string/array/number/`null` IS a violation of that declared shape,
+ * and without this function a caller has no way to tell "this schema has
+ * nothing to say about non-objects by design" apart from "this schema
+ * requires an object and got something else".
+ *
+ * Deliberately narrow: a `json` field whose declared schema is rooted in
+ * `z.array()` or `z.union()` gets `false` here, same as a bare scalar — this
+ * module validates neither shape at all today (see `unknownPaths`'s and
+ * `leafViolations`'s own doc comments), so there is no declared "must be an
+ * object" expectation to enforce for them either. That is a real, currently
+ * undocumented-elsewhere gap, recorded here rather than silently assumed
+ * safe: an array- or union-rooted `json` field schema is accepted at
+ * declaration time and then enforced by nothing in this module, for any
+ * value at all.
+ */
+export function requiresPlainObject(schema: z.ZodTypeAny): boolean {
+  const def = unwrap(schema).def as AnyDef;
+  return def.type === "object" || def.type === "record";
 }
 
 /**
@@ -439,6 +511,25 @@ export function loosenForTransport(schema: z.ZodTypeAny): z.ZodTypeAny {
  * (a `json` field can legally hold a scalar). All three are treated as `{}`
  * rather than thrown on, so merging into a field nobody has written yet
  * just produces the patch.
+ *
+ * Writes each key via `Object.defineProperty`, never `merged[key] = value`
+ * (Task 3 review, Minor — overridden to a required fix: this is reachable
+ * prototype pollution, not a backlog item). `patch` comes from model-
+ * supplied JSON; `JSON.parse('{"__proto__":{"polluted":true}}')` produces an
+ * object with a perfectly normal OWN enumerable property literally named
+ * `"__proto__"` (`JSON.parse` does not trigger the accessor). But plain
+ * bracket assignment (`merged["__proto__"] = value`) runs through
+ * `Object.prototype`'s inherited `__proto__` *setter*, which reassigns
+ * `merged`'s actual `[[Prototype]]` instead of storing an own property — so
+ * the key is simultaneously lost (never strip! this is exactly the anti-goal
+ * the rest of this plan exists to avoid, just reached through a JS
+ * footgun instead of a schema one) and the merged object's prototype chain
+ * is corrupted. `Object.defineProperty` always creates/overwrites an OWN
+ * property directly, bypassing any inherited accessor — confirmed
+ * empirically that this keeps `Object.getPrototypeOf(merged)` untouched
+ * while still storing the literal `"__proto__"` key's data, for every key,
+ * not just that one (no special-casing needed, and no key gets silently
+ * dropped to achieve it).
  */
 export function mergeJson(
   stored: unknown,
@@ -449,7 +540,7 @@ export function mergeJson(
     if (value === null) {
       delete merged[key];
     } else {
-      merged[key] = value;
+      Object.defineProperty(merged, key, { value, writable: true, enumerable: true, configurable: true });
     }
   }
   return merged;

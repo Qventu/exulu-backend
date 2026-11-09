@@ -1,5 +1,12 @@
 import type { ExuluContextFieldDefinition } from "./context";
-import { leafViolations, mergeJson, schemaPaths, unknownPaths, type LeafViolation } from "./json-field-schema";
+import {
+  leafViolations,
+  mergeJson,
+  requiresPlainObject,
+  schemaPaths,
+  unknownPaths,
+  type LeafViolation,
+} from "./json-field-schema";
 
 /**
  * The single chokepoint both write paths (the generated tool's
@@ -12,16 +19,18 @@ import { leafViolations, mergeJson, schemaPaths, unknownPaths, type LeafViolatio
  * Two rules this module exists to enforce, both costly to get wrong:
  *
  * 1. **Validate, never strip.** A `json` field's declared schema is used
- *    only to CHECK the incoming value (`unknownPaths`, from Task 1). The
- *    value written to `values` is always the caller's own object — the same
- *    reference, not `schema.parse()`'s output. zod's `z.object()` strips
- *    undeclared keys by default; writing a parsed result here would be the
- *    exact anti-goal the design spec names (it has already cost a customer
- *    production data once, at the tool-config layer — see
- *    `json-field-schema.ts`'s `loosenForTransport` for the transport-side
- *    half of that same story). This module is the layer that is actually
- *    supposed to decide what is acceptable, so the one thing it must never
- *    do is quietly rewrite what it was handed.
+ *    only to CHECK the incoming value. The value written to `values` is
+ *    always the caller's own object — the same reference, not
+ *    `schema.parse()`'s output. zod's `z.object()` strips undeclared keys by
+ *    default; writing a parsed result here would be the exact anti-goal the
+ *    design spec names (it has already cost a customer production data
+ *    once, at the tool-config layer — see `json-field-schema.ts`'s
+ *    `loosenForTransport` for the transport-side half of that same story).
+ *    This module is the layer that is actually supposed to decide what is
+ *    acceptable, so the one thing it must never do is quietly rewrite what
+ *    it was handed. `mergeJson` itself enforces the JS-level version of this
+ *    same rule (see its own doc comment on `Object.defineProperty`) — a
+ *    patch key cannot destroy data via a prototype-chain trick either.
  *
  * 2. **Validate only the incoming value, never the stored one.** A row
  *    written before a field declared a schema may already hold a shape the
@@ -32,9 +41,21 @@ import { leafViolations, mergeJson, schemaPaths, unknownPaths, type LeafViolatio
  *    to change — turning on validation would then make old rows permanently
  *    unwritable, which is worse than not validating at all.
  *
- * Two checks run against the incoming value, in order, because they answer
- * different questions and one is cheap to get wrong in the other's
- * direction:
+ * Three checks run against the incoming value, in order:
+ * - **Shape** (`requiresPlainObject`) — does this schema even commit to an
+ *   object/record shape, and if so, is the incoming value a plain object at
+ *   all? `unknownPaths`/`leafViolations` both correctly return "nothing
+ *   wrong" for a non-plain-object value against ANY schema (there is
+ *   nothing to check paths or leaves against) — but for a schema that DOES
+ *   declare an object/record shape, "nothing to check" is not the same as
+ *   "nothing is wrong": a bare string/array/number/`null` sent for a field
+ *   declared as a keyed structure violates that declared shape, and for a
+ *   merge-listed field it would otherwise fall through to a silent REPLACE
+ *   that deletes the entire stored object (Task 3 review, Critical — this
+ *   check exists specifically so that fallthrough never happens). A schema
+ *   that does NOT require a plain object (array- or union-rooted — this
+ *   module validates neither at all today, see `requiresPlainObject`'s own
+ *   doc comment) skips straight to the next check, same as before.
  * - `unknownPaths` — is this path even one the schema recognises (an
  *   unnamed key, or an object/record declared where a scalar was supplied)?
  * - `leafViolations` — for a path the schema DOES recognise, does the leaf
@@ -49,6 +70,19 @@ import { leafViolations, mergeJson, schemaPaths, unknownPaths, type LeafViolatio
  *   as a missing required field. See `leafViolations`' own doc comment in
  *   `json-field-schema.ts` for why that distinction matters and how both
  *   shapes (`z.object()`, `z.record()`) resolve it the same way.
+ *
+ * Before the last two checks run on a MERGE-listed field, any of the
+ * patch's own top-level entries whose value is `null` are exempted (Task 3
+ * review, Important 2) — spec Part B defines an explicit `null` there as
+ * "delete this key", not a value to validate, and `unknownPaths`/
+ * `leafViolations` have no way to know that on their own (they only ever see
+ * a bare value, never whether it arrived under `merge`). Refusing a
+ * legitimate deletion is worse than merely wrong here: the refusal message
+ * says the path doesn't match and lists valid paths, and a model's
+ * plausible repair is to resend the field WITHOUT `merge` — which replaces
+ * the whole value and destroys every other key the deletion wasn't touching.
+ * A plain REPLACE has no such sentinel (the spec only defines it for merge),
+ * so a `null` entry there is still checked normally.
  */
 
 export type PrepareItemWriteArgs = {
@@ -65,6 +99,64 @@ export type PrepareItemWriteResult =
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * `JSON.stringify` throws on a `BigInt` (and would on a circular
+ * reference, though nothing upstream of this module can produce one before
+ * this point). This function exists purely to build refusal MESSAGES — it
+ * must never itself throw, or a write that should end in a clean refusal
+ * would instead end in an unhandled exception. `String()` never throws, so
+ * it is the fallback, not a second stringify attempt.
+ */
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * Removes a merge patch's own top-level deletion markers (`null`-valued
+ * entries) before validation — see the module doc's note on Important 2.
+ * Only ever called on a value already confirmed to be a plain object, and
+ * only for the copy handed to `unknownPaths`/`leafViolations`; `mergeJson`
+ * still runs on the caller's ORIGINAL, unfiltered patch afterwards, so the
+ * `null` is not lost — it still deletes the key there, exactly as the spec
+ * requires. This function only ever feeds a validation call; its output is
+ * never written anywhere.
+ */
+function omitNullEntries(value: Record<string, unknown>): Record<string, unknown> {
+  const filtered: Record<string, unknown> = {};
+  for (const [key, inner] of Object.entries(value)) {
+    if (inner !== null) filtered[key] = inner;
+  }
+  return filtered;
+}
+
+/**
+ * The four-part refusal for the shape check above: a schema declares an
+ * object/record at its top level, but the incoming value for that field is
+ * not a plain object at all. "What is available instead" reuses
+ * `schemaPaths`, the same as `refusalMessage` below — the model needs to see
+ * what a well-formed value for this field actually looks like, which is
+ * exactly what that list describes.
+ */
+function shapeRefusalMessage(
+  fieldName: string,
+  value: unknown,
+  schema: NonNullable<ExuluContextFieldDefinition["schema"]>,
+): string {
+  const kind = value === null ? "null" : Array.isArray(value) ? "an array" : `a ${typeof value}`;
+  const validPaths = schemaPaths(schema);
+  const validList = validPaths.length > 0 ? validPaths.join(", ") : "(the schema declares no paths)";
+
+  return (
+    `Write to field "${fieldName}" rejected: the value must be a JSON object with named keys, ` +
+    `but ${kind} was sent (${safeStringify(value)}). ` +
+    `Valid paths for "${fieldName}": ${validList}.`
+  );
 }
 
 /**
@@ -99,18 +191,18 @@ function refusalMessage(
 /**
  * The four-part refusal for a `leafViolations` finding. Unlike
  * `refusalMessage` above, "what is available instead" here is the valid
- * VALUES at that leaf (an enum's members, a type name), not valid PATHS —
- * the path itself is fine; it's the value that is wrong — and zod's own
- * issue message already names that set, so it is used directly rather than
- * reaching for `schemaPaths`, which only ever describes paths. `received` is
- * appended explicitly because zod does not always carry it on the issue
- * itself (an enum mismatch has no `received` field in zod 4.3.6 — see
- * `leafViolations`' own comment) — without it, the model would be told what
+ * VALUES at that leaf (an enum's members, a literal union's members), not
+ * valid PATHS — the path itself is fine; it's the value that is wrong.
+ * `violation.expected` already carries that set when one is derivable (see
+ * `leafViolations`' own doc comment on `describeExpectedValues`) or zod's
+ * own message otherwise; `received` is appended explicitly because zod does
+ * not always carry it on the issue itself (an enum/union mismatch has no
+ * `received` field in zod 4.3.6) — without it, the model would be told what
  * was expected but not shown what it actually sent.
  */
 function leafRefusalMessage(fieldName: string, violations: LeafViolation[]): string {
   const parts = violations.map((violation) => {
-    const got = JSON.stringify(violation.received);
+    const got = safeStringify(violation.received);
     return `"${fieldName}.${violation.path}": ${violation.expected} (got ${got})`;
   });
   return `Write to field "${fieldName}" rejected: ${parts.join("; ")}.`;
@@ -119,17 +211,26 @@ function leafRefusalMessage(fieldName: string, violations: LeafViolation[]): str
 /**
  * Checks and shapes one write's values. For each key in `input`:
  *
- * - If its field is `type: "json"` and declares a `schema`, the incoming
- *   value is checked with `unknownPaths`, then (only if that passes)
- *   `leafViolations` (not `existing` either way — see module doc). Either
- *   check finding something refuses the *entire* write (fail fast; a write
- *   is one unit, not a bag of independently-committable fields).
- * - If the key is named in `merge`, the stored value and the incoming patch
- *   are combined with `mergeJson` — but only when the incoming value is
- *   itself a plain object. A merge-listed field handed something else (no
- *   caller in this codebase does this, but nothing stops a future one) has
- *   no sensible patch to apply, so it falls back to replace rather than
- *   feeding a non-object into a function that expects one.
+ * - If its field is `type: "json"` and declares a `schema`:
+ *   - A value that violates the schema's shape (not a plain object where
+ *     one is required) refuses the write outright — see the module doc's
+ *     note on the shape check.
+ *   - Otherwise the incoming value (with a merge-listed field's own
+ *     null-valued deletion markers exempted first) is checked with
+ *     `unknownPaths`, then `leafViolations`. Either finding something
+ *     refuses the *entire* write (fail fast; a write is one unit, not a bag
+ *     of independently-committable fields).
+ * - If the field is `type: "json"` AND the key is named in `merge`, the
+ *   stored value and the incoming patch are combined with `mergeJson` — but
+ *   only when the incoming value is itself a plain object (the shape check
+ *   above already refuses a schema-carrying field's non-object value before
+ *   this point; a merge-listed field with NO schema and a non-object value
+ *   has nothing stopping it from reaching here, so it still falls back to
+ *   replace rather than feeding a non-object into `mergeJson`). Gating on
+ *   `type === "json"` (not just membership in `merge`) matters: `merge` is a
+ *   concept Part B defines for `json` fields only, so a non-`json` field
+ *   named there by mistake must not have `mergeJson` run against it (Task 3
+ *   review, Important 4).
  * - Otherwise the value replaces whatever was stored, exactly as today.
  *
  * A key with no matching entry in `fields` (or a field whose type isn't
@@ -146,20 +247,27 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
   for (const [key, value] of Object.entries(input)) {
     const field = fieldsByName.get(key);
     const schema = field?.type === "json" ? field.schema : undefined;
+    const isMergeField = field?.type === "json" && (merge?.includes(key) ?? false);
 
     if (schema) {
-      const badPaths = unknownPaths(schema, value);
+      if (requiresPlainObject(schema) && !isPlainObject(value)) {
+        return { ok: false, message: shapeRefusalMessage(key, value, schema) };
+      }
+
+      const toValidate = isMergeField && isPlainObject(value) ? omitNullEntries(value) : value;
+
+      const badPaths = unknownPaths(schema, toValidate);
       if (badPaths.length > 0) {
         return { ok: false, message: refusalMessage(key, badPaths, schema) };
       }
 
-      const violations = leafViolations(schema, value);
+      const violations = leafViolations(schema, toValidate);
       if (violations.length > 0) {
         return { ok: false, message: leafRefusalMessage(key, violations) };
       }
     }
 
-    if (merge?.includes(key) && isPlainObject(value)) {
+    if (isMergeField && isPlainObject(value)) {
       values[key] = mergeJson(existing?.[key], value);
     } else {
       values[key] = value;

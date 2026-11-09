@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { leafViolations, loosenForTransport, mergeJson, schemaPaths, unknownPaths } from "./json-field-schema";
+import {
+  leafViolations,
+  loosenForTransport,
+  mergeJson,
+  requiresPlainObject,
+  schemaPaths,
+  unknownPaths,
+} from "./json-field-schema";
 
 // Shape mirrors the M&V pitch matrix the spec is built around: a json field
 // that is a record of entries, each entry a small fixed object.
@@ -146,6 +153,54 @@ describe("leafViolations", () => {
     expect(leafViolations(z.object({ a: z.string() }), "not an object")).toEqual([]);
     expect(leafViolations(z.string(), { a: "x" })).toEqual([]);
   });
+
+  test("a union-of-literals leaf violation names the valid set, not zod's bare 'Invalid input'", () => {
+    // Task 3 re-review, Important 3: z.enum's own message happens to carry
+    // the set; a union of literals — a common way to spell the same "one of
+    // these values" constraint — does not (zod 4.3.6's top-level
+    // invalid_union message is literally "Invalid input", confirmed
+    // empirically). Without deriving the set from issue.errors, this leaf
+    // violation would give a model nothing to retry against.
+    const schemaObj = z.object({ status: z.union([z.literal("open"), z.literal("closed")]) });
+    const violations = leafViolations(schemaObj, { status: "pending" });
+    expect(violations).toEqual([
+      { path: "status", expected: expect.stringContaining("open"), received: "pending" },
+    ]);
+    expect(violations[0]?.expected).toContain("closed");
+    expect(violations[0]?.expected.toLowerCase()).not.toBe("invalid input");
+  });
+
+  test("falls back to zod's own message when a union branch isn't a simple literal/enum", () => {
+    // Deliberately conservative half of the same fix: a union with a
+    // non-literal branch (here, a whole object) has no complete "set" to
+    // report, so this must not invent a partial, misleading one.
+    const schemaObj = z.object({ value: z.union([z.literal("open"), z.object({ note: z.string() })]) });
+    const violations = leafViolations(schemaObj, { value: "pending" });
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.expected).not.toContain(" | ");
+  });
+});
+
+describe("requiresPlainObject", () => {
+  // Task 3 review, Critical: unknownPaths/leafViolations both correctly
+  // return [] for a non-plain-object value against ANY schema — there is
+  // nothing to check paths or leaves against. This function is how a caller
+  // (prepareItemWrite) tells "this schema has nothing to say about
+  // non-objects by design" apart from "this schema declares an object/
+  // record shape and a non-object value violates it".
+  test("true for an object schema, seeing through .optional()", () => {
+    expect(requiresPlainObject(z.object({ a: z.string() }).optional())).toBe(true);
+  });
+
+  test("true for a record schema", () => {
+    expect(requiresPlainObject(schema)).toBe(true);
+  });
+
+  test("false for a bare scalar, an array, and a union — this module validates none of them", () => {
+    expect(requiresPlainObject(z.string())).toBe(false);
+    expect(requiresPlainObject(z.array(z.string()))).toBe(false);
+    expect(requiresPlainObject(z.union([z.literal("a"), z.literal("b")]))).toBe(false);
+  });
 });
 
 describe("loosenForTransport", () => {
@@ -217,5 +272,36 @@ describe("mergeJson", () => {
 
   test("mergeJson treats a non-object stored value as empty", () => {
     expect(mergeJson("not an object", { a: 1 })).toEqual({ a: 1 });
+  });
+
+  test("a __proto__ patch key is stored as literal data, not used to pollute the result's prototype", () => {
+    // Task 3 review, Minor (overridden to required): patch keys come from
+    // model-supplied JSON. JSON.parse('{"__proto__":{"polluted":true}}')
+    // produces a normal OWN enumerable "__proto__" property (JSON.parse
+    // does not trigger the accessor) — but the OLD `merged[key] = value`
+    // line ran through Object.prototype's inherited __proto__ *setter*,
+    // which reassigns the object's actual [[Prototype]] instead of storing
+    // an own property. That is simultaneously a "never strip" violation
+    // (the key vanishes) and live prototype pollution (confirmed
+    // empirically against the pre-fix implementation before writing this
+    // fix).
+    const patch = JSON.parse('{"__proto__":{"polluted":true}}') as Record<string, unknown>;
+    const result = mergeJson({}, patch);
+
+    // Not polluted: the result's actual prototype is untouched.
+    expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+    expect((result as any).polluted).toBeUndefined();
+    // Not stripped: the literal key survives as ordinary data.
+    expect(Object.prototype.hasOwnProperty.call(result, "__proto__")).toBe(true);
+    expect(JSON.stringify(result)).toBe('{"__proto__":{"polluted":true}}');
+  });
+
+  test("a __proto__ key can still be deleted via an explicit null, like any other key", () => {
+    const patch = JSON.parse('{"__proto__":null}') as Record<string, unknown>;
+    const stored = JSON.parse('{"__proto__":{"polluted":true}}') as Record<string, unknown>;
+    const result = mergeJson(stored, patch);
+
+    expect(Object.prototype.hasOwnProperty.call(result, "__proto__")).toBe(false);
+    expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
   });
 });
