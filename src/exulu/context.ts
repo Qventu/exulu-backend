@@ -1,4 +1,5 @@
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types";
+import type { z } from "zod";
 import type { allFileTypes } from "@EXULU_TYPES/file-types";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import { ExuluStorage } from "@SRC/exulu/storage.ts";
@@ -73,6 +74,15 @@ export type ExuluContextFieldDefinition = {
    * excluded by name in the input generator.
    */
   hidden?: boolean;
+  /**
+   * Declares the shape of a `json` field. When present, the generated agent
+   * tools expose this schema to the model instead of the opaque "valid JSON
+   * string" instruction, so the model can see (and be validated against) the
+   * field's actual structure instead of guessing it. Undeclared `json` fields
+   * are unaffected — see json-field-schema.ts for the path/merge logic that
+   * reads this property in later tasks.
+   */
+  schema?: z.ZodTypeAny;
 };
 
 

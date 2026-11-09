@@ -109,7 +109,14 @@ const buildWriteSchema = (
           );
         break;
       case "json":
-        schema = z.string().describe(`The ${field.name} of the item, as a valid JSON string.`);
+        // Without a declared schema the model only ever sees an opaque JSON
+        // string and has to guess its shape. When the field declares one,
+        // offer that shape directly instead — the model gets real structure
+        // to fill in. Only a `.describe()` is added on top; nothing here
+        // validates or strips the input (that's a later task's job).
+        schema = field.schema
+          ? field.schema.describe(`The ${field.name} of the item.`)
+          : z.string().describe(`The ${field.name} of the item, as a valid JSON string.`);
         break;
       case "markdown":
         schema = z.string().describe(`The ${field.name} of the item, as a valid Markdown string.`);

@@ -104,6 +104,33 @@ describe("createContextWriteTools", () => {
     expect(skipped.needsApproval).toBe(false);
   });
 
+  describe("json field schema", () => {
+    // Backward-compatibility guard (Global Constraints): a json field that
+    // declares no schema must still behave exactly as it does without this
+    // feature — an opaque JSON string, on every path, forever.
+    it("a json field with no schema is still offered as a JSON string", () => {
+      const [createTool, updateTool] = createContextWriteTools(makeContext(), { create: true, update: true }, false);
+      for (const tool of [createTool, updateTool]) {
+        // specs is optional (not a required field), so the description lives
+        // on the wrapped inner schema, not the ZodOptional itself.
+        const specs = (tool.inputSchema as z.ZodObject<any>).shape.specs as z.ZodOptional<z.ZodTypeAny>;
+        expect(specs.unwrap().description).toBe("The specs of the item, as a valid JSON string.");
+        expect(specs.parse('{"a":1}')).toBe('{"a":1}');
+        expect(() => specs.parse({ a: 1 })).toThrow();
+      }
+    });
+
+    it("a json field with a schema offers that schema to the model", () => {
+      const schemaFields = BASE_FIELDS.map((f) =>
+        f.name === "specs" ? { ...f, schema: z.object({ wert: z.string() }) } : f,
+      );
+      const [updateTool] = createContextWriteTools(makeContext({ fields: schemaFields }), { create: false, update: true }, false);
+      const specs = (updateTool.inputSchema as z.ZodObject<any>).shape.specs;
+      expect(specs.parse({ wert: "x" })).toEqual({ wert: "x" });
+      expect(() => specs.parse({ wert: 1 })).toThrow();
+    });
+  });
+
   describe("create execute", () => {
     const run = async (params: Record<string, unknown>, context = makeContext()) => {
       const [tool] = createContextWriteTools(context, { create: true, update: false }, false);
