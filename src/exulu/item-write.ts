@@ -99,6 +99,21 @@ import {
  * the whole value and destroys every other key the deletion wasn't touching.
  * A plain REPLACE has no such sentinel (the spec only defines it for merge),
  * so a `null` entry there is still checked normally.
+ *
+ * Above every other check sits one more rule, checked first, for a
+ * different reason than any of them (Task 3 third re-review, Important 1):
+ * a MERGE-listed field whose incoming TOP-LEVEL value is itself `null` is
+ * refused UNCONDITIONALLY — even against a schema that declares `null`
+ * legal via `.nullable()`. This is deliberately not a type/schema question
+ * (the schema check further down would happily accept it on such a schema)
+ * — it is an OPERATION question: merge means patch, and Part B's `null`
+ * sentinel deletes one key one level IN, never the whole patch. Letting a
+ * bare `null` double as "clear the whole field" under `merge` reopens
+ * exactly the "merge silently becomes a whole-object replace" shape
+ * Critical 1 exists to prevent, just through the one door — a
+ * declared-nullable schema — that check doesn't close. A caller who means
+ * to clear a field says so with a plain REPLACE (no `merge`), which is
+ * untouched by this rule and behaves exactly as before.
  */
 
 export type PrepareItemWriteArgs = {
@@ -165,6 +180,32 @@ function omitNullEntries(value: Record<string, unknown>): Record<string, unknown
     if (inner !== null) filtered[key] = inner;
   }
   return filtered;
+}
+
+/**
+ * The refusal for a merge-listed field's TOP-LEVEL patch value being `null`
+ * (Task 3 third re-review, Important 1 — a latent gap in the Important-2
+ * clause, not a defect in how that clause was implemented). This is an
+ * OPERATION mismatch, not a type/schema one — it fires regardless of what
+ * the field's schema declares, including a schema that explicitly allows
+ * `null` (`.nullable()`), which is exactly the case that slipped through:
+ * a nullable schema makes `null` a legal VALUE, but spec Part B never made
+ * a bare `null` a legal MERGE PATCH — merge means patch, and a patch's own
+ * top-level deletion sentinel lives one level IN (see `omitNullEntries`),
+ * never as the patch itself. Collapsing "clear the whole field" into the
+ * same spelling as "delete one key" gives the two operations — wildly
+ * different blast radius, one key vs. every key — one spelling, which is
+ * exactly the ambiguity Critical 1 existed to close off in the first place,
+ * now reachable through the one door (a declared-nullable schema) that
+ * check doesn't cover.
+ */
+function mergeClearRefusalMessage(fieldName: string): string {
+  return (
+    `Write to field "${fieldName}" rejected: a merge patch's own value cannot be null. ` +
+    `A bare null here would clear the entire field, and clearing a field is a replace, not a ` +
+    `merge. To clear "${fieldName}" entirely, resend it WITHOUT "merge". To delete specific ` +
+    `keys instead, keep merging and set only those keys' values to null.`
+  );
 }
 
 /**
@@ -281,6 +322,13 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
     const schema = field?.type === "json" ? field.schema : undefined;
     const isMergeField = field?.type === "json" && (merge?.includes(key) ?? false);
 
+    // Checked first, above the schema check and independent of it (Task 3
+    // third re-review, Important 1): an operation question, not a type
+    // question — see the module doc's note above this function.
+    if (isMergeField && value === null) {
+      return { ok: false, message: mergeClearRefusalMessage(key) };
+    }
+
     if (schema) {
       if (requiresPlainObject(schema) && !isPlainObject(value) && !schema.safeParse(value).success) {
         return { ok: false, message: shapeRefusalMessage(key, value, schema) };
@@ -299,10 +347,22 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
       }
     }
 
+    // Object.defineProperty, not `values[key] = ...` (Task 3 third
+    // re-review, Important 2): `values` is this function's own RETURN
+    // value, and `key` comes straight from `Object.entries(input)` —
+    // exactly as untrusted as every other key this task has had to guard
+    // against. An own top-level `"__proto__"` key in `input` would
+    // otherwise run through the inherited setter here too, corrupting the
+    // chokepoint's own output (`Object.keys` looking clean while
+    // `Object.getPrototypeOf` says otherwise) rather than merely failing to
+    // validate one. `values` itself stays a plain `{}` (unlike
+    // `omitNullEntries`'s internal-only copy) because it crosses this
+    // module's boundary into the write paths that consume it — the same
+    // reason `mergeJson` keeps its own return value a normal object too.
     if (isMergeField && isPlainObject(value)) {
-      values[key] = mergeJson(existing?.[key], value);
+      Object.defineProperty(values, key, { value: mergeJson(existing?.[key], value), writable: true, enumerable: true, configurable: true });
     } else {
-      values[key] = value;
+      Object.defineProperty(values, key, { value, writable: true, enumerable: true, configurable: true });
     }
   }
 

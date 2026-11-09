@@ -420,11 +420,24 @@ describe("prepareItemWrite", () => {
     // that existed before this task's fixes. A BigInt nested inside an
     // otherwise-valid top-level object reaches leafViolations/
     // leafRefusalMessage instead.
+    //
+    // Tightened (Task 3 third re-review): calls prepareItemWrite exactly
+    // ONCE, inside the `.not.toThrow()` check itself, via the `result`
+    // closure variable. The earlier two-call version let the SECOND,
+    // unwrapped call throw too when the fix was reverted — so the test
+    // failed at that line (an uncaught exception) before `toContain("10")`
+    // ever ran, meaning that assertion's own discriminating power was
+    // entirely carried by its `.not.toThrow()` sibling rather than
+    // standing on its own. With one call, a future change that stops
+    // throwing but changes the fallback's format (e.g. a different
+    // stand-in for the BigInt) would be caught by `toContain("10")` on its
+    // own merit.
+    let result!: ReturnType<typeof prepareItemWrite>;
     const input = { felder: { budget_gesamt: { wert: 10n as unknown, konfidenz: "low" } } };
+    expect(() => {
+      result = prepareItemWrite({ fields, existing: null, input });
+    }).not.toThrow();
 
-    expect(() => prepareItemWrite({ fields, existing: null, input })).not.toThrow();
-
-    const result = prepareItemWrite({ fields, existing: null, input });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected a refusal");
     expect(result.message).toContain("felder");
@@ -447,7 +460,15 @@ describe("prepareItemWrite", () => {
   // already correctly refused the whole time — that asymmetry is exactly
   // how this hid.
   describe("New 1: a __proto__ merge-patch key cannot bypass validation", () => {
-    test("merge path refuses it, matching the replace path's existing behaviour", () => {
+    test("merge path refuses it FOR THE SAME REASON as the replace path, not merely ok:false", () => {
+      // Tightened (Task 3 third re-review): the original version of this
+      // test only checked `.ok === false` on both paths, which does not
+      // by itself prove the merge path is refusing because of the
+      // __proto__ entry's content rather than some unrelated reason.
+      // Pinning the actual message — and that it is IDENTICAL on both
+      // paths — proves the refusal is for the right reason: unknownPaths
+      // sees "__proto__.NOT_A_FELD" as an unnamed key under "__proto__" on
+      // BOTH paths once the filtered copy correctly retains the key.
       const existing = { felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } };
       // Built via JSON.parse, like the coordinator's repro and the
       // mergeJson tests — a normal own enumerable "__proto__" property,
@@ -459,17 +480,30 @@ describe("prepareItemWrite", () => {
 
       expect(mergeResult.ok).toBe(false);
       expect(replaceResult.ok).toBe(false);
+      if (mergeResult.ok || replaceResult.ok) throw new Error("expected both to refuse");
+      expect(mergeResult.message).toContain("felder");
+      expect(mergeResult.message).toContain("__proto__.NOT_A_FELD");
+      expect(mergeResult.message).toBe(replaceResult.message);
     });
 
-    test("a literal __proto__ key can still be deleted via null, and the result stays unpolluted", () => {
-      // The legitimate case `omitNullEntries` exists to support at all: a
-      // stored row that happens to hold an own "__proto__" key (itself
-      // safe to read back — `{...existing}` is immune, same as mergeJson's
-      // own spread) gets it deleted via an explicit null, same as any
-      // other key. This end-to-end path exercises BOTH this round's fix
-      // (the filtered copy no longer silently drops the entry before
-      // validation) and round 2's mergeJson fix (the actual write doesn't
-      // corrupt the result's prototype) together.
+    // NOTE: this is NOT the test that discriminates the Object.create(null)
+    // fix above, despite an earlier version of this file's comment claiming
+    // it was (Task 3 third re-review, Important 3). `{"__proto__": null}`'s
+    // value is `null`, so `omitNullEntries`'s own `if (inner !== null)`
+    // guard skips the assignment line ENTIRELY for this key — the line
+    // `Object.create(null)` vs `{}` fixed is never reached, with either
+    // implementation, for a null-valued entry. Verified directly: running
+    // both the old (`{}`) and the new (`Object.create(null)`)
+    // implementations side by side on this exact input yields
+    // `Object.keys(...) === []` for BOTH. The test above (a NON-null
+    // `__proto__` value) is the one that actually exercises the fix. This
+    // test instead pins a separate, genuinely true, legitimate behaviour:
+    // a stored row that happens to hold an own "__proto__" key (itself
+    // safe to read back — `{...existing}` is immune, same as mergeJson's
+    // own spread) can still have it deleted via an explicit null, same as
+    // any other key, and the result stays unpolluted (round 2's mergeJson
+    // fix, exercised end-to-end here).
+    test("a literal __proto__ key can still be deleted via null (a different, legitimate behaviour — not a fix-discriminating test)", () => {
       const existing = {
         felder: JSON.parse(
           '{"__proto__":{"wert":"OLD","konfidenz":"low"},"zielgruppe":{"wert":"KEEP","konfidenz":"medium"}}',
@@ -546,6 +580,139 @@ describe("prepareItemWrite", () => {
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected a refusal");
       expect(result.message).toContain("cfg");
+    });
+  });
+
+  // --- Fourth re-review round: Important 1 (latent) --------------------
+  //
+  // My own re-ruling in round 3 said the shape gate must defer to
+  // `schema.safeParse(value).success` — satisfied as written for a
+  // `.nullable()` schema, since the schema DOES declare null legal. But
+  // merge means patch (spec Part B): a top-level `null` IS the patch here,
+  // not an entry inside one, and collapsing "clear the whole field" into
+  // the same spelling as "delete one key" reopens exactly the shape
+  // Critical 1 exists to prevent — just through the door a
+  // declared-nullable schema opens, which the type-level safeParse check
+  // has no way to see as an operation mismatch rather than a value one.
+  describe("Important 1 (latent): a top-level null on a merge-listed field is refused regardless of what the schema declares", () => {
+    const nullableFelderSchema = felderSchema.nullable();
+    const nullableFields: ExuluContextFieldDefinition[] = [{ name: "felder", type: "json", schema: nullableFelderSchema }];
+
+    test("a .nullable() schema's own null-legality does not make null a legal MERGE PATCH", () => {
+      const existing = {
+        felder: {
+          budget_gesamt: { wert: "OLD", konfidenz: "low" },
+          zielgruppe: { wert: "KEEP", konfidenz: "medium" },
+        },
+      };
+
+      const result = prepareItemWrite({ fields: nullableFields, existing, input: { felder: null }, merge: ["felder"] });
+
+      // Must be refused — NOT `ok: true, values: { felder: null }`, which
+      // silently wipes both stored keys. This is the exact repro reported.
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error(`expected a refusal, got values.felder = ${JSON.stringify(result.values.felder)}`);
+      expect(result.message).toContain("felder");
+      expect(result.message.toLowerCase()).toContain("merge");
+      expect(result.message.toLowerCase()).toContain("replace");
+      const lower = result.message.toLowerCase();
+      for (const forbidden of ["jsonb", "sql", "syntax error", "postgres", "select ", "::"]) {
+        expect(lower).not.toContain(forbidden);
+      }
+    });
+
+    test("the SAME null is still accepted on a plain REPLACE — this rule is merge-only", () => {
+      const result = prepareItemWrite({ fields: nullableFields, existing: null, input: { felder: null } });
+      expect(result).toEqual({ ok: true, values: { felder: null } });
+    });
+
+    test("a non-nullable, SCHEMA-LESS merge-listed field is refused the same way — the rule is not about schemas at all", () => {
+      // The rule fires on `isMergeField && value === null` BEFORE the
+      // schema check even runs, so a merge-listed json field with no
+      // schema at all must be refused too — otherwise this would just
+      // move the hole from "nullable schemas" to "no schema".
+      const schemaLessFields: ExuluContextFieldDefinition[] = [{ name: "notes", type: "json" }];
+      const result = prepareItemWrite({
+        fields: schemaLessFields,
+        existing: { notes: { a: 1, b: 2 } },
+        input: { notes: null },
+        merge: ["notes"],
+      });
+
+      expect(result.ok).toBe(false);
+    });
+
+    test("a deletion of one key inside the patch is unaffected — only the PATCH ITSELF being null is refused", () => {
+      // Important 2 (round 2) still works: null one level IN, not AT the
+      // top, is a delete sentinel, not a clear-the-field operation.
+      const existing = {
+        felder: {
+          budget_gesamt: { wert: "OLD", konfidenz: "low" },
+          zielgruppe: { wert: "KEEP", konfidenz: "medium" },
+        },
+      };
+      const result = prepareItemWrite({
+        fields: nullableFields,
+        existing,
+        input: { felder: { budget_gesamt: null } },
+        merge: ["felder"],
+      });
+
+      expect(result).toEqual({
+        ok: true,
+        values: { felder: { zielgruppe: { wert: "KEEP", konfidenz: "medium" } } },
+      });
+    });
+  });
+
+  // --- Fourth re-review round: Important 2 ------------------------------
+  //
+  // `mergeJson` got `Object.defineProperty`, `omitNullEntries` got
+  // `Object.create(null)` — the chokepoint's own accumulator (`values`)
+  // got neither. `key` in the main loop comes straight from
+  // `Object.entries(input)`, exactly as untrusted as every other key this
+  // task has guarded against; an own top-level `"__proto__"` key in
+  // `input` ran through the inherited setter on `values[key] = value`,
+  // corrupting the FUNCTION'S OWN RETURN VALUE rather than merely failing
+  // to validate one field.
+  describe("Important 2: the values accumulator itself cannot be prototype-polluted by a top-level input key", () => {
+    test("an own top-level __proto__ key in input does not corrupt the returned values object's prototype", () => {
+      const input = JSON.parse('{"__proto__":{"NOT_A_COLUMN":true}}') as Record<string, unknown>;
+      const result = prepareItemWrite({ fields, existing: null, input });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("expected success, got: " + result.message);
+      expect(Object.getPrototypeOf(result.values)).toBe(Object.prototype);
+      expect((result.values as any).NOT_A_COLUMN).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty.call(result.values, "__proto__")).toBe(true);
+      // NOT `toEqual({ __proto__: {...} })` — a non-computed `__proto__:`
+      // key in an object LITERAL is special-cased by the language to set
+      // the literal's actual prototype, not create an own property (the
+      // opposite of what's being asserted here, confirmed empirically
+      // while writing this test: `Object.keys({ __proto__: {a:1} })` is
+      // `[]`). JSON.stringify, which only ever walks OWN enumerable
+      // properties, is the comparison that actually exercises what this
+      // test is about.
+      expect(JSON.stringify(result.values)).toBe('{"__proto__":{"NOT_A_COLUMN":true}}');
+    });
+
+    test("the same protection applies when the key is written via the MERGE branch, not just the replace branch", () => {
+      // The merge branch's own assignment (`values[key] = mergeJson(...)`)
+      // is a second, independent site of the identical pattern — this
+      // schema-less json field exercises that branch specifically.
+      const schemaLessFields: ExuluContextFieldDefinition[] = [{ name: "__proto__", type: "json" }];
+      const existing = JSON.parse('{"__proto__":{"a":1}}') as Record<string, unknown>;
+      const input = JSON.parse('{"__proto__":{"b":2}}') as Record<string, unknown>;
+
+      const result = prepareItemWrite({ fields: schemaLessFields, existing, input, merge: ["__proto__"] });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("expected success, got: " + result.message);
+      expect(Object.getPrototypeOf(result.values)).toBe(Object.prototype);
+      expect(Object.prototype.hasOwnProperty.call(result.values, "__proto__")).toBe(true);
+      // Same reasoning as the test above: JSON.stringify, not a literal
+      // `toEqual({ __proto__: ... })`.
+      expect(JSON.stringify(result.values)).toBe('{"__proto__":{"a":1,"b":2}}');
     });
   });
 });
