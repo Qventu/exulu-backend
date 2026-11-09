@@ -217,7 +217,35 @@ export function createQueries(
         for (const id of args.ids) {
           // First check if the agent is defined as code
           // and provided to the ExuluApp constructor.
-          const agent = await exuluApp.get().agent(id);
+          //
+          // Per id, and tolerating a throw. `app.agent()` THROWS
+          // "Agent instance not found." for an id with no row
+          // (exulu/app/index.ts) — while this loop's own `if (agent)` below
+          // shows its author expected a falsy return instead. That
+          // disagreement is the bug: without this catch, ONE unresolvable id
+          // fails the whole query, so a caller asking for five agents gets an
+          // error rather than the four that exist.
+          //
+          // And an unresolvable id is a steady state, not an edge case: every
+          // caller of this query reads ids out of a json column with no
+          // foreign key (shared_artifacts.agent_slots, eval runs, feedback
+          // rows), and nothing prunes them when an agent is deleted. So a
+          // deleted agent would take a whole artifact's call to action, or a
+          // whole feedback list's labels, down with it.
+          //
+          // "Absent from the result" is what every caller already handles —
+          // it is what the paginated query does for the same id, and what the
+          // `if (agent)` and the access check below already produce. Logged
+          // rather than silent, because this catch is wide enough to swallow
+          // a genuine failure (a database that is down would read as "no
+          // agents"), and that must be findable.
+          let agent: ExuluAgent | undefined;
+          try {
+            agent = await exuluApp.get().agent(id);
+          } catch (error) {
+            console.warn(`${tableNameSingular}ByIds: ${id} not resolved`, error);
+            continue;
+          }
           if (agent) {
             const hasAccess = await checkRecordAccess(agent, "read", context.user);
             if (hasAccess) {

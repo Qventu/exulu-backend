@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   normalizeS3Key,
   isHtmlKey,
@@ -14,6 +16,9 @@ import {
   contentHeadersFor,
   publicMetaFor,
   getSharedArtifactByName,
+  validateAgentSlots,
+  readAgentSlots,
+  type AgentSlot,
 } from "./shared-artifacts";
 
 describe("normalizeS3Key", () => {
@@ -334,5 +339,214 @@ describe("validateUpdateInput / planShareUpdate with s3key", () => {
     expect(patch.content_type).toBe("text/html");
     expect(patch.auth_mode).toBe("regular");
     expect(patch.rights_mode).toBe("public");
+  });
+});
+
+describe("validateAgentSlots", () => {
+  test("accepts a well-formed list", () => {
+    const r = validateAgentSlots([{ key: "analyse", agentId: "a1" }]);
+    expect(r).toEqual({ ok: true, slots: [{ key: "analyse", agentId: "a1" }] });
+  });
+  test("accepts an empty list", () => {
+    expect(validateAgentSlots([])).toEqual({ ok: true, slots: [] });
+  });
+  test("rejects a non-array", () => {
+    expect(validateAgentSlots({ key: "a" }).ok).toBe(false);
+  });
+  test("rejects a blank or non-string key", () => {
+    expect(validateAgentSlots([{ key: "  ", agentId: "a1" }]).ok).toBe(false);
+    expect(validateAgentSlots([{ key: 7, agentId: "a1" }]).ok).toBe(false);
+  });
+  test("rejects a blank or non-string agentId", () => {
+    expect(validateAgentSlots([{ key: "a", agentId: "" }]).ok).toBe(false);
+  });
+  test("rejects duplicate keys — a button could not bind unambiguously", () => {
+    const r = validateAgentSlots([
+      { key: "analyse", agentId: "a1" },
+      { key: "analyse", agentId: "a2" },
+    ]);
+    expect(r.ok).toBe(false);
+  });
+  test("ignores unknown properties rather than storing them", () => {
+    const r = validateAgentSlots([{ key: "a", agentId: "a1", extra: 1 }]);
+    expect(r).toEqual({ ok: true, slots: [{ key: "a", agentId: "a1" }] });
+  });
+});
+
+describe("validateUpdateInput with agent_slots", () => {
+  const row = { name: "x", auth_mode: "regular", password_hash: null, rights_mode: "private", created_by: 1 };
+  test("rejects a malformed agent_slots payload", () => {
+    expect(validateUpdateInput({ agent_slots: "nope" } as any, row, new Date()).ok).toBe(false);
+  });
+});
+
+describe("planShareUpdate with agent_slots", () => {
+  const row = { name: "x", auth_mode: "regular", password_hash: null, rights_mode: "private", created_by: 1 };
+  test("writes normalised slots when given", () => {
+    const patch = planShareUpdate({ agent_slots: [{ key: "a", agentId: "a1", extra: 1 }] } as any, row, null, new Date());
+    expect(patch.agent_slots).toEqual([{ key: "a", agentId: "a1" }]);
+  });
+  test("omits the column when not given", () => {
+    expect("agent_slots" in planShareUpdate({}, row, null, new Date())).toBe(false);
+  });
+});
+
+describe("readAgentSlots (defensive read of a jsonb column)", () => {
+  test("passes a well-formed list through", () => {
+    const stored: AgentSlot[] = [{ key: "analyse", agentId: "a1" }];
+    expect(readAgentSlots(stored)).toEqual(stored);
+  });
+
+  // The exact corruption the raw-array write produced: node-postgres
+  // serialises `[]` as the Postgres array literal `{}`, which Postgres accepts
+  // for a jsonb column as a valid JSON *object*. Every reader of this column
+  // types it `AgentSlot[]` and calls `.some`/`.map` on it, so without this an
+  // already-saved share is permanently broken in the UI — the dialog throws on
+  // reopen and the next save posts `{}` and is rejected 400.
+  test("coerces the `{}` an empty raw-array write left behind to an empty list", () => {
+    expect(readAgentSlots({})).toEqual([]);
+  });
+
+  test("coerces a populated object, a null and an undefined column to an empty list", () => {
+    expect(readAgentSlots({ "0": { key: "a", agentId: "a1" } })).toEqual([]);
+    expect(readAgentSlots(null)).toEqual([]);
+    expect(readAgentSlots(undefined)).toEqual([]);
+  });
+
+  test("unwraps a column holding a JSON string (a double-stringified write)", () => {
+    expect(readAgentSlots('[{"key":"a","agentId":"a1"}]')).toEqual([
+      { key: "a", agentId: "a1" },
+    ]);
+  });
+
+  test("a string that is not JSON at all is an empty list, not a throw", () => {
+    expect(readAgentSlots("{\"{\\\"key\\\":\\\"a\\\"}\"}")).toEqual([]);
+    expect(readAgentSlots("nope")).toEqual([]);
+  });
+});
+
+/**
+ * The PATCH route's own write of `agent_slots`, as a source-text invariant.
+ *
+ * Why a source invariant and not a behavioural test: `planShareUpdate` is
+ * pure and already tested, and the bug this locks down is not in it — it is
+ * in what the ROUTE does with the patch before handing it to knex. No backend
+ * test touches a database, and the type system cannot see it either (the
+ * patch is `Record<string, unknown>` and knex takes anything), so there is no
+ * other gate available. Same technique, and the same reason, as the /panel
+ * route's wiring tests below.
+ *
+ * What it protects: `agent_slots` is `jsonb`, knex's `prepBindings` is the
+ * identity function for pg, and node-postgres then serialises a JS array as a
+ * POSTGRES ARRAY LITERAL rather than JSON — `[{key,agentId}]` becomes
+ * `{"{\"key\":…}"}` (invalid JSON, so the write 500s) and `[]` becomes `{}`
+ * (valid JSON, but an object, so the column is silently corrupted for every
+ * reader). This class of bug survived eleven task reviews; it needs a gate.
+ */
+describe("PATCH /shared-artifacts/:name — the agent_slots write site", () => {
+  const source = readFileSync(join(__dirname, "routes.ts"), "utf8");
+
+  /** The PATCH handler's source, so each assertion sees that route only. */
+  function patchHandler(): string {
+    const start = source.indexOf('app.patch("/shared-artifacts/:name"');
+    const end = source.indexOf("\n  app.", start + 1);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return source.slice(start, end);
+  }
+
+  test("stringifies agent_slots rather than handing knex a raw JS array", () => {
+    expect(patchHandler()).toContain("JSON.stringify(patch.agent_slots)");
+  });
+
+  test("the stringify happens before the patch reaches .update()", () => {
+    const handler = patchHandler();
+    const stringify = handler.indexOf("JSON.stringify(patch.agent_slots)");
+    const update = handler.indexOf(".update(patch)");
+    expect(stringify).toBeGreaterThan(-1);
+    expect(update).toBeGreaterThan(-1);
+    expect(stringify).toBeLessThan(update);
+  });
+
+  // Guarded, because planShareUpdate omits the key entirely when the body did
+  // not carry it (its own test asserts that) — an unguarded stringify would
+  // write the literal string "undefined" into the column on EVERY patch.
+  test("the stringify is guarded on the column actually being in the patch", () => {
+    const handler = patchHandler();
+    const guard = handler.indexOf("patch.agent_slots !== undefined");
+    const stringify = handler.indexOf("JSON.stringify(patch.agent_slots)");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(stringify);
+  });
+
+  // Both reads of this column go through readAgentSlots, so a database that
+  // already took a raw-array save recovers instead of staying broken.
+  test("both readers coerce the stored column instead of trusting it", () => {
+    expect(patchHandler()).toContain("readAgentSlots(updated.agent_slots)");
+    expect(source).toContain("readAgentSlots(row.agent_slots)");
+  });
+});
+
+/**
+ * GET /shared-artifacts/:name/panel lives directly in routes.ts, a factory
+ * that takes a live Postgres client and has no supertest seam (same
+ * situation as GDPR's claim_checks paths — see claim-check/gdpr-paths.test.ts,
+ * whose `region` helper this mirrors). So this is a source-text invariant
+ * over the handler region, not a behavioural test: it locks in that a
+ * non-regular row 404s (before the RBAC access check runs, so no RBAC side
+ * effect ever fires for a share this endpoint is not meant to serve), and
+ * that an expired row 410s like every other read path on this resource
+ * (/meta, /content, /access) — easy to miss by hand, because the real flow
+ * hits /meta first and never reaches /panel once that already says expired.
+ */
+describe("GET /shared-artifacts/:name/panel (route wiring)", () => {
+  const source = readFileSync(join(__dirname, "routes.ts"), "utf8");
+
+  /** The panel handler's source, so each assertion sees that route only. */
+  function panelHandler(): string {
+    const start = source.indexOf('app.get("/shared-artifacts/:name/panel"');
+    const end = source.indexOf("\n  app.", start + 1);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return source.slice(start, end);
+  }
+
+  test("404s a non-regular row rather than returning an empty list", () => {
+    const handler = panelHandler();
+    const authModeCheck = handler.indexOf('auth_mode !== "regular"');
+    expect(authModeCheck).toBeGreaterThan(-1);
+    const nextBraceEnd = handler.indexOf("}", authModeCheck);
+    expect(handler.slice(authModeCheck, nextBraceEnd)).toMatch(/status\(404\)/);
+  });
+
+  test("the 404 on a non-regular row happens before the RBAC access check", () => {
+    const handler = panelHandler();
+    const authModeCheck = handler.indexOf('auth_mode !== "regular"');
+    const accessCheck = handler.indexOf("checkRecordAccess");
+    expect(authModeCheck).toBeGreaterThan(-1);
+    expect(accessCheck).toBeGreaterThan(-1);
+    expect(authModeCheck).toBeLessThan(accessCheck);
+  });
+
+  // Every other read path for this resource (/meta, /content, /access) 410s
+  // an expired share. The real flow would mask a missing check here — the
+  // viewer page calls /meta first and renders "expired" before it would ever
+  // reach /panel — which is exactly why it has to be locked in on its own.
+  test("answers 410 on an expired row — not 200, not 404", () => {
+    const handler = panelHandler();
+    const expiryCheck = handler.indexOf("isExpired(row.expires_at");
+    expect(expiryCheck).toBeGreaterThan(-1);
+    const nextBraceEnd = handler.indexOf("}", expiryCheck);
+    expect(handler.slice(expiryCheck, nextBraceEnd)).toMatch(/status\(410\)/);
+  });
+
+  test("the 410 check sits between the 404-on-missing-row and the mode/access checks, like /access", () => {
+    const handler = panelHandler();
+    const notFoundCheck = handler.indexOf("if (!row)");
+    const expiryCheck = handler.indexOf("isExpired(row.expires_at");
+    const authModeCheck = handler.indexOf('auth_mode !== "regular"');
+    expect(notFoundCheck).toBeGreaterThan(-1);
+    expect(expiryCheck).toBeGreaterThan(notFoundCheck);
+    expect(authModeCheck).toBeGreaterThan(expiryCheck);
   });
 });

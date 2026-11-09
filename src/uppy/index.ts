@@ -253,6 +253,22 @@ export const listS3ObjectsByPrefix = async (
 };
 
 /**
+ * `CopySource` is a header value, not a path parameter — the SDK does not
+ * encode it, and S3 URL-decodes whatever it receives. Encode each "/"
+ * -delimited segment on its own (never the whole string, which would
+ * escape the "/" separators themselves and point at a nonexistent key).
+ * Keys made of internal, ASCII-safe segments (uuids, "v1", fixed names)
+ * round-trip through this unchanged; a user-named filename with spaces,
+ * unicode, or other header-unsafe characters is exactly what this exists
+ * to fix.
+ */
+export const encodeS3KeyForCopySource = (key: string): string =>
+  key
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+
+/**
  * Copy an S3 object from one key to another within the same bucket.
  * Keys should NOT include the bucket prefix.
  */
@@ -268,7 +284,7 @@ export const copyS3Object = async (
   const bucket = config.fileUploads.s3Bucket;
   const command = new CopyObjectCommand({
     Bucket: bucket,
-    CopySource: `${bucket}/${sourceKey}`,
+    CopySource: `${bucket}/${encodeS3KeyForCopySource(sourceKey)}`,
     Key: destKey,
   });
   await client.send(command);
@@ -344,6 +360,33 @@ export const getS3ObjectEtag = async (
       new HeadObjectCommand({ Bucket: bucket, Key: key }),
     );
     return response.ETag ?? null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Fetch the byte size of an S3 object via HeadObject, without downloading
+ * it. Used to enforce a size cap on a copy-only path (session file adopt)
+ * that never passes through the presigned-PUT upload flow, so the client's
+ * own size check never runs. Returns null if HeadObject fails (object
+ * missing or auth error) so the caller can treat "unknown" the same as
+ * "over the limit".
+ */
+export const getS3ObjectSize = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<number | null> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const bucket = config.fileUploads.s3Bucket;
+  try {
+    const response = await client.send(
+      new HeadObjectCommand({ Bucket: bucket, Key: key }),
+    );
+    return response.ContentLength ?? null;
   } catch {
     return null;
   }

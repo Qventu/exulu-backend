@@ -30,6 +30,7 @@ import {
   getS3ObjectContent,
   getS3ObjectBytes,
   getS3ObjectEtag,
+  getS3ObjectSize,
   getS3SignedUploadUrl,
   getPresignedUrl,
   type S3FileObject,
@@ -199,8 +200,11 @@ import {
   canManageShare,
   validateUpdateInput,
   planShareUpdate,
+  readAgentSlots,
   ownsObjectKey,
 } from "./shared-artifacts.ts";
+import { sanitizeFilename } from "./session-files.ts";
+import { planAdoptKeys, planAdoptSizeCheck, MAX_ADOPT_UPLOAD_BYTES } from "./session-file-adopt.ts";
 import { publicAgentView, evaluateGuestChatAccess } from "./public-agents.ts";
 import {
   extractClientIp,
@@ -4630,7 +4634,7 @@ export const createExpressRoutes = async (
   // ─── End Skills File Management ───────────────────────────────────────────────
 
   // ─── Session Files ────────────────────────────────────────────────────────────
-  // Five routes that power the session files side panel on the chat page.
+  // Six routes that power the session files side panel on the chat page.
   // All files live under <s3prefix>/user_<userId>/sessions/<sessionId>/, the
   // same prefix the agent's writeFile and bash artifact mirroring use. User-
   // uploaded files become visible to the agent next turn (cold-start restore
@@ -4719,22 +4723,6 @@ export const createExpressRoutes = async (
     const ownerId = authed.session.user ?? authed.user.id;
     return { ...authed, ownerId, ...buildSessionPrefixes(ownerId, sessionId) };
   };
-
-  /**
-   * Sanitize a user-supplied filename. Reject anything that escapes the
-   * intended directory; mostly defensive — Uppy normally posts to the
-   * presigned URL whose key we already control, so the filename arrives
-   * here only as a label.
-   */
-  function sanitizeFilename(name: string): string {
-    const trimmed = name.trim();
-    if (!trimmed) return "";
-    if (trimmed.includes("..")) return "";
-    if (trimmed.startsWith("/") || trimmed.startsWith("\\")) return "";
-    // Replace path separators in the basename — uploads are flat per session,
-    // no subdir creation through this route.
-    return trimmed.replace(/[\\/]/g, "_");
-  }
 
   /**
    * GET /sessions/:sessionId/files
@@ -5026,6 +5014,112 @@ export const createExpressRoutes = async (
     },
   );
 
+  /**
+   * POST /sessions/:sessionId/files/adopt
+   * Copies the caller's own already-uploaded objects into this session's
+   * file prefix. Feeds the artifact-panel attach flow: an artifact iframe
+   * uploads bytes with the user's own token (not the session's) and hands
+   * the chat panel the resulting S3 keys; this is how those bytes become a
+   * session file the agent's sandbox tools can see on later turns, the same
+   * way an Uppy upload would.
+   *
+   * `planAdoptKeys` is the actual security boundary (see that module) --
+   * this route trusts its verdict and nothing else. All-or-nothing: if it
+   * rejects any key for any reason (including an oversized batch or a
+   * filename collision within it), nothing is copied and the response is
+   * 403 with the `rejected` list for diagnostics. A partial copy would leave
+   * the user looking at a files panel missing a document they watched
+   * themselves attach, with nothing on screen to say why. `planAdoptSizeCheck`
+   * applies the identical all-or-nothing rule to the live size-check pass
+   * below, which `planAdoptKeys` can't do itself (it never touches S3).
+   *
+   * Body: { keys: string[] }
+   * Response: { adopted: Array<{ key: string; name: string }>; rejected: Array<{ key: string; reason: string }> }
+   */
+  app.post(
+    "/sessions/:sessionId/files/adopt",
+    async (req: Request, res: Response) => {
+      const sessionId = req.params.sessionId;
+      if (!sessionId) {
+        res.status(400).json({ detail: "Missing sessionId in path." });
+        return;
+      }
+      if (!config.fileUploads) {
+        res.status(500).json({ detail: "File uploads are not configured." });
+        return;
+      }
+
+      // A dropped or malformed body (not an array) is a caller bug, not "no
+      // keys" -- on this endpoint specifically, failures are security-
+      // relevant to diagnose, so it gets its own 400 rather than being
+      // indistinguishable from an empty adopt.
+      if (!Array.isArray(req.body?.keys)) {
+        res.status(400).json({ detail: "keys must be an array of strings." });
+        return;
+      }
+
+      const authed = await loadSessionFilesAuth(req, res, sessionId, "write");
+      if (!authed) return;
+
+      const bucket = config.fileUploads.s3Bucket;
+      const plan = planAdoptKeys(
+        req.body.keys,
+        authed.user,
+        config.fileUploads.s3prefix,
+        bucket,
+      );
+      if (plan.rejected.length > 0) {
+        res.status(403).json({ adopted: [], rejected: plan.rejected });
+        return;
+      }
+
+      const sizeChecks: Array<{ entry: (typeof plan.accepted)[number]; size: number | null }> = [];
+      for (const entry of plan.accepted) {
+        sizeChecks.push({ entry, size: await getS3ObjectSize(entry.source, config) });
+      }
+      const sizeDecision = planAdoptSizeCheck(sizeChecks, MAX_ADOPT_UPLOAD_BYTES);
+      if (!sizeDecision.proceed) {
+        res.status(403).json({ adopted: [], rejected: sizeDecision.rejected });
+        return;
+      }
+
+      const adopted: Array<{ key: string; name: string }> = [];
+      try {
+        for (const entry of plan.accepted) {
+          const destKey = `${authed.fullSessionPrefix}${entry.filename}`;
+          await copyS3Object(entry.source, destKey, config);
+          adopted.push({ key: destKey, name: entry.filename });
+        }
+      } catch (err: any) {
+        console.error("[SESSION-FILES] adopt copy failed", err);
+        res.status(500).json({ detail: "Failed to copy file into session." });
+        return;
+      }
+
+      // Same sync-to-sandbox work the upload route does, so the agent sees
+      // these files on its next turn without waiting for a cold-start
+      // restore. Sequential, not Promise.all: downloadKeyIntoSandbox reads
+      // each whole object into memory before writing it, and the batch is
+      // already capped but still large enough (MAX_ADOPT_KEYS files at
+      // MAX_ADOPT_UPLOAD_BYTES each) that running them concurrently would
+      // hold every buffer in memory at once. Best-effort either way.
+      for (const f of adopted) {
+        try {
+          await downloadKeyIntoSandbox({
+            sessionId,
+            userId: authed.ownerId,
+            fullS3Key: f.key,
+            config,
+          });
+        } catch (err) {
+          console.error("[SESSION-FILES] adopt sync-to-sandbox failed", err);
+        }
+      }
+
+      res.json({ adopted, rejected: [] });
+    },
+  );
+
   // ─── End Session Files ────────────────────────────────────────────────────────
 
   // ─── GDPR (DSGVO Art. 15 / Art. 17) ───────────────────────────────────────────
@@ -5311,6 +5405,9 @@ export const createExpressRoutes = async (
       content_type: row.content_type ?? null,
       s3key: row.s3key,
       created_by: row.created_by ?? null,
+      // Coerced, not `?? []`: see readAgentSlots on why a stored non-array is
+      // a real possibility and why a reader has to survive one.
+      agent_slots: readAgentSlots(row.agent_slots),
       rbac: {
         users: rbac.filter((r) => r.access_type === "User").map((r) => ({ id: r.user_id, rights: r.rights })),
         roles: rbac.filter((r) => r.access_type === "Role").map((r) => ({ id: r.role_id, rights: r.rights })),
@@ -5354,6 +5451,19 @@ export const createExpressRoutes = async (
     }
     const newHash = input.password ? await hashSharePassword(String(input.password)) : null;
     const patch = planShareUpdate(input, row, newHash, now);
+    // `agent_slots` is a `jsonb` column, and knex's `prepBindings` is the
+    // identity function for pg — so a raw JS array reaches node-postgres'
+    // `prepareValue`, which serialises it as a POSTGRES ARRAY LITERAL, not as
+    // JSON: `[{key,agentId}]` becomes `{"{\"key\":…}"}`, which is not valid
+    // JSON and so 500s the write, and `[]` becomes `{}`, which IS valid JSON
+    // but an object — silently corrupting the column for every reader (see
+    // readAgentSlots). Stringified here, at the db boundary, exactly as every
+    // other json-array write on this file does (image_keys, revised_prompts,
+    // tags, history) and as the generic mutation layer does for json-typed
+    // fields (graphql/mutations/index.ts). Deliberately NOT inside
+    // planShareUpdate: that stays a pure domain-patch builder, with no
+    // knowledge of how a column is encoded.
+    if (patch.agent_slots !== undefined) patch.agent_slots = JSON.stringify(patch.agent_slots);
     if (typeof patch.name === "string" && patch.name !== row.name) {
       const taken = await getSharedArtifactByName(db, patch.name);
       if (taken) {
@@ -5378,7 +5488,64 @@ export const createExpressRoutes = async (
       auth_mode: updated.auth_mode,
       expires_at: updated.expires_at ?? null,
       rights_mode: updated.rights_mode ?? null,
+      agent_slots: readAgentSlots(updated.agent_slots),
     });
+  });
+
+  // The agent bindings for an artifact's panel, for a *viewer* rather than
+  // the creator (contrast GET /settings above, which is canManageShare-only).
+  // A public/password share 404s here — the same shape as a missing row —
+  // so this endpoint never reveals whether the panel capability exists for
+  // a share that cannot carry it; `GET /meta` is unauthenticated, so putting
+  // slots there would publish agent ids to anyone with the share name.
+  //
+  // Authenticates before the row lookup, so an unauthenticated caller gets
+  // 401 regardless of whether the name exists or what mode it is in.
+  //
+  // The 404-missing / 410-expired / mode-or-access-check ordering below
+  // mirrors /meta and /content (and /access in viewer-identity-routes.ts):
+  // expiry is checked immediately after existence and before anything
+  // mode-specific, so an expired share 410s here exactly as it does on
+  // every other read path for this resource — a viewer normally finds that
+  // out from /meta first, which is exactly why this route must not be the
+  // one place that forgets.
+  //
+  // Runs the same regular-mode RBAC check as GET /content and
+  // /shared-artifacts/:name/access above (viewer-identity-routes.ts): this
+  // duplicates that block deliberately, for the same reason those two do —
+  // if this changes, check the other two as well.
+  app.get("/shared-artifacts/:name/panel", async (req: Request, res: Response) => {
+    const { db } = await postgresClient();
+    const auth = await requestValidators.authenticate(req);
+    if (!auth.user?.id) {
+      res.status(401).json({ detail: "Authentication required." });
+      return;
+    }
+    const row = await getSharedArtifactByName(db, req.params.name ?? "");
+    if (!row) {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    if (isExpired(row.expires_at, new Date())) {
+      res.status(410).json({ detail: "This link has expired." });
+      return;
+    }
+    if (row.auth_mode !== "regular") {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    const rbac = await RBACResolver(
+      db,
+      "shared_artifact",
+      row.id,
+      row.rights_mode || "private",
+    );
+    const ok = await checkRecordAccess({ ...row, RBAC: rbac }, "read", auth.user);
+    if (!ok) {
+      res.status(403).json({ detail: "You don't have access to this artifact." });
+      return;
+    }
+    res.json({ agent_slots: readAgentSlots(row.agent_slots) });
   });
 
   // Create a share link. Authed as the real user; RBAC scoping for regular mode.

@@ -985,6 +985,21 @@ const sharedArtifactsSchema: ExuluTableDefinition = {
     { name: "password_hash", type: "text", required: false, hidden: true }, // bcrypt; password mode only
     { name: "expires_at", type: "date", required: false }, // null = no expiry
     { name: "content_type", type: "text", required: false },
+    // Admin/creator-assigned agent bindings for the artifact's panel (spec
+    // 2026-11-04-artifact-agent-panel). Nullable json; read back as
+    // AgentSlot[] (see shared-artifacts.ts), empty array when null.
+    // Deliberately not cleared when the row leaves "regular" auth mode —
+    // see planShareUpdate's docblock.
+    //
+    // hidden: true for the same reason password_hash two lines up is: the
+    // generic GraphQL shared_artifacts query is read-open to every
+    // authenticated user (apiWrites: "super_admin" only locks the generic
+    // mutations), and a public/password share's rights_mode is forced to
+    // the "public" sentinel, so without this flag agent_slots would leak
+    // through that query for exactly the shares /panel's 404-masking exists
+    // to protect. /settings and /panel are unaffected: both read row.agent_slots
+    // straight off the knex row, not through the generated GraphQL field.
+    { name: "agent_slots", type: "json", hidden: true },
     // `grant_viewer_identity`, `identity_granted_by` and `identity_granted_at`
     // were here. The viewer-identity capability is no longer a per-row grant:
     // `auth_mode: "regular"` carries it, because such an artifact only renders
