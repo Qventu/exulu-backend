@@ -64,8 +64,23 @@ jest.mock("@SRC/exulu/statistics", () => ({ updateStatistic: jest.fn() }));
 jest.mock("@SRC/graphql/utilities/access-control", () => ({
   applyAccessControl: jest.fn((_t: any, q: any) => q),
 }));
-jest.mock("@SRC/graphql/resolvers/apply-filters.ts", () => ({ applyFilters: jest.fn() }));
-jest.mock("@SRC/graphql/resolvers/apply-filters", () => ({ applyFilters: jest.fn() }));
+// UpdateOne (unlike UpdateOneById) resolves its target row through `where`,
+// GraphQL's [FilterX] shape -- a minimal real translator for the one shape
+// this file's UpdateOne tests send (`[{ id: { eq: "..." } }]`), not a
+// no-op: a no-op would make `itemQuery.first()` return the WRONG row (or
+// none), which is exactly the kind of mock that would make a parity test
+// pass for the wrong reason.
+const applyIdFilter = (query: any, where: any) => {
+  const idFilter = Array.isArray(where) ? where.find((w: any) => w && w.id) : undefined;
+  const idValue = idFilter?.id?.eq;
+  return idValue !== undefined ? query.where({ id: idValue }) : query;
+};
+jest.mock("@SRC/graphql/resolvers/apply-filters.ts", () => ({
+  applyFilters: (query: any, where: any) => applyIdFilter(query, where),
+}));
+jest.mock("@SRC/graphql/resolvers/apply-filters", () => ({
+  applyFilters: (query: any, where: any) => applyIdFilter(query, where),
+}));
 
 // postgresClient is shared: both the tool path (context.ts's updateItem)
 // and the in-test db construction below resolve to the SAME underlying
@@ -79,7 +94,11 @@ jest.mock("@SRC/postgres/client", () => ({
 // --- mutations/index.ts's own remaining heavy/irrelevant deps -------------
 jest.mock("@SRC/graphql/resolvers/utils", () => ({
   contextItemsProcessorHandler: jest.fn(),
-  getRequestedFields: jest.fn(() => []),
+  // Real sanitizeRequestedFields always keeps "id" in the select list
+  // (downstream code depends on it); this mock does the same rather than
+  // the bare `[]` an identity mock would produce, which would make
+  // UpdateOne's own existence-check row come back as `{}`.
+  getRequestedFields: jest.fn(() => ["id"]),
 }));
 jest.mock("@SRC/auth/generate-key.ts", () => ({ SALT_ROUNDS: 10 }));
 jest.mock("@SRC/graphql/utilities/validate-super-admin-update.ts", () => ({
@@ -193,7 +212,7 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>>) {
   return { db, row: (name: string, id: string) => tableFor(name).get(id) };
 }
 
-function makeContext() {
+function makeContext(overrides: Record<string, unknown> = {}) {
   return new ExuluContext({
     id: CONTEXT_ID,
     name: "Docs",
@@ -202,6 +221,7 @@ function makeContext() {
     active: true,
     sources: [],
     configuration: { calculateVectors: "manual" },
+    ...overrides,
   } as any);
 }
 
@@ -416,6 +436,82 @@ describe("item-write parity: the tool path and the GraphQL path agree", () => {
     });
   });
 
+  // --- Concern 2 (coordinator ruling, fix round 1): the processor sees the
+  // --- MERGED result, not the raw patch ------------------------------------
+  //
+  // Before merge existed, the incoming patch WAS the full value being
+  // written, so "what the processor receives" and "what gets stored" were
+  // the same object by construction. With merge they diverge, and
+  // `mv_pitches` (trigger: "always") is named as the first real consumer of
+  // a merge-listed json field -- so a processor seeing only the fragment
+  // someone just changed, rather than the item that will actually exist, is
+  // live, not latent.
+  describe("the tool path's processor receives the full merged object, not the incoming patch", () => {
+    it("a merge-listed field's processor payload carries every stored key, not just the ones in this call's patch", async () => {
+      const { db } = makeFakeDb({
+        [TABLE_NAME]: {
+          r1: {
+            name: "A",
+            felder: {
+              budget_gesamt: { wert: "OLD", konfidenz: "low" },
+              zielgruppe: { wert: "UNTOUCHED", konfidenz: "medium" },
+            },
+          },
+        },
+      });
+      sharedDb = db;
+
+      const ctx = makeContext({ processor: { config: { trigger: "always" } } });
+      const processFieldSpy = jest
+        .spyOn(ctx, "processField")
+        .mockResolvedValue({ result: undefined, job: undefined });
+
+      await ctx.updateItem(
+        { id: "r1", felder: { budget_gesamt: { wert: "NEW", konfidenz: "high" } } } as any,
+        {} as any,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        ["felder"],
+      );
+
+      expect(processFieldSpy).toHaveBeenCalledTimes(1);
+      const payload = processFieldSpy.mock.calls[0]![1] as Record<string, unknown>;
+      // Reverting Task 4's "pass `values`, not `item`" fix would make this
+      // see ONLY `{ budget_gesamt: {...} }` -- the bare patch -- dropping
+      // `zielgruppe`, which is still stored but was never part of this call.
+      // The chokepoint's own json-stringify step (both write paths run it
+      // before a jsonb column write) already ran on `values` by this point,
+      // so the processor payload carries the STRINGIFIED value, same as the
+      // row written to the db -- parse it back to compare as data.
+      expect(JSON.parse(payload.felder as string)).toEqual({
+        budget_gesamt: { wert: "NEW", konfidenz: "high" },
+        zielgruppe: { wert: "UNTOUCHED", konfidenz: "medium" },
+      });
+    });
+
+    it("a plain replace (no merge) is unaffected -- patch and result are already the same object there", async () => {
+      const { db } = makeFakeDb({
+        [TABLE_NAME]: { r1: { name: "A", felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } } },
+      });
+      sharedDb = db;
+
+      const ctx = makeContext({ processor: { config: { trigger: "always" } } });
+      const processFieldSpy = jest
+        .spyOn(ctx, "processField")
+        .mockResolvedValue({ result: undefined, job: undefined });
+
+      await ctx.updateItem(
+        { id: "r1", felder: { zielgruppe: { wert: "NEW", konfidenz: "high" } } } as any,
+        {} as any,
+      );
+
+      const payload = processFieldSpy.mock.calls[0]![1] as Record<string, unknown>;
+      expect(JSON.parse(payload.felder as string)).toEqual({ zielgruppe: { wert: "NEW", konfidenz: "high" } });
+    });
+  });
+
   // --- Decision 1: the route to clearing a field is a replace -------------
   describe("clearing a schema-carrying field: null is refused, {} via replace works", () => {
     it("through the GraphQL path (what artifacts use): a top-level null under merge is refused, not a silent clear", async () => {
@@ -556,5 +652,96 @@ describe("item-write parity: the tool path and the GraphQL path agree", () => {
       input DocInput { id: ID }
     `;
     expect(() => parse(sdl)).not.toThrow();
+  });
+
+  it("the SDL source ALSO declares merge: [String] on UpdateOne (not just its ById sibling)", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const source = fs.readFileSync(path.join(__dirname, "../graphql/schemas/index.ts"), "utf8");
+    // `UpdateOne\(` (immediately followed by the arg list's open paren)
+    // cannot match inside "UpdateOneById(" -- "ById" sits between the two
+    // in that line -- so this is unambiguous, not a prefix-collision risk.
+    const match = source.match(/\$\{tableNamePlural\}UpdateOne\([^)]*\)/);
+    expect(match).not.toBeNull();
+    expect(match![0]).toContain("merge: [String]");
+  });
+
+  // --- Concern 1 (coordinator ruling): UpdateOne is a third live door ------
+  //
+  // usersUpdateOne writes json fields in production today (the favourites
+  // list, per the coordinator's own grep of the frontend), with no schema
+  // declared on any of them yet -- harmless now, reachable the moment one
+  // is. A chokepoint with an unwired third door isn't a chokepoint, so this
+  // routes it through the exact same prepareItemWrite call as UpdateOneById.
+  describe("UpdateOne (the where-based sibling of UpdateOneById) also routes through the chokepoint", () => {
+    it("a MERGE via UpdateOne keeps the keys the patch omits -- same chokepoint, same result as UpdateOneById", async () => {
+      const existingFelder = {
+        budget_gesamt: { wert: "OLD", konfidenz: "low" },
+        zielgruppe: { wert: "UNTOUCHED", konfidenz: "medium" },
+      };
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { r1: { name: "A", felder: existingFelder } } });
+      sharedDb = db;
+
+      const updateOne = makeGraphqlMutations()[`${TABLE_NAME}UpdateOne`];
+      await updateOne(
+        null,
+        {
+          where: [{ id: { eq: "r1" } }],
+          input: { felder: { budget_gesamt: { wert: "NEW", konfidenz: "high" } } },
+          merge: ["felder"],
+        },
+        graphqlContext(),
+        {},
+      );
+
+      expect(row(TABLE_NAME, "r1")!.felder).toEqual({
+        budget_gesamt: { wert: "NEW", konfidenz: "high" },
+        zielgruppe: { wert: "UNTOUCHED", konfidenz: "medium" },
+      });
+    });
+
+    it("a REFUSED write via UpdateOne actually refuses -- the write never happens, not just 'the merge also works'", async () => {
+      // The half that silently does nothing if the wiring is wrong: a
+      // happy-path merge test alone wouldn't catch "UpdateOne still spreads
+      // input straight into .update() AND happens to merge correctly by
+      // coincidence" -- only a refusal proves prepareItemWrite's verdict is
+      // actually consulted, not bypassed.
+      const existingFelder = { budget_gesamt: { wert: "OLD", konfidenz: "low" } };
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { r1: { name: "A", felder: existingFelder } } });
+      sharedDb = db;
+
+      const updateOne = makeGraphqlMutations()[`${TABLE_NAME}UpdateOne`];
+      await expect(
+        updateOne(
+          null,
+          {
+            where: [{ id: { eq: "r1" } }],
+            input: { felder: { budget_gesamt: { wert: "1000", konfidenz: "sehr hoch" } } },
+          },
+          graphqlContext(),
+          {},
+        ),
+      ).rejects.toThrow(/budget_gesamt\.konfidenz/);
+
+      expect(row(TABLE_NAME, "r1")!.felder).toEqual(existingFelder);
+    });
+
+    it("a top-level null under merge is refused via UpdateOne too (Decision 1, third door)", async () => {
+      const existingFelder = { budget_gesamt: { wert: "OLD", konfidenz: "low" } };
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { r1: { name: "A", felder: existingFelder } } });
+      sharedDb = db;
+
+      const updateOne = makeGraphqlMutations()[`${TABLE_NAME}UpdateOne`];
+      await expect(
+        updateOne(
+          null,
+          { where: [{ id: { eq: "r1" } }], input: { felder: null }, merge: ["felder"] },
+          graphqlContext(),
+          {},
+        ),
+      ).rejects.toThrow(/merge/i);
+
+      expect(row(TABLE_NAME, "r1")!.felder).toEqual(existingFelder);
+    });
   });
 });

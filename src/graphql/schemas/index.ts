@@ -773,7 +773,13 @@ export function createSDL(
       ${tableNamePlural}CreateOne(input: ${tableNameSingular}Input!, upsert: Boolean, generateEmbeddings: Boolean): ${tableNameSingular}MutationPayload
       ${tableNamePlural}CopyOneById(id: ID!): ${tableNameSingular}MutationPayload
 
-      ${tableNamePlural}UpdateOne(where: [Filter${tableNameSingularUpperCaseFirst}], input: ${tableNameSingular}Input!, generateEmbeddings: Boolean): ${tableNameSingular}MutationPayload
+      """
+      merge: names of json fields in \`input\` whose value is a merge patch
+      (only the keys given are changed, other stored keys are kept, and an
+      explicit null deletes a key) rather than a full replacement. Omit to
+      replace the whole field, as normal (spec 2026-11-09-typed-json-fields).
+      """
+      ${tableNamePlural}UpdateOne(where: [Filter${tableNameSingularUpperCaseFirst}], input: ${tableNameSingular}Input!, generateEmbeddings: Boolean, merge: [String]): ${tableNameSingular}MutationPayload
       """
       merge: names of json fields in \`input\` whose value is a merge patch
       (only the keys given are changed, other stored keys are kept, and an

@@ -902,16 +902,17 @@ export class ExuluContext {
         const { job: processorJob, result: processorResult } = await this.processField(
           "api",
           {
-            // Deliberately still `item` (the caller's raw payload), not
-            // `values` (the merged/validated result) -- the brief fences
-            // processor/embedding behaviour off as out of scope for this
-            // task. Net effect: for a merge-listed field, the processor
-            // sees the incoming PATCH, not the full merged object that
-            // actually gets stored. No context combines a processor with a
-            // merge-listed field today, so this is latent, not reachable --
-            // flagged in the task report for a deliberate call rather than
-            // changed here.
-            ...item,
+            // `values`, not `item` (coordinator ruling, Task 4 fix round 1):
+            // the fence on "don't change processor behaviour" is about WHEN
+            // a processor fires, not WHAT it sees once it does. Before
+            // merge existed, the patch WAS the result, so this was never a
+            // live distinction; `mv_pitches`'s processor (trigger: "always")
+            // is the first real consumer of a merge-listed json field, so a
+            // processor seeing a bare patch instead of the full merged
+            // object is live, not latent. `values` carries the SAME keys
+            // `item` did -- unchanged values pass through by reference --
+            // so this is a no-op for every call that doesn't use `merge`.
+            ...values,
             id: record.id,
           },
           config,

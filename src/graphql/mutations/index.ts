@@ -702,17 +702,6 @@ export function createMutations(
         input = await applyAgentGuestFieldTransforms(input);
       }
 
-      // Check for each field if it is a json field, and if
-      // so, check if it is an object or array and convert
-      // it to a string.
-      Object.keys(input).forEach((key) => {
-        if (table.fields.find((field) => field.name === key)?.type === "json") {
-          if (typeof input[key] === "object" || Array.isArray(input[key])) {
-            input[key] = JSON.stringify(input[key]);
-          }
-        }
-      });
-
       const requestedFields = getRequestedFields(info);
       const sanitizedFields = sanitizeRequestedFields(table, requestedFields);
 
@@ -730,6 +719,38 @@ export function createMutations(
       }
       await validateWriteAccess(item.id, context);
 
+      // The same chokepoint UpdateOneById routes through
+      // (src/exulu/item-write.ts) -- a third write path with its own rules
+      // is not a chokepoint. `item` above is deliberately NOT reused as
+      // `existing` here: it was fetched with `sanitizedFields` (only the
+      // columns the caller's response selection asked for), which may well
+      // omit the very json field being merged -- feeding that in would make
+      // mergeJson treat an unrequested field as empty and silently drop
+      // every stored key the patch didn't just mention. A full-row fetch,
+      // same as UpdateOneById's, avoids that.
+      const existingRow = await db.from(tableNamePlural).where({ id: item.id }).first();
+      const prepared = prepareItemWrite({
+        fields: table.fields,
+        existing: existingRow ?? null,
+        input,
+        merge: args.merge,
+      });
+      if (!prepared.ok) {
+        throw new Error(prepared.message);
+      }
+      input = prepared.values;
+
+      // Check for each field if it is a json field, and if
+      // so, check if it is an object or array and convert
+      // it to a string.
+      Object.keys(input).forEach((key) => {
+        if (table.fields.find((field) => field.name === key)?.type === "json") {
+          if (typeof input[key] === "object" || Array.isArray(input[key])) {
+            input[key] = JSON.stringify(input[key]);
+          }
+        }
+      });
+
       // We need to retrieve all the columns for potential post processing
       // operations that might need to be performed on the fields.
       const columns = await db(tableNamePlural).columnInfo();
@@ -739,6 +760,9 @@ export function createMutations(
       // matches at most one, so destructure the first element — downstream
       // code (`result.id`, RBAC lookups, postprocessUpdate, finalizeRequestedFields)
       // expects a single object, not an array.
+      // A key `prepareItemWrite` wrote with value `undefined` compiles to
+      // the identical SQL as omitting it (checked against the installed
+      // knex in item-write-parity.test.ts) -- already a safe no-op here.
       const [result] = await db(tableNamePlural)
         .where({ id: item.id })
         .update({
