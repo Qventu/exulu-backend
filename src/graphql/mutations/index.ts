@@ -1,6 +1,7 @@
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { getChunksTableName, getTableName } from "@SRC/exulu/context";
+import { prepareItemWrite } from "@SRC/exulu/item-write";
 import { resolveEntityModel, setEntityModelSetting } from "@SRC/exulu/entities";
 import { updateStatistic } from "@SRC/exulu/statistics";
 import type { ExuluTool } from "@SRC/exulu/tool";
@@ -820,6 +821,26 @@ export function createMutations(
         input = await applyAgentGuestFieldTransforms(input);
       }
 
+      // The same chokepoint the tool path routes through (context.ts's
+      // updateItem, src/exulu/item-write.ts): validates a declared json
+      // schema against the incoming value and, for a field named in
+      // `merge`, combines it with the stored value instead of replacing it.
+      // This mutation never reads the row before writing it otherwise, so
+      // fetch it fresh here purely to have an "existing" value for
+      // mergeJson -- validation itself only ever looks at the INCOMING
+      // value (see prepareItemWrite's own doc comment), never at this row.
+      const existingRow = await db.from(tableNamePlural).where({ id }).first();
+      const prepared = prepareItemWrite({
+        fields: table.fields,
+        existing: existingRow ?? null,
+        input,
+        merge: args.merge,
+      });
+      if (!prepared.ok) {
+        throw new Error(prepared.message);
+      }
+      input = prepared.values;
+
       // Check for each field if it is a json field, and if
       // so, check if it is an object or array and convert
       // it to a string.
@@ -831,6 +852,14 @@ export function createMutations(
         }
       });
 
+      // A key `prepareItemWrite` wrote with value `undefined` (an
+      // `.optional()`/`.default()` json schema legitimately allows this,
+      // though neither GraphQL's JSON scalar nor the AI SDK's own
+      // `params[key] !== undefined` guard can actually produce one in
+      // practice today) is not a column to null out -- confirmed against
+      // the installed knex: `.update({ x: undefined })` compiles to the
+      // IDENTICAL SQL as omitting `x` entirely, so it is already a safe
+      // no-op on that column with no change needed here.
       await db(tableNamePlural)
         .where({ id })
         .update({

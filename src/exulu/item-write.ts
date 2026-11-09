@@ -114,6 +114,47 @@ import {
  * declared-nullable schema — that check doesn't close. A caller who means
  * to clear a field says so with a plain REPLACE (no `merge`), which is
  * untouched by this rule and behaves exactly as before.
+ *
+ * Task 4 (both production write paths went live) owned four more decisions
+ * about the wire, not the chokepoint itself:
+ *
+ * 1. Confirmed through the GraphQL `UpdateOneById` path (what artifacts use,
+ *    `src/graphql/mutations/index.ts`): a bare REPLACE with `{}` clears every
+ *    stored key of an object/record-shaped field without tripping any check
+ *    here (an empty object has no present keys for `unknownPaths`/
+ *    `leafViolations` to visit) — that is the route to clearing a schema-
+ *    carrying field now that the rule above refuses `null` under `merge`.
+ * 2. A `.default()`/`.optional()`-wrapped schema can make this function write
+ *    an own key whose VALUE is `undefined` (see the "New 2" tests). Checked
+ *    against the installed knex rather than assumed: `.update({ x: undefined
+ *    })` compiles to the IDENTICAL SQL as omitting `x` — already a safe
+ *    no-op on that column, not a null-out. Neither wire caller can actually
+ *    produce this in practice today (GraphQL's JSON has no `undefined`;
+ *    `pickContent`'s own `params[key] !== undefined` guard filters it on the
+ *    tool path), so this is a documented safety net, not a live path.
+ * 3. zod's `.passthrough()` (`loosenForTransport`, the AI SDK's own parse of
+ *    a tool call) can hand back a nested value whose `[[Prototype]]` was
+ *    swapped to a model-controlled object — confirmed empirically — rather
+ *    than keeping an own `"__proto__"` key. Harmless here specifically
+ *    because every read in this module and `json-field-schema.ts` goes
+ *    through `Object.entries`/`Object.keys`/`hasOwn`, which only ever see
+ *    OWN properties; the swapped prototype is invisible to validation and
+ *    to `JSON.stringify` alike, as if the key had simply been dropped
+ *    upstream. A future change that reads a value's property via plain dot/
+ *    bracket access instead would reopen this.
+ * 4. A literal `"__proto__"` key is NOT refused as data (unchanged from Task
+ *    3): it is legal under a record-shaped schema and under any schema-less
+ *    field, same as any other key, and is stored/merged/deleted safely by
+ *    this module's own `Object.defineProperty`/`Object.create(null)`
+ *    machinery. The risk named for this decision — a downstream `Object.
+ *    assign({}, rowReadBackFromJsonb)` would set the COPY's prototype,
+ *    confirmed empirically — is a consumer-side hazard (object SPREAD is
+ *    immune; `Object.assign` is not), not a producer-side one; there is no
+ *    such `Object.assign` call on an item/row anywhere in this codebase
+ *    today (checked). Refusing the key here would be the write path
+ *    choosing to strip legitimate data for a risk that lives in how a
+ *    future reader might copy the result, which is exactly backwards for a
+ *    module whose central rule is "never strip".
  */
 
 export type PrepareItemWriteArgs = {

@@ -271,7 +271,15 @@ describe("createContextWriteTools", () => {
       const { result } = await run({ external_id: "ext-1", price: 25 }, context);
       expect(context.getItem).toHaveBeenNthCalledWith(1, { item: { id: undefined, external_id: "ext-1" } });
       // external_id is lookup-only: the patch must not write it back.
-      expect(context.updateItem).toHaveBeenCalledWith({ id: "item-1", price: 25 }, exuluConfig, 7, "role-1");
+      expect(context.updateItem).toHaveBeenCalledWith(
+        { id: "item-1", price: 25 },
+        exuluConfig,
+        7,
+        "role-1",
+        undefined,
+        undefined,
+        undefined,
+      );
       expect(result.result).toContain('"price":25');
     });
 
@@ -281,6 +289,67 @@ describe("createContextWriteTools", () => {
       const { result } = await run({ id: "item-1" }, context);
       expect(context.updateItem).not.toHaveBeenCalled();
       expect(result.result).toContain("No fields");
+    });
+
+    it("forwards a merge list to context.updateItem as the merge argument, not as part of the patch", async () => {
+      writeGate.mockResolvedValue(true);
+      const context = makeContext({
+        getItem: jest.fn(async () => ({ id: "item-1", rights_mode: "public", specs: { a: 1 } })),
+      });
+      await run({ id: "item-1", specs: { b: 2 }, merge: ["specs"] }, context);
+      expect(context.updateItem).toHaveBeenCalledWith(
+        { id: "item-1", specs: { b: 2 } },
+        exuluConfig,
+        7,
+        "role-1",
+        undefined,
+        undefined,
+        ["specs"],
+      );
+    });
+
+    it("omitting merge entirely still calls updateItem with undefined (today's replace behaviour)", async () => {
+      writeGate.mockResolvedValue(true);
+      const context = makeContext({
+        getItem: jest.fn(async () => ({ id: "item-1", rights_mode: "public", specs: { a: 1 } })),
+      });
+      await run({ id: "item-1", specs: { b: 2 } }, context);
+      expect(context.updateItem).toHaveBeenCalledWith(
+        { id: "item-1", specs: { b: 2 } },
+        exuluConfig,
+        7,
+        "role-1",
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+  });
+
+  describe("the merge wire parameter", () => {
+    it("the update tool offers a merge list naming the json fields when the context has one", () => {
+      const [, updateTool] = createContextWriteTools(makeContext(), { create: true, update: true }, false);
+      const shape = (updateTool.inputSchema as z.ZodObject<any>).shape;
+      expect(shape.merge).toBeDefined();
+      expect(shape.merge.isOptional()).toBe(true);
+      expect(shape.merge.description).toContain("specs");
+    });
+
+    it("the create tool never offers merge — there is nothing stored yet to merge into", () => {
+      const [createTool] = createContextWriteTools(makeContext(), { create: true, update: false }, false);
+      const shape = (createTool.inputSchema as z.ZodObject<any>).shape;
+      expect(shape.merge).toBeUndefined();
+    });
+
+    it("a context with no json field never offers merge on update either", () => {
+      const noJsonFields = BASE_FIELDS.filter((f) => f.type !== "json");
+      const [updateTool] = createContextWriteTools(
+        makeContext({ fields: noJsonFields }),
+        { create: false, update: true },
+        false,
+      );
+      const shape = (updateTool.inputSchema as z.ZodObject<any>).shape;
+      expect(shape.merge).toBeUndefined();
     });
   });
 });
