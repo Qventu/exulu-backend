@@ -42,20 +42,36 @@ import {
  *    unwritable, which is worse than not validating at all.
  *
  * Three checks run against the incoming value, in order:
- * - **Shape** (`requiresPlainObject`) — does this schema even commit to an
- *   object/record shape, and if so, is the incoming value a plain object at
- *   all? `unknownPaths`/`leafViolations` both correctly return "nothing
- *   wrong" for a non-plain-object value against ANY schema (there is
- *   nothing to check paths or leaves against) — but for a schema that DOES
- *   declare an object/record shape, "nothing to check" is not the same as
- *   "nothing is wrong": a bare string/array/number/`null` sent for a field
- *   declared as a keyed structure violates that declared shape, and for a
- *   merge-listed field it would otherwise fall through to a silent REPLACE
- *   that deletes the entire stored object (Task 3 review, Critical — this
- *   check exists specifically so that fallthrough never happens). A schema
- *   that does NOT require a plain object (array- or union-rooted — this
- *   module validates neither at all today, see `requiresPlainObject`'s own
- *   doc comment) skips straight to the next check, same as before.
+ * - **Shape** (`requiresPlainObject` + a `schema.safeParse` confirmation) —
+ *   does this schema even commit to an object/record shape, and if so, is
+ *   the incoming value a plain object at all? `unknownPaths`/`leafViolations`
+ *   both correctly return "nothing wrong" for a non-plain-object value
+ *   against ANY schema (there is nothing to check paths or leaves against)
+ *   — but for a schema that DOES declare an object/record shape, "nothing
+ *   to check" is not the same as "nothing is wrong": a bare
+ *   string/array/number/`null` sent for a field declared as a keyed
+ *   structure violates that declared shape, and for a merge-listed field it
+ *   would otherwise fall through to a silent REPLACE that deletes the
+ *   entire stored object (Task 3 review, Critical — this check exists
+ *   specifically so that fallthrough never happens).
+ *
+ *   `requiresPlainObject` alone is not sufficient to decide "violates",
+ *   though — it only reports the UNWRAPPED shape, and unwrapping is exactly
+ *   wrong for deciding which VALUES a schema accepts: `z.record(...)
+ *   .nullable()` unwraps to "record", but the schema as actually WRITTEN
+ *   explicitly allows `null` (Task 3 re-review, New 2 — my own original
+ *   ruling said "unwrapped top level" and that wording was the bug; a
+ *   nullable/optional wrapper is precisely a declared exception to the
+ *   shape it wraps). So a non-plain-object value only refuses the write
+ *   when BOTH `requiresPlainObject(schema)` is true AND `schema` — as
+ *   written, wrapper included — genuinely rejects the value
+ *   (`schema.safeParse(value).success === false`). Only `.success` is ever
+ *   read from that call, never `.data` — this is a check, same as
+ *   `unknownPaths`/`leafViolations`, not a second parse whose result could
+ *   get written. A schema that does NOT require a plain object at all
+ *   (array- or union-rooted — this module validates neither at all today,
+ *   see `requiresPlainObject`'s own doc comment) skips this whole check,
+ *   same as before.
  * - `unknownPaths` — is this path even one the schema recognises (an
  *   unnamed key, or an object/record declared where a scalar was supplied)?
  * - `leafViolations` — for a path the schema DOES recognise, does the leaf
@@ -126,9 +142,25 @@ function safeStringify(value: unknown): string {
  * `null` is not lost — it still deletes the key there, exactly as the spec
  * requires. This function only ever feeds a validation call; its output is
  * never written anywhere.
+ *
+ * Built on `Object.create(null)`, not `{}` (Task 3 re-review, New 1): a
+ * plain `{}` has `Object.prototype` in its chain, so `filtered[key] =
+ * inner` for `key === "__proto__"` runs through the inherited `__proto__`
+ * *setter* — the exact footgun `mergeJson` was just fixed for — except here
+ * it would reopen it as a VALIDATION BYPASS, not a write: the key vanishes
+ * from `filtered` before either check ever sees it (confirmed empirically:
+ * `Object.keys(filtered)` no longer contains `"__proto__"` once the setter
+ * fires), so a payload like `{ felder: { "__proto__": { "NOT_A_FELD": true
+ * } } }` sailed through `unknownPaths`/`leafViolations` as `ok: true` and
+ * was then written verbatim by `mergeJson` (which, unlike this function, was
+ * already fixed to use `Object.defineProperty`) — persisting an unvalidated
+ * payload under a merge-listed field, where the identical input as a plain
+ * REPLACE was correctly refused. An object with a `null` prototype has no
+ * inherited `__proto__` accessor at all, so bracket assignment on it is
+ * always a plain own-property write, for every key, with no special-casing.
  */
 function omitNullEntries(value: Record<string, unknown>): Record<string, unknown> {
-  const filtered: Record<string, unknown> = {};
+  const filtered: Record<string, unknown> = Object.create(null);
   for (const [key, inner] of Object.entries(value)) {
     if (inner !== null) filtered[key] = inner;
   }
@@ -250,7 +282,7 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
     const isMergeField = field?.type === "json" && (merge?.includes(key) ?? false);
 
     if (schema) {
-      if (requiresPlainObject(schema) && !isPlainObject(value)) {
+      if (requiresPlainObject(schema) && !isPlainObject(value) && !schema.safeParse(value).success) {
         return { ok: false, message: shapeRefusalMessage(key, value, schema) };
       }
 

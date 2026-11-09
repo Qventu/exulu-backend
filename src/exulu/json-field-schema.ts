@@ -48,6 +48,27 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * `Object.prototype.hasOwnProperty.call`, never `shape[key]` or `key in
+ * shape` directly, whenever `key` comes from untrusted input (a model's
+ * tool-call JSON) and `shape` is the schema's declared keys. Both of the
+ * direct forms walk the PROTOTYPE chain, so a key like `"toString"` or
+ * `"constructor"` resolves to an inherited `Object.prototype` member
+ * instead of `undefined`/`false` (Task 3 re-review, New 3) — which crashed
+ * this module outright (`shape[key]` returned a plain function; the next
+ * line called `.def` on it, `TypeError: Cannot read properties of
+ * undefined`) and, separately, made a nested prototype-named key invisible
+ * to the unknown-key check (`"toString" in childShape` is `true` even
+ * though `childShape` never declared any such key — so `{ a: 1, toString:
+ * 1 }` would be accepted where `{ a: 1, typo: 1 }` is correctly refused).
+ * Record-rooted schemas (the M&V shape) never hit this — a record has no
+ * fixed `shape` to look a key up against, every key goes straight to its
+ * value type — which is why it took a direct object-schema repro to surface.
+ */
+function hasOwn(target: object, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(target, key);
+}
+
+/**
  * Dotted paths a schema defines, one level into each top-level key. A key
  * whose value is itself an object contributes its sub-keys (`"a.b"`); any
  * other key — string, enum, array, a nested record, anything this module
@@ -141,7 +162,7 @@ function unknownChildPaths(child: z.ZodTypeAny, value: unknown, key: string): st
     const childShape = childDef.shape as Record<string, z.ZodTypeAny>;
     const unknown: string[] = [];
     for (const subKey of Object.keys(value)) {
-      if (!(subKey in childShape)) unknown.push(`${key}.${subKey}`);
+      if (!hasOwn(childShape, subKey)) unknown.push(`${key}.${subKey}`);
     }
     return unknown;
   }
@@ -200,7 +221,7 @@ export function unknownPaths(schema: z.ZodTypeAny, value: unknown): string[] {
   const shape = def.shape as Record<string, z.ZodTypeAny>;
   const unknown: string[] = [];
   for (const [key, inner] of Object.entries(value)) {
-    const child = shape[key];
+    const child = hasOwn(shape, key) ? shape[key] : undefined;
     if (!child) {
       unknown.push(key);
       continue;
@@ -290,7 +311,11 @@ export function leafViolations(schema: z.ZodTypeAny, value: unknown): LeafViolat
     subSchemaFor = () => valueType;
   } else if (def.type === "object") {
     const shape = def.shape as Record<string, z.ZodTypeAny>;
-    subSchemaFor = (key) => shape[key];
+    // Not this round's two named repros, but the identical pattern, in code
+    // this task added — fixed alongside them rather than left as a matching
+    // landmine in a function just as directly exported/callable as the two
+    // that were fixed.
+    subSchemaFor = (key) => (hasOwn(shape, key) ? shape[key] : undefined);
   } else {
     // Nothing declared to check a leaf against — same fallback unknownPaths
     // uses for a schema this module cannot see a shape in at the top level.

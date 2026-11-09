@@ -401,14 +401,151 @@ describe("prepareItemWrite", () => {
   });
 
   // --- Second re-review round: Minor (overridden to required) ---------
-  test("a refusal message never throws building itself, even on a value JSON.stringify can't handle", () => {
-    // Minor: JSON.stringify throws on a BigInt. A pure helper whose whole
-    // job is producing a clean refusal must not itself throw.
+  test("a refusal message never throws building itself on a BigInt at the SHAPE gate", () => {
+    // Minor: JSON.stringify throws on a BigInt. A top-level BigInt trips
+    // Critical 1's shape check (typeof 10n !== "object") before reaching
+    // safeStringify's only pre-fix call site at all — see the NEXT test for
+    // the one that actually exercises leafRefusalMessage's stringify.
     expect(() => prepareItemWrite({ fields, existing: null, input: { felder: 10n as unknown } })).not.toThrow();
 
     const result = prepareItemWrite({ fields, existing: null, input: { felder: 10n as unknown } });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected a refusal");
     expect(result.message).toContain("felder");
+  });
+
+  test("a refusal message never throws building itself on a BigInt LEAF value (closes a disclosed coverage gap)", () => {
+    // Coordinator follow-up: the test above short-circuits at the shape
+    // gate and never reaches leafRefusalMessage — the only JSON.stringify
+    // that existed before this task's fixes. A BigInt nested inside an
+    // otherwise-valid top-level object reaches leafViolations/
+    // leafRefusalMessage instead.
+    const input = { felder: { budget_gesamt: { wert: 10n as unknown, konfidenz: "low" } } };
+
+    expect(() => prepareItemWrite({ fields, existing: null, input })).not.toThrow();
+
+    const result = prepareItemWrite({ fields, existing: null, input });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.message).toContain("felder");
+    expect(result.message).toContain("budget_gesamt.wert");
+    // String(10n) is "10" (the "n" suffix is literal syntax, not part of
+    // the runtime string conversion) — asserting the actual observed
+    // fallback output, not an assumption about what it would look like.
+    expect(result.message).toContain("10");
+  });
+
+  // --- Third re-review round: New 1 ------------------------------------
+  //
+  // The I2 fix (omitNullEntries) built its validation-only copy with plain
+  // bracket assignment, reopening the EXACT __proto__ footgun mergeJson was
+  // just fixed for — except here it is a VALIDATION BYPASS: a `__proto__`
+  // patch key vanishes from the filtered copy before either check ever
+  // sees it (Object.keys on the result no longer contains it), so the
+  // payload sails through as `ok: true` and mergeJson (already safe) then
+  // writes it verbatim. The identical payload on a plain REPLACE was
+  // already correctly refused the whole time — that asymmetry is exactly
+  // how this hid.
+  describe("New 1: a __proto__ merge-patch key cannot bypass validation", () => {
+    test("merge path refuses it, matching the replace path's existing behaviour", () => {
+      const existing = { felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } };
+      // Built via JSON.parse, like the coordinator's repro and the
+      // mergeJson tests — a normal own enumerable "__proto__" property,
+      // not an exotic construction.
+      const input = { felder: JSON.parse('{"__proto__":{"NOT_A_FELD":true}}') };
+
+      const mergeResult = prepareItemWrite({ fields, existing, input, merge: ["felder"] });
+      const replaceResult = prepareItemWrite({ fields, existing, input });
+
+      expect(mergeResult.ok).toBe(false);
+      expect(replaceResult.ok).toBe(false);
+    });
+
+    test("a literal __proto__ key can still be deleted via null, and the result stays unpolluted", () => {
+      // The legitimate case `omitNullEntries` exists to support at all: a
+      // stored row that happens to hold an own "__proto__" key (itself
+      // safe to read back — `{...existing}` is immune, same as mergeJson's
+      // own spread) gets it deleted via an explicit null, same as any
+      // other key. This end-to-end path exercises BOTH this round's fix
+      // (the filtered copy no longer silently drops the entry before
+      // validation) and round 2's mergeJson fix (the actual write doesn't
+      // corrupt the result's prototype) together.
+      const existing = {
+        felder: JSON.parse(
+          '{"__proto__":{"wert":"OLD","konfidenz":"low"},"zielgruppe":{"wert":"KEEP","konfidenz":"medium"}}',
+        ),
+      };
+      const input = { felder: JSON.parse('{"__proto__":null}') };
+
+      const result = prepareItemWrite({ fields, existing, input, merge: ["felder"] });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("expected success, got: " + result.message);
+      const felderResult = result.values.felder as Record<string, unknown>;
+      expect(Object.prototype.hasOwnProperty.call(felderResult, "__proto__")).toBe(false);
+      expect(Object.getPrototypeOf(felderResult)).toBe(Object.prototype);
+      expect(felderResult).toEqual({ zielgruppe: { wert: "KEEP", konfidenz: "medium" } });
+    });
+  });
+
+  // --- Third re-review round: New 2 ------------------------------------
+  //
+  // Re-ruling: requiresPlainObject reports the UNWRAPPED shape, which is
+  // the wrong tool for deciding which VALUES a schema accepts — a
+  // `.nullable()`/`.optional()` wrapper is a declared exception to exactly
+  // the shape it wraps. The shape gate must defer to `schema.safeParse
+  // (value).success` (read-only, never `.data`) before refusing.
+  describe("New 2: the shape gate respects .nullable()/.optional(), not just the unwrapped shape", () => {
+    const nullableFelderSchema = felderSchema.nullable();
+    const nullableFields: ExuluContextFieldDefinition[] = [{ name: "felder", type: "json", schema: nullableFelderSchema }];
+
+    test("a .nullable() record schema accepts a literal null — not refused by the shape gate", () => {
+      const result = prepareItemWrite({ fields: nullableFields, existing: null, input: { felder: null } });
+      expect(result).toEqual({ ok: true, values: { felder: null } });
+    });
+
+    test("the SAME .nullable() schema still refuses a value that is neither null nor a valid record", () => {
+      const result = prepareItemWrite({ fields: nullableFields, existing: null, input: { felder: "oops" } });
+      expect(result.ok).toBe(false);
+    });
+
+    const optionalPitchSchema = z.object({ a: z.object({ wert: z.string() }) }).optional();
+    const optionalFields: ExuluContextFieldDefinition[] = [{ name: "pitch", type: "json", schema: optionalPitchSchema }];
+
+    test("an .optional() object schema accepts undefined", () => {
+      const result = prepareItemWrite({ fields: optionalFields, existing: null, input: { pitch: undefined } });
+      expect(result).toEqual({ ok: true, values: { pitch: undefined } });
+    });
+
+    test("a PLAIN (non-nullable) record schema still refuses null — the re-ruling narrows, it does not loosen", () => {
+      // Regression guard: felderSchema (used throughout this file) is NOT
+      // wrapped, so this must behave exactly as Critical 1 originally
+      // required.
+      const result = prepareItemWrite({ fields, existing: null, input: { felder: null } });
+      expect(result.ok).toBe(false);
+    });
+  });
+
+  // --- Third re-review round: New 3 ------------------------------------
+  //
+  // Overridden into scope: an unnamed-key lookup on an OBJECT-rooted schema
+  // used `shape[key]`/`key in childShape`, both prototype-chain lookups on
+  // an untrusted key. A record-rooted schema (every fixture elsewhere in
+  // this file) never does this lookup at all, which is why it never showed
+  // up here despite being exercised constantly above.
+  describe("New 3: a prototype-colliding key on an object-rooted schema is refused, not an unhandled throw", () => {
+    const cfgSchema = z.object({ a: z.string() });
+    const cfgFields: ExuluContextFieldDefinition[] = [{ name: "cfg", type: "json", schema: cfgSchema }];
+
+    test.each(["constructor", "toString", "hasOwnProperty"])("key %s is refused cleanly, not thrown", (key) => {
+      const input = { cfg: { [key]: { x: 1 } } };
+
+      expect(() => prepareItemWrite({ fields: cfgFields, existing: null, input })).not.toThrow();
+
+      const result = prepareItemWrite({ fields: cfgFields, existing: null, input });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.message).toContain("cfg");
+    });
   });
 });

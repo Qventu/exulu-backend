@@ -84,6 +84,30 @@ describe("unknownPaths", () => {
     // was declared for "a", a scalar was supplied.
     expect(unknownPaths(z.object({ a: feld }), { a: "not an object" })).toEqual(["a"]);
   });
+
+  // Task 3 re-review, New 3: `shape[key]` and `subKey in childShape` both
+  // walk the PROTOTYPE chain. A key named after an Object.prototype member
+  // used to crash this module outright for an OBJECT-rooted schema (a
+  // record never looks a key up against a fixed `shape`, so it was immune —
+  // confirmed by every existing test above using `z.record(...)` without
+  // ever tripping this).
+  test("a prototype-named key on an OBJECT schema is flagged as unknown, not crashed on", () => {
+    expect(unknownPaths(z.object({ a: z.string() }), { toString: 1 })).toEqual(["toString"]);
+    expect(unknownPaths(z.object({ a: z.string() }), { constructor: 1 })).toEqual(["constructor"]);
+  });
+
+  test("a prototype-named key nested one level in is ALSO flagged — parity with an ordinary typo", () => {
+    // Before the fix, `"toString" in childShape` was `true` (inherited),
+    // so this key was invisible to the check while an ordinary unknown key
+    // at the same position was correctly flagged — an asymmetry a model
+    // could not have discovered by reading any error message.
+    expect(unknownPaths(z.object({ a: feld }), { a: { wert: "x", konfidenz: "low", toString: 1 } })).toEqual([
+      "a.toString",
+    ]);
+    expect(unknownPaths(z.object({ a: feld }), { a: { wert: "x", konfidenz: "low", typo: 1 } })).toEqual([
+      "a.typo",
+    ]);
+  });
 });
 
 describe("leafViolations", () => {
@@ -147,6 +171,16 @@ describe("leafViolations", () => {
   test("an unnamed key on an object schema is not this function's job (unknownPaths's, instead)", () => {
     const schemaObj = z.object({ a: z.string() });
     expect(leafViolations(schemaObj, { typo: "x" })).toEqual([]);
+  });
+
+  test("a prototype-named key on an object schema does not crash this function either", () => {
+    // Task 3 re-review, New 3: the identical shape[key] pattern as
+    // unknownPaths's, in this function's own object branch — not one of
+    // the coordinator's two named repros (both against unknownPaths), but
+    // the same bug class in code this task added, fixed alongside them.
+    const schemaObj = z.object({ a: z.string() });
+    expect(leafViolations(schemaObj, { toString: "x" })).toEqual([]);
+    expect(leafViolations(schemaObj, { constructor: "x" })).toEqual([]);
   });
 
   test("returns [] for a non-object value and for a schema with no checkable top level", () => {
