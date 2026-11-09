@@ -24,10 +24,12 @@ type AnyDef = z.core.$ZodTypeDef & Record<string, unknown>;
  * way to make a whole `json` field optional) would report every one of its
  * own paths as unknown.
  *
- * Deliberately NOT unwrapping `ZodUnion`/`ZodPipe`/etc: there is no single
- * "the" shape underneath a union to unwrap to, and nothing in this plan's
- * tests or consumers needs it. A schema this does not see through still
- * behaves safely — see the opaque-type fallback in schemaPaths/unknownPaths.
+ * Deliberately NOT unwrapping unions here, even though Review Focus 4 also
+ * names them: there is no single branch to reduce a union *to* — unwrapping
+ * is for collapsing a wrapper that has exactly one inner schema. `schemaPaths`
+ * handles unions itself, by collecting every branch's paths instead of
+ * picking one (see there for why that is sufficient for listing paths but
+ * not for validating a value against one).
  */
 function unwrap(schema: z.ZodTypeAny): z.ZodTypeAny {
   let current = schema;
@@ -55,18 +57,38 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * A schema that is itself a record (the real shape of a field like `felder:
  * Record<feld_key, feld>`) has no fixed top-level keys to enumerate — every
  * key is a caller-chosen id. What IS fixed is the shape of each entry, so a
- * top-level record delegates straight to its value type and returns that
- * type's paths unprefixed. `unknownPaths` mirrors this by checking a
- * record's entries against the same value type, which is what keeps the two
- * functions agreeing on what "known" means.
+ * top-level record reports its value type's paths prefixed with the literal
+ * placeholder `<key>` (the spec's own `<feld_key>` was illustrative of M&V's
+ * domain; this module has no field name to use, so it names the slot
+ * generically) — `Record<string, feld>` therefore yields `<key>.wert`,
+ * `<key>.konfidenz`. If the value type has nothing to go a level into (a
+ * record of scalars), the bare placeholder `<key>` is returned instead of
+ * nothing, matching the "value is not an object -> bare key" rule above.
+ *
+ * A top-level union collects the paths of every branch, de-duplicated —
+ * Review Focus 4 names unions alongside the optional/nullable/default
+ * wrappers. Unlike those, a union cannot be *unwrapped* to one inner schema
+ * (there is no value here to pick a branch with), but listing valid paths
+ * does not need to pick one: the set of paths a union defines is just the
+ * union of what each branch defines.
  */
 export function schemaPaths(schema: z.ZodTypeAny): string[] {
   const base = unwrap(schema);
   const def = base.def as AnyDef;
 
-  if (def.type === "record") {
-    return schemaPaths(def.valueType as z.ZodTypeAny);
+  if (def.type === "union") {
+    const seen = new Set<string>();
+    for (const option of def.options as z.ZodTypeAny[]) {
+      for (const path of schemaPaths(option)) seen.add(path);
+    }
+    return [...seen];
   }
+
+  if (def.type === "record") {
+    const subPaths = schemaPaths(def.valueType as z.ZodTypeAny);
+    return subPaths.length > 0 ? subPaths.map((path) => `<key>.${path}`) : ["<key>"];
+  }
+
   if (def.type !== "object") {
     return [];
   }
@@ -89,15 +111,69 @@ export function schemaPaths(schema: z.ZodTypeAny): string[] {
 }
 
 /**
- * Paths present in `value` that `schema` does not define — the check behind
- * Part C's filter refusal and Part A's write validation. Walks the same
- * depth `schemaPaths` enumerates (object: one level; record: the value
- * type's own keys under any caller-chosen id) so a path this reports as
- * unknown is always one `schemaPaths` would not have listed, and vice versa.
+ * Checks one key's value against the schema declared for that key (either a
+ * named object key, or a record's dynamic key against its value type).
+ * Returns the unknown paths found under `key`, prefixed with it.
  *
- * Returns `[]` for a schema this module cannot see a shape in (unions, bare
- * scalars, anything not unwrapped to object/record) — there is nothing
- * declared to compare against, so nothing can be flagged as undeclared.
+ * Two different disagreements both get reported here, and only the first is
+ * about a *name*:
+ * - the key names a sub-field the declared object does not have, or
+ * - the declared shape and the supplied value disagree in *kind* — an
+ *   object (or record) was declared and something else was supplied. This
+ *   is the spec's own motivating case: `felder`'s value type is an object,
+ *   and a filter value like `{ konfidenz: "low" }` supplies a scalar one
+ *   level too shallow — "low" where a `feld` object belonged. That is not
+ *   an unknown *key* (any record key is legal by definition); it is a
+ *   value the declared shape does not accept, which is exactly what this
+ *   function's contract is since F1 widened it.
+ *
+ * Does not recurse past this single level, matching the cap `schemaPaths`
+ * uses: a nested record whose entries are themselves checked would need its
+ * own value type, which schemaPaths likewise does not expand past `<key>`.
+ */
+function unknownChildPaths(child: z.ZodTypeAny, value: unknown, key: string): string[] {
+  const childDef = unwrap(child).def as AnyDef;
+
+  if (childDef.type === "object") {
+    if (!isPlainObject(value)) {
+      return [key];
+    }
+    const childShape = childDef.shape as Record<string, z.ZodTypeAny>;
+    const unknown: string[] = [];
+    for (const subKey of Object.keys(value)) {
+      if (!(subKey in childShape)) unknown.push(`${key}.${subKey}`);
+    }
+    return unknown;
+  }
+
+  if (childDef.type === "record" && !isPlainObject(value)) {
+    return [key];
+  }
+
+  // Anything else this module does not unwrap (scalar, enum, a nested
+  // record whose entry IS a plain object, union, ...) is fully known at
+  // this depth — schemaPaths does not define anything deeper for it
+  // either, so there is nothing further to compare.
+  return [];
+}
+
+/**
+ * Paths present in `value` that `schema` does not accept — the check behind
+ * Part C's filter refusal and Part A's write validation. "Does not accept"
+ * covers both an unnamed key and a named key whose value is the wrong kind
+ * for the shape declared there (see `unknownChildPaths`); it is not a
+ * strict "appears in `schemaPaths(schema)`" lookup, and the two functions'
+ * outputs are not directly comparable string-for-string — in particular,
+ * `schemaPaths` on a record prefixes with the literal placeholder `<key>`,
+ * while `unknownPaths` reports the caller's actual key.
+ *
+ * Returns `[]` for a schema this module cannot see a shape in at the top
+ * level (a union, a bare scalar, anything not unwrapped to object/record) —
+ * there is nothing declared to compare against, so nothing can be flagged.
+ * A top-level union is deliberately not handled the way `schemaPaths`
+ * handles it: listing a union's paths needs no decision, but checking a
+ * value against one would mean picking the branch to validate against,
+ * which this module does not attempt.
  */
 export function unknownPaths(schema: z.ZodTypeAny, value: unknown): string[] {
   if (!isPlainObject(value)) return [];
@@ -106,14 +182,13 @@ export function unknownPaths(schema: z.ZodTypeAny, value: unknown): string[] {
   const def = base.def as AnyDef;
 
   if (def.type === "record") {
-    // Every top-level key is a caller-chosen id and always permitted; only
-    // what is underneath it is checkable, against the record's value type.
+    // Every top-level key is a caller-chosen id and always permitted; what
+    // is checkable is whether each entry's value matches the record's
+    // value type.
     const valueType = def.valueType as z.ZodTypeAny;
     const unknown: string[] = [];
     for (const [key, inner] of Object.entries(value)) {
-      for (const path of unknownPaths(valueType, inner)) {
-        unknown.push(`${key}.${path}`);
-      }
+      unknown.push(...unknownChildPaths(valueType, inner, key));
     }
     return unknown;
   }
@@ -130,18 +205,7 @@ export function unknownPaths(schema: z.ZodTypeAny, value: unknown): string[] {
       unknown.push(key);
       continue;
     }
-    const childDef = unwrap(child).def as AnyDef;
-    if (childDef.type === "object" && isPlainObject(inner)) {
-      const childShape = childDef.shape as Record<string, z.ZodTypeAny>;
-      for (const subKey of Object.keys(inner)) {
-        if (!(subKey in childShape)) {
-          unknown.push(`${key}.${subKey}`);
-        }
-      }
-    }
-    // A non-object child (including a nested record) is fully known at this
-    // depth: schemaPaths does not define anything deeper for it either, so
-    // there is nothing further to compare.
+    unknown.push(...unknownChildPaths(child, inner, key));
   }
   return unknown;
 }
