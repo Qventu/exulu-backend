@@ -49,7 +49,9 @@ platform gap, not an M&V one.
 
 - JSONPath filter operators (`@?`, predicates, numeric comparison inside
   json). The existing `contains` → `@>` already covers exact containment,
-  which is the common case. Revisit when something needs it.
+  which is the common case. Revisit when something needs it. Note this is
+  about new *operators*; validating the paths of the operators that already
+  exist is Part C and is in scope.
 - A GIN index for `json` columns. Containment is a sequential scan today; at
   the row counts these contexts carry that is not measurable. One migration
   line when it is.
@@ -183,6 +185,94 @@ embedding block returns early on success, so a context with both an embedder
 trigger and a processor trigger runs **only the embedder** — the processor
 silently never runs (`:182-184`). Not this spec's job to fix, but a reader of
 the merged code will ask.
+
+## Part C — Query errors an agent can act on
+
+A write that fails tells the caller what to fix. A *query* that fails mostly
+does not, and for an agent that is the more expensive half: it does not know
+it asked wrongly, so it does not retry — it reports the empty answer as fact.
+
+### The failure that is not an error
+
+`contains` compiles to `whereRaw('?? @> ?::jsonb', [field, JSON.stringify(value)])`.
+`JSON.stringify` always produces valid JSON, so the cast never throws. An agent
+that filters on a path the data does not have gets **zero rows and no error**:
+
+```
+filters: [{ felder: { contains: { konfidenz: "low" } } }]
+```
+
+The real shape is `felder.<feld_key>.konfidenz`, so this matches nothing. The
+model sees an empty result and concludes there are no low-confidence fields.
+It is wrong, it has no way to know, and nothing in the system disagrees with
+it. Silence that looks like an answer is the worst failure mode available
+here, and it is the current one.
+
+**With a declared schema this becomes detectable.** Before issuing the query,
+check the filter value's paths against the field's schema. A path the schema
+does not define is a mistake, not a query, and must be refused with a message
+rather than answered with zero rows.
+
+Without a schema, nothing changes: the filter runs as today. This is the read-
+side payoff of Part A, and on its own it justifies declaring a schema.
+
+### What a refusal has to contain
+
+Four things, and the fourth is the one that matters:
+
+1. What was rejected — the field and the offending path or operator.
+2. Why — unknown path, wrong type, unknown operator.
+3. What was expected.
+4. **What is available instead.**
+
+An error that says `invalid filter` teaches nothing and the model will retry
+the same thing. One that says
+
+```
+Unknown path "konfidenz" in filter on field "felder".
+Valid paths: <feld_key>.wert, <feld_key>.konfidenz, <feld_key>.geprueft,
+<feld_key>.belege. Did you mean "<feld_key>.konfidenz"?
+```
+
+gets corrected on the next call. The schema already holds this list; not
+printing it is leaving the whole benefit on the table.
+
+### Refuse as a result, not as a throw
+
+A rejected query must come back as a **normal tool result** carrying the
+message — the shape `update_item` already uses (`{ result: "Provide the id or
+external_id of the item to update." }`). Not a thrown error.
+
+The reason is mechanical. The tool wrapper records the failure for audit and
+rethrows (`convert-exulu-tools-to-ai-sdk-tools.ts:700-703`); from there the
+SDK decides what the model sees, and a stream-level error ends the turn
+(`stream-error.ts`). A bad filter is not a turn-ending condition — it is a
+typo the model can fix in the next call. Returning it as a result keeps that
+possible and keeps the audit trail clean of things that were never faults of
+the system.
+
+### Never pass a database error through
+
+If a query does reach Postgres and fails, the model must not receive the
+Postgres message. `invalid input syntax for type json` names nothing the model
+controls, and the raw text leaks column and type names from contexts the
+caller may not be allowed to see. Catch it, map it to the four-part message
+above, and log the original.
+
+### The cost
+
+Each self-correction costs a step, and the step budget is already the binding
+constraint on these agents (`DEFAULT_MAX_STEPS = 10`). That is an argument for
+making the first error good enough to fix in one retry — point 4 again — not
+for suppressing errors.
+
+### Scope
+
+This applies wherever a model supplies a filter: the generated
+`<table>Pagination` filter inputs, agentic retrieval's `itemFilters`, and
+session-items retrieval. Unknown *field* names are already caught by GraphQL's
+own input validation with a usable message; it is the json paths inside an
+accepted field that are silent today.
 
 ## What this does to purpose tools
 
