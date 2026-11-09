@@ -211,6 +211,113 @@ export function unknownPaths(schema: z.ZodTypeAny, value: unknown): string[] {
 }
 
 /**
+ * Preserves a `.describe()` text across a rebuild. zod's clone (what every
+ * wrapper/combinator constructor below produces) is a fresh instance, and
+ * `.describe()`'s text lives in a registry keyed by instance identity, not
+ * by `.def` — so a plain rebuild silently drops any description the schema
+ * author wrote on a nested node. Only called where `loosenForTransport`
+ * actually rebuilds a node; a node returned untouched keeps its own
+ * identity and therefore its description for free.
+ */
+function preserveDescription(original: z.ZodTypeAny, rebuilt: z.ZodTypeAny): z.ZodTypeAny {
+  return original.description ? rebuilt.describe(original.description) : rebuilt;
+}
+
+/**
+ * Rebuilds `schema` so every object it contains, at every depth, accepts
+ * unknown keys instead of silently dropping them — recursively, not just at
+ * the top level (Task 2 review, Critical).
+ *
+ * The reason this exists at all: `field.schema` is handed to the AI SDK as
+ * an `ExuluTool`'s `inputSchema`, and the `ai` package runs `safeParseAsync`
+ * on the model's raw tool-call JSON *before* any Exulu code sees it. zod's
+ * `z.object()` strips undeclared keys by default — that is correct for a
+ * schema whose job is to validate, but this schema's only job here is to
+ * guide the model toward the right shape. Used unmodified, it becomes a
+ * second, silent validation layer: a key the model supplies but the schema
+ * didn't declare vanishes before Task 3's chokepoint — the place that is
+ * actually supposed to decide what's acceptable — ever sees it. That is the
+ * design spec's named anti-goal ("never strips"); it resurfaced here because
+ * the spec didn't know the AI SDK itself parses with zod.
+ *
+ * Looseness has to be recursive because the stripping is: a passthrough
+ * applied only at the schema's own top level does nothing for a key nested
+ * inside an object one level down (confirmed empirically against installed
+ * zod@4.3.6 — loosening only the outer object left a nested extra key
+ * stripped; `.passthrough()` on the nested object fixed it). So every
+ * object node in the tree gets rebuilt with its own extra-key allowance,
+ * via `.passthrough()`, not just the root.
+ *
+ * What this function deliberately does NOT change: a key's declared type is
+ * still enforced (a wrong type is still rejected after loosening — that is
+ * what makes the result safe rather than merely permissive), and it builds a
+ * *new* schema rather than mutating `schema`, so the strict version Task 3
+ * validates against is untouched. This is a transport concern only; it has
+ * no opinion on whether an unknown key is OK — that answer still comes from
+ * `unknownPaths` against the original, un-loosened schema.
+ */
+export function loosenForTransport(schema: z.ZodTypeAny): z.ZodTypeAny {
+  const def = schema.def as AnyDef;
+
+  switch (def.type) {
+    case "optional":
+      return preserveDescription(schema, z.optional(loosenForTransport(def.innerType as z.ZodTypeAny)));
+    case "nullable":
+      return preserveDescription(schema, z.nullable(loosenForTransport(def.innerType as z.ZodTypeAny)));
+    case "default":
+      return preserveDescription(
+        schema,
+        (loosenForTransport(def.innerType as z.ZodTypeAny) as z.ZodTypeAny & { default: (v: unknown) => z.ZodTypeAny }).default(
+          def.defaultValue,
+        ),
+      );
+    case "array":
+      return preserveDescription(schema, z.array(loosenForTransport(def.element as z.ZodTypeAny)));
+    case "record": {
+      // A record never strips keys itself — every key is dynamically valid
+      // against `valueType`, which is the thing that can itself be (or
+      // contain) an object. So the key type is left exactly as declared
+      // (rebuilding it through the public `z.record()` factory would also
+      // need it narrowed to zod's `$ZodRecordKey` constraint, which
+      // `z.ZodTypeAny` doesn't satisfy); `.clone()` swaps only `valueType`.
+      const loosenedValue = loosenForTransport(def.valueType as z.ZodTypeAny);
+      return preserveDescription(
+        schema,
+        (schema as z.ZodTypeAny & { clone: (def: AnyDef) => z.ZodTypeAny }).clone({ ...def, valueType: loosenedValue }),
+      );
+    }
+    case "union":
+      return preserveDescription(
+        schema,
+        z.union((def.options as z.ZodTypeAny[]).map((option) => loosenForTransport(option)) as [
+          z.ZodTypeAny,
+          z.ZodTypeAny,
+          ...z.ZodTypeAny[],
+        ]),
+      );
+    case "object": {
+      const shape = def.shape as Record<string, z.ZodTypeAny>;
+      const loosenedShape: Record<string, z.ZodTypeAny> = {};
+      for (const key of Object.keys(shape)) {
+        const child = shape[key];
+        if (!child) continue;
+        loosenedShape[key] = loosenForTransport(child);
+      }
+      return preserveDescription(
+        schema,
+        (z.object(loosenedShape) as z.ZodObject<Record<string, z.ZodTypeAny>> & { passthrough: () => z.ZodTypeAny })
+          .passthrough(),
+      );
+    }
+    default:
+      // A scalar, enum, or anything else this module does not recognise has
+      // no object inside it to loosen — returned as-is, which also keeps
+      // its own identity (and therefore its `.describe()`, if any).
+      return schema;
+  }
+}
+
+/**
  * Shallow top-level merge for a `json` field (spec Part B): keys the patch
  * omits keep their stored value, and an explicit `null` deletes a key —
  * distinct from an absent key, which is a no-op. `undefined` is not special;

@@ -10,6 +10,7 @@ import { copyS3Object } from "@SRC/uppy/index";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { checkItemWriteAccess } from "@SRC/utils/check-item-write-access";
 import { KB_EDITOR_TOOL_ID, parseKbEditorConfig, type KbWritePermissions } from "./kb-editor-config";
+import { loosenForTransport } from "@SRC/exulu/json-field-schema";
 
 // Tool ids must match ^[a-z_][a-z0-9_]{4,79}: "create_" (7) + segment + "_item" (5)
 // caps the sanitized context-id segment at 68 chars.
@@ -112,10 +113,17 @@ const buildWriteSchema = (
         // Without a declared schema the model only ever sees an opaque JSON
         // string and has to guess its shape. When the field declares one,
         // offer that shape directly instead — the model gets real structure
-        // to fill in. Only a `.describe()` is added on top; nothing here
-        // validates or strips the input (that's a later task's job).
+        // to fill in. This is strictly a transport-level schema: it exists
+        // to GUIDE the model, not to validate the write. loosenForTransport
+        // is required here, not optional — the raw declared schema would
+        // otherwise be parsed by the AI SDK's own safeParseAsync before any
+        // Exulu code runs, and zod's default object behaviour silently
+        // strips a key the model sends that the schema didn't declare. That
+        // is the one thing this feature must never do (see json-field-
+        // schema.ts for the full reasoning); the actual accept/reject
+        // decision on an unknown key still belongs to the write chokepoint.
         schema = field.schema
-          ? field.schema.describe(`The ${field.name} of the item.`)
+          ? loosenForTransport(field.schema).describe(`The ${field.name} of the item.`)
           : z.string().describe(`The ${field.name} of the item, as a valid JSON string.`);
         break;
       case "markdown":

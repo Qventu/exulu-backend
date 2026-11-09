@@ -125,9 +125,60 @@ describe("createContextWriteTools", () => {
         f.name === "specs" ? { ...f, schema: z.object({ wert: z.string() }) } : f,
       );
       const [updateTool] = createContextWriteTools(makeContext({ fields: schemaFields }), { create: false, update: true }, false);
-      const specs = (updateTool.inputSchema as z.ZodObject<any>).shape.specs;
+      const specs = (updateTool.inputSchema as z.ZodObject<any>).shape.specs as z.ZodOptional<z.ZodTypeAny>;
+      // Minor (Task 2 review): the description text itself must be asserted,
+      // not just that parsing works — a regression that dropped or reworded
+      // it would otherwise pass unnoticed.
+      expect(specs.unwrap().description).toBe("The specs of the item.");
       expect(specs.parse({ wert: "x" })).toEqual({ wert: "x" });
       expect(() => specs.parse({ wert: 1 })).toThrow();
+    });
+
+    describe("transport looseness (Task 2 review, Critical)", () => {
+      // field.schema goes straight into this tool's inputSchema, and the `ai`
+      // package parses the model's raw tool-call JSON with that schema's own
+      // safeParseAsync before any Exulu code runs. z.object() strips
+      // undeclared keys by default — unloosened, that silently destroys a
+      // key the model sent, one layer before Task 3's chokepoint ever gets a
+      // chance to refuse it with a message (the design spec's named
+      // anti-goal: "never strips"). These tests parse through the REAL
+      // `inputSchema` the tool exposes — the whole object, the way the model
+      // actually calls the tool — not the `specs` field's subschema in
+      // isolation; a test against the subschema alone would have passed
+      // while the real path still dropped the key, which is exactly how
+      // this defect hid the first time.
+      const schemaFields = BASE_FIELDS.map((f) =>
+        f.name === "specs" ? { ...f, schema: z.object({ felder: z.object({ wert: z.string() }) }) } : f,
+      );
+      const buildInputSchema = (): z.ZodObject<any> => {
+        const [updateTool] = createContextWriteTools(
+          makeContext({ fields: schemaFields }),
+          { create: false, update: true },
+          false,
+        );
+        return updateTool.inputSchema as z.ZodObject<any>;
+      };
+
+      it("keeps a top-level unknown key under the json field instead of stripping it", () => {
+        const result: any = buildInputSchema().safeParse({
+          specs: { felder: { wert: "x" }, unknown: "KEEP" },
+        });
+        expect(result.success).toBe(true);
+        expect(result.data.specs.unknown).toBe("KEEP");
+      });
+
+      it("keeps an unknown key nested one level deeper under the json field", () => {
+        const result: any = buildInputSchema().safeParse({
+          specs: { felder: { wert: "x", unknown: "KEEP" } },
+        });
+        expect(result.success).toBe(true);
+        expect(result.data.specs.felder.unknown).toBe("KEEP");
+      });
+
+      it("still rejects a wrong type on a declared key after loosening", () => {
+        const result = buildInputSchema().safeParse({ specs: { felder: { wert: 1 } } });
+        expect(result.success).toBe(false);
+      });
     });
   });
 

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { mergeJson, schemaPaths, unknownPaths } from "./json-field-schema";
+import { loosenForTransport, mergeJson, schemaPaths, unknownPaths } from "./json-field-schema";
 
 // Shape mirrors the M&V pitch matrix the spec is built around: a json field
 // that is a record of entries, each entry a small fixed object.
@@ -76,6 +76,56 @@ describe("unknownPaths", () => {
     // Same disagreement-in-kind reasoning, one level up: an object schema
     // was declared for "a", a scalar was supplied.
     expect(unknownPaths(z.object({ a: feld }), { a: "not an object" })).toEqual(["a"]);
+  });
+});
+
+describe("loosenForTransport", () => {
+  // Task 2 review, Critical: the schema handed to the AI SDK is parsed by
+  // the `ai` package's own safeParseAsync before Exulu ever sees the tool
+  // call, and z.object() strips undeclared keys by default. A fix that only
+  // loosens the outer object does not fix this — the nested object inside
+  // `felder`'s value type strips its own extra keys independently. Both
+  // levels are asserted here for exactly that reason.
+  test("a top-level unknown key survives", () => {
+    const loose = loosenForTransport(z.object({ a: z.string() }));
+    const parsed = loose.safeParse({ a: "x", unknown: "KEEP" });
+    expect(parsed.success).toBe(true);
+    expect(parsed).toMatchObject({ data: { a: "x", unknown: "KEEP" } });
+  });
+
+  test("an unknown key nested one level deeper also survives", () => {
+    const loose = loosenForTransport(z.object({ a: feld }));
+    const parsed = loose.safeParse({ a: { wert: "x", konfidenz: "low", unknown: "KEEP" } });
+    expect(parsed.success).toBe(true);
+    expect(parsed).toMatchObject({ data: { a: { wert: "x", konfidenz: "low", unknown: "KEEP" } } });
+  });
+
+  test("an unknown key survives inside a record's object-shaped value type", () => {
+    // schema here is z.record(z.string(), feld) — the M&V shape the rest of
+    // this file uses throughout.
+    const loose = loosenForTransport(schema);
+    const parsed = loose.safeParse({ e1: { wert: "x", konfidenz: "low", unknown: "KEEP" } });
+    expect(parsed.success).toBe(true);
+    expect(parsed).toMatchObject({ data: { e1: { wert: "x", konfidenz: "low", unknown: "KEEP" } } });
+  });
+
+  test("a declared key's wrong type is still rejected after loosening — top level and nested", () => {
+    const topLevel = loosenForTransport(z.object({ a: z.string() }));
+    expect(topLevel.safeParse({ a: 1 }).success).toBe(false);
+
+    const nested = loosenForTransport(z.object({ a: feld }));
+    expect(nested.safeParse({ a: { wert: "x", konfidenz: "not-a-valid-enum-value" } }).success).toBe(false);
+    expect(nested.safeParse({ a: "not an object" }).success).toBe(false);
+  });
+
+  test("passes through a schema with nothing object-shaped to loosen", () => {
+    const stringSchema = z.string();
+    expect(loosenForTransport(stringSchema)).toBe(stringSchema);
+  });
+
+  test("preserves a .describe() across the rebuild", () => {
+    const described = z.object({ a: z.string() }).describe("an entry");
+    expect(loosenForTransport(described).description).toBe("an entry");
   });
 });
 
