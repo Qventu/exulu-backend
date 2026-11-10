@@ -952,13 +952,66 @@ describe("prepareItemWrite", () => {
       expect(result).toEqual({ ok: true, values: { felder: null } });
     });
 
-    test("required is a SEPARATE concern this module does not enforce at all -- a null replace is accepted whether or not the field is 'required'", () => {
+    // --- Superseded by Task 4 fix round 5, Important 1 ---------------------
+    //
+    // Formerly: "required is a SEPARATE concern this module does not
+    // enforce at all -- a null replace is accepted whether or not the
+    // field is 'required'". The coordinator's own round-4 ruling leaned on
+    // `required` already being enforced elsewhere as the backstop for this
+    // exemption; checked rather than assumed, and found true for only two
+    // of four write doors (bulk import's row builder, and the generated
+    // tool's own input shape) -- NOT for GraphQL or any other programmatic
+    // write, where nothing stopped a `required: true` json field being set
+    // to `null`, after which every READ of it errors against the
+    // non-nullable `JSON!` output type. Round 5 closes that gap in the
+    // chokepoint itself, scoped to json fields only.
+    test("a required json field's null replace IS now refused -- required is enforced here because it was not reliably enforced anywhere else", () => {
       const requiredFields: ExuluContextFieldDefinition[] = [
         { name: "felder", type: "json", schema: felderSchema, required: true },
       ];
       const result = prepareItemWrite({ fields: requiredFields, existing: null, input: { felder: null } });
 
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.message).toContain("felder");
+      expect(result.message.toLowerCase()).toContain("required");
+    });
+
+    test("a NON-required (or required unset) field's null replace is unaffected -- the new rule only fires for required: true", () => {
+      const result = prepareItemWrite({ fields, existing: null, input: { felder: null } });
       expect(result).toEqual({ ok: true, values: { felder: null } });
+    });
+
+    test("a required json field's null is still refused even with NO declared schema -- the rule is about required, not about the schema", () => {
+      const requiredNoSchemaFields: ExuluContextFieldDefinition[] = [{ name: "notes", type: "json", required: true }];
+      const result = prepareItemWrite({ fields: requiredNoSchemaFields, existing: null, input: { notes: null } });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.message).toContain("notes");
+    });
+
+    test("required is scoped to json fields only -- this module does not enforce it for any other field type", () => {
+      const requiredTextFields: ExuluContextFieldDefinition[] = [{ name: "name", type: "text", required: true }];
+      const result = prepareItemWrite({ fields: requiredTextFields, existing: null, input: { name: null } });
+
+      expect(result).toEqual({ ok: true, values: { name: null } });
+    });
+
+    test("a required field's null under MERGE is refused by the existing merge-null rule, not the new required rule (both agree, for different reasons)", () => {
+      const requiredFields: ExuluContextFieldDefinition[] = [
+        { name: "felder", type: "json", schema: felderSchema, required: true },
+      ];
+      const result = prepareItemWrite({
+        fields: requiredFields,
+        existing: { felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } },
+        input: { felder: null },
+        merge: ["felder"],
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.message.toLowerCase()).toContain("merge");
     });
 
     test("the exemption is REPLACE-only: the identical top-level null under merge is still refused exactly as before (Task 3's rule, untouched)", () => {

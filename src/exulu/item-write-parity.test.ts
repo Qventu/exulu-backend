@@ -1210,4 +1210,74 @@ describe("item-write parity: the tool path and the GraphQL path agree", () => {
       expect(row(favTable, "u1")!.favourite_items).toEqual(["a", "b", "c"]);
     });
   });
+
+  // --- Fix round 5, Important 1: a required json field's null replace is
+  // --- refused, through both real write paths -----------------------------
+  //
+  // The round 4 ruling leaned on `required` already being enforced
+  // elsewhere; checked, and found true for only two of four write doors
+  // (bulk import's row builder, the generated tool's own input shape) --
+  // NOT GraphQL/programmatic writes, where nothing stopped a `required:
+  // true` json field being set to `null`, after which every read of it
+  // would error against the non-nullable `JSON!` output type.
+  describe("a required json field's null replace is refused through the real write paths (fix round 5, Important 1)", () => {
+    const requiredFields: ExuluContextFieldDefinition[] = [
+      { name: "felder", type: "json", schema: felderSchema, required: true },
+    ];
+
+    it("context.updateItem (the tool path) refuses it", async () => {
+      const { db, row } = makeFakeDb({
+        [TABLE_NAME]: { r1: { name: "A", felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } } },
+      });
+      sharedDb = db;
+      const ctx = new ExuluContext({
+        id: CONTEXT_ID,
+        name: "Docs",
+        description: "",
+        fields: requiredFields,
+        active: true,
+        sources: [],
+        configuration: { calculateVectors: "manual" },
+      } as any);
+
+      await expect(ctx.updateItem({ id: "r1", felder: null } as any, {} as any)).rejects.toThrow(/required/i);
+
+      expect(row(TABLE_NAME, "r1")!.felder).toEqual({ budget_gesamt: { wert: "OLD", konfidenz: "low" } });
+    });
+
+    it("the GraphQL UpdateOneById resolver (what artifacts use) also refuses it -- it was the door with nothing else enforcing required at all", async () => {
+      const { db, row } = makeFakeDb({
+        [TABLE_NAME]: { r1: { name: "A", felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } } },
+      });
+      sharedDb = db;
+      const requiredCtx = new ExuluContext({
+        id: CONTEXT_ID,
+        name: "Docs",
+        description: "",
+        fields: requiredFields,
+        active: true,
+        sources: [],
+        configuration: { calculateVectors: "manual" },
+      } as any);
+
+      const updateOneById = makeGraphqlMutations(requiredCtx)[`${TABLE_NAME}UpdateOneById`];
+      await expect(
+        updateOneById(null, { id: "r1", input: { felder: null } }, graphqlContext(), {}),
+      ).rejects.toThrow(/required/i);
+
+      expect(row(TABLE_NAME, "r1")!.felder).toEqual({ budget_gesamt: { wert: "OLD", konfidenz: "low" } });
+    });
+
+    it("a NON-required field's null replace is unaffected, through the same real GraphQL path (FIELDS, no required)", async () => {
+      const { db, row } = makeFakeDb({
+        [TABLE_NAME]: { r1: { name: "A", felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } } },
+      });
+      sharedDb = db;
+
+      const updateOneById = makeGraphqlMutations()[`${TABLE_NAME}UpdateOneById`];
+      await updateOneById(null, { id: "r1", input: { felder: null } }, graphqlContext(), {});
+
+      expect(row(TABLE_NAME, "r1")!.felder).toBeNull();
+    });
+  });
 });

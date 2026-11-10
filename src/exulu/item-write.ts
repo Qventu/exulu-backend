@@ -32,14 +32,27 @@ import {
  *    same rule (see its own doc comment on `Object.defineProperty`) — a
  *    patch key cannot destroy data via a prototype-chain trick either.
  *
- * 2. **Validate only the incoming value, never the stored one.** A row
+ * 2. **Validate the incoming value's CONTENT, never the stored value's
+ *    content.** (Revised, Task 4 fix round 5, Important 2 — this used to
+ *    say "never the stored one" without qualification, which stopped being
+ *    true the moment round 4 added a narrower check; see below.) A row
  *    written before a field declared a schema may already hold a shape the
  *    schema would reject. `unknownPaths`/`leafViolations` are only ever
- *    called on `input`'s values; `existing` is read (by `mergeJson`) but
- *    never checked. Checking `existing` would make a merge that only
- *    touches already-valid keys fail on a stored key nobody is even trying
- *    to change — turning on validation would then make old rows permanently
- *    unwritable, which is worse than not validating at all.
+ *    called on `input`'s values, never on `existing`'s — turning that on
+ *    would make a merge that only touches already-valid keys fail on a
+ *    stored key nobody is even trying to change, making old rows
+ *    permanently unwritable, which is worse than not validating at all.
+ *    `existing` IS read for one single, much narrower, SHAPE-only question
+ *    since Task 4 fix round 4 (Important, below): is it even a plain
+ *    object/record a merge patch could be combined into, as opposed to an
+ *    array or a scalar? That is a deliberately stricter rule than "never
+ *    checked" — a legacy row already holding a json array or scalar can no
+ *    longer be MERGED, only REPLACED, which is exactly the "old rows become
+ *    unwritable" tradeoff this rule warns against, accepted on purpose for
+ *    that one narrow shape question because the alternative (`mergeJson`
+ *    silently discarding the stored value) is worse. The schema is still
+ *    never consulted about what `existing` CONTAINS — only this module's
+ *    own `isPlainObject` is.
  *
  * Three checks run against the incoming value, in order:
  * - **Shape** (`requiresPlainObject` + a `schema.safeParse` confirmation) —
@@ -49,11 +62,18 @@ import {
  *   against ANY schema (there is nothing to check paths or leaves against)
  *   — but for a schema that DOES declare an object/record shape, "nothing
  *   to check" is not the same as "nothing is wrong": a bare
- *   string/array/number/`null` sent for a field declared as a keyed
- *   structure violates that declared shape, and for a merge-listed field it
- *   would otherwise fall through to a silent REPLACE that deletes the
- *   entire stored object (Task 3 review, Critical — this check exists
- *   specifically so that fallthrough never happens).
+ *   string/array/number sent for a field declared as a keyed structure
+ *   violates that declared shape, and for a merge-listed field it would
+ *   otherwise fall through to a silent REPLACE that deletes the entire
+ *   stored object (Task 3 review, Critical — this check exists specifically
+ *   so that fallthrough never happens). `null` is deliberately NOT on that
+ *   list any more — a top-level REPLACE's `null` is handled by its own,
+ *   later rule instead (Task 4 fix round 4, Critical, below), which exempts
+ *   it from this shape check entirely rather than refusing it as a
+ *   wrong-kind value. `null` under `merge` is a third, separate rule again
+ *   (Task 3 third re-review, Important 1, below) — three different
+ *   treatments for the identical bare value, each for a different reason;
+ *   see each rule's own paragraph for why they are not the same question.
  *
  *   `requiresPlainObject` alone is not sufficient to decide "violates",
  *   though — it only reports the UNWRAPPED shape, and unwrapping is exactly
@@ -127,6 +147,70 @@ import {
  * commits to an object/record shape already gets the equivalent refusal
  * from the shape check below; this is the schema-LESS half of the same
  * question, which had no check to fall back on at all.
+ *
+ * Checked next, specifically for a REPLACE and nowhere else (Task 4 fix
+ * round 4, Critical): a json field's top-level value being a literal
+ * `null` is exempt from schema validation ENTIRELY — it skips the shape
+ * check above, `unknownPaths`, and `leafViolations` outright, rather than
+ * being evaluated against any of them. The reasoning, because it
+ * generalises: a schema describes the shape of a value that EXISTS;
+ * whether a column may be `null` at all is a separate concern this
+ * codebase already expresses via `required` (see the very next rule) —
+ * conflating the two is what caused the defect this rule fixes. Reachable
+ * constantly in production: a blank CSV cell is the most common sparse-
+ * column shape there is, and `coerce.ts` maps one to a literal `null`
+ * (never `""`, never an error) — so before this rule, declaring a schema
+ * broke every sparse column's bulk import, refusing a perfectly normal
+ * blank cell as "the value must be a JSON object... but null was sent".
+ * This exemption is REPLACE-only on purpose: the merge-null rule two
+ * paragraphs up is untouched by it and still refuses `null` unconditionally
+ * under `merge`, because merge means patch and null-as-the-whole-patch is
+ * an operation question, not a shape one, regardless of what this rule
+ * says about replace.
+ *
+ * Immediately above the replace-null exemption, checked first, is the one
+ * case the exemption does NOT cover (Task 4 fix round 5, Important 1 —
+ * completing the fix round 4 ruling above rather than contradicting it): a
+ * `required: true` json field's REPLACE `null` is refused instead of
+ * exempted (`requiredNullRefusalMessage`). The round 4 ruling leaned on
+ * `required` already being the codebase's answer to "may this column be
+ * null" — checked, rather than assumed, and found true for only two of
+ * four write doors: the bulk-import row builder rejects a blank cell on a
+ * `required` field before it ever reaches this module, and the generated
+ * tool cannot send `null` at all. For GraphQL and any other programmatic
+ * write, nothing enforced it anywhere — not the jsonb column definition
+ * (`t.jsonb(name)`, no `notNullable`), not `createItemsTable`, not the
+ * generated Input type (which omits `required` while the OUTPUT type still
+ * declares the field `JSON!`) — so a `required: true` json field could be
+ * set to `null` and every subsequent READ of it would then error against
+ * that non-null output type. This rule is the chokepoint closing that gap
+ * itself rather than continuing to assume another layer already had.
+ * Deliberately scoped to json fields only: enforcing `required` for every
+ * field type, across every table in the system, is a real behaviour change
+ * this module does not make and a fix round does not get to decide.
+ *
+ * Checked right after the two null-handling rules above, about `existing`
+ * rather than the incoming value (Task 4 fix round 4, Important — the
+ * other half of rule 2's revision at the top of this comment): once a
+ * MERGE patch is confirmed to be a plain object, the STORED value under
+ * that key must be `null`, `undefined`, or itself a plain object, or the
+ * write is refused (`mergeStoredNonObjectRefusalMessage`) rather than
+ * merged. Without this, `mergeJson` (json-field-schema.ts) treats ANY
+ * non-plain-object stored value — deliberately `null`/`undefined` (a field
+ * never written, where starting the merge from `{}` is correct), but also,
+ * silently, a stored array or scalar — as "nothing there yet", discarding
+ * it and replacing it with an object built from only the patch's own keys.
+ * Live and reachable specifically because of this plan's own earlier
+ * rounds: `users.favourite_items` is a stored json ARRAY with no schema,
+ * `merge` is advertised on it (Task 4, routing `UpdateOne` through this
+ * module), and a string patch that parses to a plain object can reach
+ * `mergeJson` at all only since the string-parsing rule above — so
+ * `'{"0":"x"}'` under `merge` would otherwise have silently replaced the
+ * whole favourites list. The refusal message deliberately names the
+ * STORED value, not the patch, and is worded differently from the
+ * patch-side non-object refusal above — a caller told "your patch isn't an
+ * object" when the real problem is what is already in the column would go
+ * fix the wrong end.
  *
  * Task 4 (both production write paths went live) owned four more decisions
  * about the wire, not the chokepoint itself:
@@ -259,6 +343,21 @@ function mergeClearRefusalMessage(fieldName: string): string {
     `A bare null here would clear the entire field, and clearing a field is a replace, not a ` +
     `merge. To clear "${fieldName}" entirely, resend it WITHOUT "merge". To delete specific ` +
     `keys instead, keep merging and set only those keys' values to null.`
+  );
+}
+
+/**
+ * Task 4 fix round 5, Important 1: the refusal for a REPLACE's `null` on a
+ * `required: true` json field — the one case round 4's "null is exempt
+ * from schema validation" ruling does not cover, because `required` (not
+ * the schema) is the thing that says this field may not be null. Checked
+ * instead of the round-4 exemption, never alongside it: a required field
+ * never reaches that exemption at all (see the call site).
+ */
+function requiredNullRefusalMessage(fieldName: string): string {
+  return (
+    `Write to field "${fieldName}" rejected: this field is required and cannot be null. ` +
+    `Send a value for "${fieldName}", or omit it from this write to leave it unchanged.`
   );
 }
 
@@ -502,6 +601,19 @@ function leafRefusalMessage(fieldName: string, violations: LeafViolation[]): str
  * (a string is never `isPlainObject`), so the tool offered an option it
  * could never satisfy. A schema-less field's string-that-parses-to-an-object
  * merge patch now actually merges.
+ *
+ * **Two more rules this summary would otherwise omit (Task 4 fix rounds 4
+ * and 5).** A REPLACE's top-level `null` is exempt from every check above
+ * UNLESS the field is `required: true`, in which case it is refused
+ * instead — see the module doc's paragraphs on both rules for the full
+ * reasoning (why null is a `required` question, not a schema question, and
+ * why `required` needed its own rule here rather than being safe to assume
+ * enforced elsewhere). And once a MERGE patch is confirmed to be a plain
+ * object, the STORED value it would merge into must itself be `null`,
+ * `undefined`, or a plain object, or the write is refused rather than
+ * silently discarding whatever was actually stored — see the module doc's
+ * paragraph on `existing` for why that is a deliberate narrowing of rule 2,
+ * not a violation of it.
  */
 export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteResult {
   const { fields, existing, input, merge } = args;
@@ -537,6 +649,24 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
     // generic "wrong kind" message.
     if (isMergeField && checkValue === null) {
       return { ok: false, message: mergeClearRefusalMessage(key) };
+    }
+
+    // Task 4 fix round 5, Important 1: completing round 4's own ruling. A
+    // schema says nothing about whether a column may be null — that is
+    // `required`'s question — but the round 4 exemption below was only
+    // honest if `required` is actually enforced somewhere, and it is not,
+    // for GraphQL/programmatic writes: `map-types.ts` emits a bare
+    // `t.jsonb(name)`, `createItemsTable` never reads `field.required`,
+    // and the generated Input type omits `required` while the OUTPUT type
+    // still declares the field `JSON!` — so writing `null` into a
+    // `required: true` json field via `UpdateOne`/`UpdateOneById`/direct
+    // API calls produced a row that errors on every subsequent read.
+    // Checked BEFORE the general exemption, so a required field never
+    // reaches it; a non-required (or `required` unset) field is
+    // unaffected and still falls through to that exemption exactly as
+    // round 4 left it.
+    if (!isMergeField && field?.type === "json" && value === null && field.required === true) {
+      return { ok: false, message: requiredNullRefusalMessage(key) };
     }
 
     // Task 4 fix round 4, Critical: a plain REPLACE's literal `null` is
