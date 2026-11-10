@@ -283,11 +283,47 @@ function mergeClearRefusalMessage(fieldName: string): string {
  * today), not reopened here.
  */
 function mergeNonObjectRefusalMessage(fieldName: string, value: unknown): string {
+  // One input still produces the literal phrase "a string was sent" here,
+  // and it is the one case where that phrasing is accurate rather than the
+  // misleading half the round-3 ruling called out: `value` is `checkValue`
+  // (the PARSED form) at every call site, so `typeof value === "string"`
+  // only happens when the original was a JSON string that itself parsed
+  // to ANOTHER string -- e.g. `'"text"'` parses to the string `"text"`.
+  // The CONTENT genuinely is a string there, so saying so is correct; the
+  // misleading case round 3 fixed was reporting "a string was sent" about
+  // the WIRE FORM while the content was a well-formed object.
   const kind = Array.isArray(value) ? "an array" : `a ${typeof value}`;
   return (
     `Write to field "${fieldName}" rejected: a merge patch must be a JSON object with named keys, ` +
     `but ${kind} was sent (${safeStringify(value)}). A merge patch cannot be ${kind} — only its ` +
     `object keys are merged. To replace "${fieldName}" entirely with ${kind}, resend it WITHOUT "merge".`
+  );
+}
+
+/**
+ * Task 4 fix round 4, Important: the merge-branch counterpart to
+ * `mergeNonObjectRefusalMessage` above — that one names a bad PATCH; this
+ * one names a bad STORED value, which is a different mistake for a caller
+ * to fix. Without this, `mergeJson` (json-field-schema.ts) silently
+ * discarded a stored array or scalar — it treats ANY non-plain-object
+ * stored value the same as "nothing stored yet" and starts the merge from
+ * `{}`, which is correct for `null`/`undefined` (Review Focus 3) but is
+ * DATA LOSS for an array or a scalar: the whole stored value vanishes,
+ * replaced by an object built from only the patch's own keys. Reachable
+ * today: `users.favourite_items` is a stored json ARRAY, `merge` is
+ * advertised on every json field including it, and (Task 4 fix round 3) a
+ * string patch that parses to a plain object can now reach `mergeJson` at
+ * all — `favouriteItemsUpdate(input: { favourite_items: '{"0":"x"}' },
+ * merge: ["favourite_items"])` would otherwise silently replace the whole
+ * list with `{"0":"x"}`.
+ */
+function mergeStoredNonObjectRefusalMessage(fieldName: string, stored: unknown): string {
+  const kind = Array.isArray(stored) ? "an array" : `a ${typeof stored}`;
+  return (
+    `Write to field "${fieldName}" rejected: the STORED value is ${kind}, not a JSON object with ` +
+    `named keys (${safeStringify(stored)}), so a merge patch cannot be combined into it. A merge ` +
+    `combines keys into an EXISTING object; "${fieldName}" does not currently hold one. To replace ` +
+    `"${fieldName}" entirely, resend it WITHOUT "merge".`
   );
 }
 
@@ -503,6 +539,21 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
       return { ok: false, message: mergeClearRefusalMessage(key) };
     }
 
+    // Task 4 fix round 4, Critical: a plain REPLACE's literal `null` is
+    // exempt from schema validation entirely — see the module doc's note
+    // on why null is a nullability question (`required`), not a shape
+    // question. ONLY the replace path is exempt: the check above already
+    // refuses `null` unconditionally under `merge`, and that stays exactly
+    // as it is (merge means patch, and null-as-patch is nonsense regardless
+    // of whether the field may be null). Keyed on the literal `value`, not
+    // `checkValue` — a STRING that happens to parse to `null` (not
+    // something coerce.ts or any real caller produces) is not this case
+    // and is left to the ordinary checks below.
+    if (!isMergeField && field?.type === "json" && value === null) {
+      Object.defineProperty(values, key, { value, writable: true, enumerable: true, configurable: true });
+      continue;
+    }
+
     // A string that will not parse at all matters only where something
     // actually needs to inspect its content: a merge needs an object patch
     // no matter what the field's schema says, and a schema that commits to
@@ -523,6 +574,26 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
     // by its actual parsed kind ("an array"), not reported as "a string".
     if (isMergeField && !schema && !isPlainObject(checkValue)) {
       return { ok: false, message: mergeNonObjectRefusalMessage(key, checkValue) };
+    }
+
+    // Task 4 fix round 4, Important: the merge-branch counterpart to the
+    // check above, about the STORED side rather than the patch. `mergeJson`
+    // (json-field-schema.ts) treats ANY non-plain-object stored value —
+    // deliberately `null`/`undefined` (Review Focus 3: nothing was ever
+    // written yet, so starting from `{}` is correct), but also, silently,
+    // an array or a scalar — as "nothing there yet" and starts from `{}`.
+    // For an array or a scalar that is DATA LOSS: the whole stored value
+    // is discarded and replaced by an object built from only the patch's
+    // keys. Checked here, once the patch itself is confirmed to be a plain
+    // object (an unparseable/non-object PATCH is already refused by the two
+    // checks above and below; this is specifically "patch is fine, but
+    // there is nothing object-shaped to merge it INTO"). Only `null`/
+    // `undefined` are exempt — anything else non-object is refused.
+    if (isMergeField && isPlainObject(checkValue)) {
+      const stored = existing?.[key];
+      if (stored !== null && stored !== undefined && !isPlainObject(stored)) {
+        return { ok: false, message: mergeStoredNonObjectRefusalMessage(key, stored) };
+      }
     }
 
     if (schema) {

@@ -183,7 +183,17 @@ describe("prepareItemWrite", () => {
   // refused with "the value must be a JSON object... but a string was
   // sent" -- true of the wire form, false and misleading about the
   // content, which was already a valid JSON object.
-  describe("a json field's value may legitimately arrive as a serialized JSON string (coerce.ts's own wire form)", () => {
+  // Framing note (Task 4 fix round 4, re-review's deferred list): calling
+  // the whole block below "coerce.ts's own wire form" overstates it.
+  // coerce.ts's own cells (`importCellValue` above and the valid-content
+  // tests using it) genuinely are what it produces -- but the "does not
+  // parse at all" test further down is NOT: coerce.ts validates with
+  // `JSON.parse` and returns an ERROR cell (never handing the chokepoint a
+  // garbage string) when that fails, so that specific test is a defensive
+  // check for ANY caller that might send an unparseable string (a model
+  // via the schema-less z.string() transport, a direct API call), not a
+  // simulation of coerce.ts's behaviour.
+  describe("a json field's value may legitimately arrive as a serialized JSON string (coerce.ts's own wire form, for the parseable cases)", () => {
     const importCellValue = JSON.stringify({ budget_gesamt: { wert: "1000", konfidenz: "low" } });
 
     test("a STRING that parses to a valid value is accepted, not refused for 'being a string'", () => {
@@ -222,6 +232,11 @@ describe("prepareItemWrite", () => {
     });
 
     test("a STRING that does not parse as JSON at all is refused naming the parse failure, not 'a string was sent'", () => {
+      // NOT a coerce.ts shape (framing note above): coerce.ts rejects an
+      // unparseable cell itself, with an error, before the chokepoint ever
+      // sees it. This defends any OTHER caller that could still send
+      // garbage -- a model via the schema-less z.string() transport, or a
+      // direct API/GraphQL call.
       const result = prepareItemWrite({ fields, existing: null, input: { felder: "not json at all" } });
 
       expect(result.ok).toBe(false);
@@ -737,12 +752,27 @@ describe("prepareItemWrite", () => {
       expect(result).toEqual({ ok: true, values: { pitch: undefined } });
     });
 
-    test("a PLAIN (non-nullable) record schema still refuses null — the re-ruling narrows, it does not loosen", () => {
-      // Regression guard: felderSchema (used throughout this file) is NOT
-      // wrapped, so this must behave exactly as Critical 1 originally
-      // required.
+    // --- Superseded by Task 4 fix round 4's Critical ruling ---------------
+    //
+    // Formerly: "a PLAIN (non-nullable) record schema still refuses null —
+    // the re-ruling narrows, it does not loosen" (Task 3, New 2) — the
+    // point then was that `requiresPlainObject` reports the UNWRAPPED
+    // shape, so the shape gate must defer to `schema.safeParse(value)`
+    // rather than let every schema through. Fix round 4's Critical ruling
+    // supersedes this specifically for a top-level REPLACE: a blank CSV
+    // cell (the most common sparse-column shape there is) coerces to a
+    // literal `null`, and a schema describes the shape of a value that
+    // EXISTS, not whether a column may be null — that is `required`'s job.
+    // So a top-level null on a plain REPLACE is now exempt from schema
+    // validation UNCONDITIONALLY, before the `schema.safeParse` path this
+    // test used to exercise is ever reached — whether the schema is
+    // wrapped in `.nullable()` or not makes no difference any more for
+    // this specific case. Merge still refuses a top-level null
+    // unconditionally either way (Task 3's original rule, untouched by
+    // this round — see the "Important 1 (latent)" block above).
+    test("a PLAIN (non-nullable) record schema now ALSO accepts a top-level null on a plain REPLACE (fix round 4 ruling)", () => {
       const result = prepareItemWrite({ fields, existing: null, input: { felder: null } });
-      expect(result.ok).toBe(false);
+      expect(result).toEqual({ ok: true, values: { felder: null } });
     });
   });
 
@@ -899,6 +929,150 @@ describe("prepareItemWrite", () => {
       // Same reasoning as the test above: JSON.stringify, not a literal
       // `toEqual({ __proto__: ... })`.
       expect(JSON.stringify(result.values)).toBe('{"__proto__":{"a":1,"b":2}}');
+    });
+  });
+
+  // --- Task 4 fix round 4, Critical: a blank CSV cell fails every import --
+  // --- row on a schema-carrying json column --------------------------------
+  //
+  // coerce.ts maps a blank cell to `value: null` (never "", never an
+  // error) -- the most common sparse-column CSV shape there is. Before
+  // this fix, a schema-carrying field's plain REPLACE with `null` was
+  // refused by the shape check exactly like any other wrong-kind value,
+  // so declaring a schema broke every sparse column's import. Ruling: a
+  // schema describes the shape of a value that EXISTS; whether a column
+  // may be null is `required`'s question, not the schema's -- so a
+  // top-level null on a plain REPLACE is now exempt from schema
+  // validation entirely, for every schema (nullable or not).
+  describe("a plain REPLACE's top-level null is exempt from schema validation (fix round 4, Critical)", () => {
+    test("a blank CSV cell (null) on a non-nullable, object-schema field is accepted, not refused for 'the wrong shape'", () => {
+      const existing = { felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } };
+      const result = prepareItemWrite({ fields, existing, input: { felder: null } });
+
+      expect(result).toEqual({ ok: true, values: { felder: null } });
+    });
+
+    test("required is a SEPARATE concern this module does not enforce at all -- a null replace is accepted whether or not the field is 'required'", () => {
+      const requiredFields: ExuluContextFieldDefinition[] = [
+        { name: "felder", type: "json", schema: felderSchema, required: true },
+      ];
+      const result = prepareItemWrite({ fields: requiredFields, existing: null, input: { felder: null } });
+
+      expect(result).toEqual({ ok: true, values: { felder: null } });
+    });
+
+    test("the exemption is REPLACE-only: the identical top-level null under merge is still refused exactly as before (Task 3's rule, untouched)", () => {
+      const existing = { felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } };
+      const result = prepareItemWrite({ fields, existing, input: { felder: null }, merge: ["felder"] });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error(`expected a refusal, got values.felder = ${JSON.stringify(result.values.felder)}`);
+      expect(result.message.toLowerCase()).toContain("merge");
+    });
+
+    test("a nested null (one level in, not the field's own top-level value) is UNCHANGED -- still checked normally against its own sub-schema", () => {
+      // Guards against over-reach: the exemption is about the FIELD's own
+      // value being null, not about null appearing anywhere inside it.
+      const result = prepareItemWrite({ fields, existing: null, input: { felder: { budget_gesamt: null } } });
+      expect(result.ok).toBe(false);
+    });
+
+    test("a schema-less field's blank-cell null replace is unaffected either way (nothing validated it before, nothing does now)", () => {
+      const result = prepareItemWrite({ fields, existing: { notes: { a: 1 } }, input: { notes: null } });
+      expect(result).toEqual({ ok: true, values: { notes: null } });
+    });
+  });
+
+  // --- Task 4 fix round 4, Important: merging onto a non-object STORED ----
+  // --- value is refused, not silently discarded ----------------------------
+  //
+  // mergeJson (json-field-schema.ts) treats ANY non-plain-object stored
+  // value as "nothing there yet" and starts the merge from `{}` -- correct
+  // for `null`/`undefined` (Review Focus 3: a field never written), but
+  // DATA LOSS for a stored array or scalar: the whole stored value
+  // vanishes, replaced by an object built from only the patch's own keys.
+  // Live and reachable: users.favourite_items is a stored json ARRAY with
+  // no schema, merge is advertised on it, and (fix round 3) a string patch
+  // that parses to a plain object can now reach mergeJson at all.
+  describe("merging onto a non-object STORED value is refused, naming the stored value (fix round 4, Important)", () => {
+    test("THE EXACT REPORTED REPRO: a string patch that parses to an object, merged onto a stored ARRAY, is refused instead of silently replacing the list", () => {
+      const favouriteFields: ExuluContextFieldDefinition[] = [{ name: "favourite_items", type: "json" }];
+      const existing = { favourite_items: ["a", "b", "c"] };
+      const input = { favourite_items: JSON.stringify({ "0": "x" }) };
+
+      const result = prepareItemWrite({ fields: favouriteFields, existing, input, merge: ["favourite_items"] });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        throw new Error(
+          `expected a refusal, got the array silently replaced: ${JSON.stringify(result.values.favourite_items)}`,
+        );
+      }
+      expect(result.message).toContain("favourite_items");
+      expect(result.message.toLowerCase()).toContain("array");
+      expect(result.message.toLowerCase()).toContain("merge");
+      // Names the STORED value, not the patch -- a caller who sees "your
+      // patch isn't an object" would go fix the wrong end.
+      expect(result.message.toLowerCase()).toContain("stored");
+    });
+
+    test("merging a plain object patch onto a stored SCALAR is also refused, not silently discarded", () => {
+      const notesExisting = { notes: "a legacy scalar value, not an object" };
+      const input = { notes: { a: 1 } };
+
+      const result = prepareItemWrite({ fields, existing: notesExisting, input, merge: ["notes"] });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        throw new Error(`expected a refusal, got: ${JSON.stringify(result.values.notes)}`);
+      }
+      expect(result.message).toContain("notes");
+      expect(result.message.toLowerCase()).toContain("stored");
+    });
+
+    test("a schema-carrying field merged onto a non-object stored value is ALSO refused (not scoped to schema-less fields)", () => {
+      const existing = { felder: "a legacy string value, not a record at all" };
+      const input = { felder: { zielgruppe: { wert: "x", konfidenz: "low" } } };
+
+      const result = prepareItemWrite({ fields, existing, input, merge: ["felder"] });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        throw new Error(`expected a refusal, got: ${JSON.stringify(result.values.felder)}`);
+      }
+      expect(result.message).toContain("felder");
+      expect(result.message.toLowerCase()).toContain("stored");
+    });
+
+    test("Review Focus 3 still holds: existing === null/undefined (nothing stored yet) is NOT refused -- the merge just produces the patch", () => {
+      const resultNull = prepareItemWrite({
+        fields: [{ name: "favourite_items", type: "json" }],
+        existing: { favourite_items: null },
+        input: { favourite_items: { a: 1 } },
+        merge: ["favourite_items"],
+      });
+      expect(resultNull).toEqual({ ok: true, values: { favourite_items: { a: 1 } } });
+
+      const resultAbsent = prepareItemWrite({
+        fields: [{ name: "favourite_items", type: "json" }],
+        existing: {},
+        input: { favourite_items: { a: 1 } },
+        merge: ["favourite_items"],
+      });
+      expect(resultAbsent).toEqual({ ok: true, values: { favourite_items: { a: 1 } } });
+    });
+
+    test("the message distinguishes a bad STORED value from a bad PATCH -- different wording from mergeNonObjectRefusalMessage", () => {
+      const existing = { notes: ["already", "an", "array"] };
+      const badPatchResult = prepareItemWrite({ fields, existing: { notes: {} }, input: { notes: ["bad patch"] }, merge: ["notes"] });
+      const badStoredResult = prepareItemWrite({ fields, existing, input: { notes: { a: 1 } }, merge: ["notes"] });
+
+      expect(badPatchResult.ok).toBe(false);
+      expect(badStoredResult.ok).toBe(false);
+      if (badPatchResult.ok || badStoredResult.ok) throw new Error("expected both to refuse");
+      expect(badPatchResult.message).not.toBe(badStoredResult.message);
+      expect(badPatchResult.message.toLowerCase()).not.toContain("stored");
+      expect(badStoredResult.message.toLowerCase()).toContain("stored");
     });
   });
 });

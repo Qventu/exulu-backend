@@ -120,6 +120,7 @@ import { z } from "zod";
 import { ExuluContext, type ExuluContextFieldDefinition } from "./context";
 import { createMutations } from "@SRC/graphql/mutations/index";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
+import { coerceValue } from "./import/coerce";
 
 // Same M&V fixture used throughout json-field-schema.test.ts/item-write.test.ts.
 const feld = z.object({ wert: z.string(), konfidenz: z.enum(["low", "medium", "high"]) });
@@ -160,15 +161,35 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>>) {
   // happen.
   let firstCallCount = 0;
 
-  // Both write paths JSON.stringify a json-typed column's object/array value
-  // before handing it to knex (jsonb columns bind as text) -- undo that
-  // half of the round trip here, the same way the real `pg` driver parses a
-  // jsonb column back into a JS value on read, so a row stored through this
-  // fake looks the same regardless of which write path produced it.
+  // Both write paths JSON.stringify an object/array json-typed column
+  // before handing it to knex, but `typeof null === "object"` means their
+  // SAME stringify condition also turns a literal `null` into the TEXT
+  // "null" (confirmed while building this fix round's tests -- a real
+  // Postgres jsonb column casts that text back to genuine JSON null on
+  // read, same as it casts '{"a":1}' back to an object; a naive "only
+  // re-parse strings that look like {...}/[...]" check, which this fake
+  // used through fix round 3, missed exactly that case and stored the
+  // literal string "null" instead). Undo the round trip here the way the
+  // real `pg` driver would, but ONLY for columns that are actually
+  // json-typed in this file's fixtures (`felder`/`notes`/`favourite_items`)
+  // -- a text column whose string value happens to look like JSON (e.g.
+  // `name: "42"`) must NOT be reinterpreted; only a jsonb column gets cast
+  // by Postgres at all.
+  const JSON_COLUMN_NAMES = new Set(["felder", "notes", "favourite_items"]);
   const parseJsonColumns = (patch: Record<string, unknown>) => {
     const parsed: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(patch)) {
-      parsed[key] = typeof value === "string" && /^[{[]/.test(value) ? JSON.parse(value) : value;
+      if (typeof value === "string" && JSON_COLUMN_NAMES.has(key)) {
+        try {
+          parsed[key] = JSON.parse(value);
+          continue;
+        } catch {
+          // Not valid JSON text -- a real jsonb cast would error; this
+          // fake just keeps the original string rather than simulating
+          // that failure, since nothing here depends on it.
+        }
+      }
+      parsed[key] = value;
     }
     return parsed;
   };
@@ -643,15 +664,32 @@ describe("item-write parity: the tool path and the GraphQL path agree", () => {
       expect(row(TABLE_NAME, "r1")!.felder).toEqual({});
     });
 
-    it("through the GraphQL path: a plain (non-merge) null is still refused for a non-nullable schema", async () => {
+    it("SUPERSEDED by fix round 4's Critical ruling: through the GraphQL path, a plain (non-merge) null on a non-nullable schema is now accepted, not refused", async () => {
+      // Formerly: refused ("the value must be a JSON object... but null
+      // was sent"). Fix round 4's ruling: a schema describes the shape of
+      // a value that EXISTS; whether a column may be null is `required`'s
+      // question, not the schema's. A plain REPLACE's top-level null is
+      // now exempt from schema validation entirely, through the GraphQL
+      // path exactly like the tool path.
+      const existingFelder = { budget_gesamt: { wert: "OLD", konfidenz: "low" } };
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { r1: { name: "A", felder: existingFelder } } });
+      sharedDb = db;
+
+      const updateOneById = makeGraphqlMutations()[`${TABLE_NAME}UpdateOneById`];
+      await updateOneById(null, { id: "r1", input: { felder: null } }, graphqlContext(), {});
+
+      expect(row(TABLE_NAME, "r1")!.felder).toBeNull();
+    });
+
+    it("the exemption is REPLACE-only through the GraphQL path too: the identical null under merge is still refused", async () => {
       const existingFelder = { budget_gesamt: { wert: "OLD", konfidenz: "low" } };
       const { db, row } = makeFakeDb({ [TABLE_NAME]: { r1: { name: "A", felder: existingFelder } } });
       sharedDb = db;
 
       const updateOneById = makeGraphqlMutations()[`${TABLE_NAME}UpdateOneById`];
       await expect(
-        updateOneById(null, { id: "r1", input: { felder: null } }, graphqlContext(), {}),
-      ).rejects.toThrow();
+        updateOneById(null, { id: "r1", input: { felder: null }, merge: ["felder"] }, graphqlContext(), {}),
+      ).rejects.toThrow(/merge/i);
 
       expect(row(TABLE_NAME, "r1")!.felder).toEqual(existingFelder);
     });
@@ -1060,6 +1098,116 @@ describe("item-write parity: the tool path and the GraphQL path agree", () => {
       await ctx.createItem({ id: "c1", name: "A", felder: importCellValue } as any, {} as any);
 
       expect(row(TABLE_NAME, "c1")!.felder).toEqual({ budget_gesamt: { wert: "1000", konfidenz: "low" } });
+    });
+  });
+
+  // --- Fix round 4, Critical: the real coerce -> createItem path, not a
+  // --- hand-built { felder: null } -----------------------------------------
+  //
+  // The coordinator's own instruction: a hand-built null proves less than
+  // the actual shape that broke. `coerceValue` (src/exulu/import/coerce.ts)
+  // is the REAL function the import pipeline calls per cell; this drives
+  // its own output straight into `context.createItem`/`updateItem` and the
+  // GraphQL `CreateOne` resolver, exactly the way `rows.ts`'s
+  // `cellValues`/`buildCreateInput`/`buildUpdateInput` would.
+  describe("a blank CSV cell on a schema-carrying json column (fix round 4, Critical, real coerce.ts output)", () => {
+    const blankCell = coerceValue({ name: "felder", type: "json" }, "");
+
+    it("coerceValue itself maps a blank cell to a literal null, not '' and not an error -- confirms the actual input shape before trusting it", () => {
+      expect(blankCell).toEqual({ raw: "", value: null });
+      expect(blankCell.error).toBeUndefined();
+    });
+
+    it("context.createItem accepts a real blank-cell row (bulk import's create path) instead of refusing it as 'the wrong shape'", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: {} });
+      sharedDb = db;
+      const ctx = makeContext();
+
+      await ctx.createItem({ id: "c1", name: "A", felder: blankCell.value } as any, {} as any);
+
+      expect(row(TABLE_NAME, "c1")!.felder).toBeNull();
+    });
+
+    it("context.updateItem accepts a real blank-cell row (bulk import's update path) on a row that already has data", async () => {
+      const { db, row } = makeFakeDb({
+        [TABLE_NAME]: { r1: { name: "A", felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } } },
+      });
+      sharedDb = db;
+      const ctx = makeContext();
+
+      await ctx.updateItem({ id: "r1", felder: blankCell.value } as any, {} as any);
+
+      expect(row(TABLE_NAME, "r1")!.felder).toBeNull();
+    });
+
+    it("the GraphQL CreateOne resolver (the import door bulk import's worker-deps.ts doesn't use, but artifacts/API callers could) also accepts it", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: {} });
+      sharedDb = db;
+
+      const createOne = makeGraphqlMutations()[`${TABLE_NAME}CreateOne`];
+      await createOne(null, { input: { id: "c1", name: "A", felder: blankCell.value } }, graphqlContext(), {});
+
+      expect(row(TABLE_NAME, "c1")!.felder).toBeNull();
+    });
+
+    it("a blank cell under merge is still refused -- the exemption is replace-only, proven through the real write path too", async () => {
+      const { db, row } = makeFakeDb({
+        [TABLE_NAME]: { r1: { name: "A", felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } } },
+      });
+      sharedDb = db;
+      const ctx = makeContext();
+
+      await expect(
+        ctx.updateItem(
+          { id: "r1", felder: blankCell.value } as any,
+          {} as any,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          ["felder"],
+        ),
+      ).rejects.toThrow(/merge/i);
+
+      expect(row(TABLE_NAME, "r1")!.felder).toEqual({ budget_gesamt: { wert: "OLD", konfidenz: "low" } });
+    });
+  });
+
+  // --- Fix round 4, Important: merging onto a stored non-object, through
+  // --- the real GraphQL write path (what users.favourite_items actually
+  // --- uses) ----------------------------------------------------------------
+  describe("merging a string patch onto a stored ARRAY is refused through the real GraphQL UpdateOne path (fix round 4, Important)", () => {
+    it("THE EXACT REPORTED REPRO: a stringified-object patch merged onto a stored array column is refused, not silently replacing the list", async () => {
+      const favouriteFields: ExuluContextFieldDefinition[] = [{ name: "favourite_items", type: "json" }];
+      const favouriteCtx = new ExuluContext({
+        id: "fav",
+        name: "Fav",
+        description: "",
+        fields: favouriteFields,
+        active: true,
+        sources: [],
+        configuration: { calculateVectors: "manual" },
+      } as any);
+      const favTable = "fav_items";
+      const { db, row } = makeFakeDb({ [favTable]: { u1: { favourite_items: ["a", "b", "c"] } } });
+      sharedDb = db;
+
+      const updateOne = makeGraphqlMutations(favouriteCtx)[`${favTable}UpdateOne`];
+      await expect(
+        updateOne(
+          null,
+          {
+            where: [{ id: { eq: "u1" } }],
+            input: { favourite_items: JSON.stringify({ "0": "x" }) },
+            merge: ["favourite_items"],
+          },
+          graphqlContext(),
+          {},
+        ),
+      ).rejects.toThrow(/stored/i);
+
+      // The list is untouched -- not silently collapsed to {"0":"x"}.
+      expect(row(favTable, "u1")!.favourite_items).toEqual(["a", "b", "c"]);
     });
   });
 });
