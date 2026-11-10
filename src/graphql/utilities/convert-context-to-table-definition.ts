@@ -39,6 +39,18 @@ export const convertContextToTableDefinition = (context: ExuluContext): ExuluTab
       schema: field.schema,
     })),
   };
+  // The core/system fields below are pushed AFTER the context's own fields,
+  // and prepareItemWrite's `fieldsByName` (`new Map(fields.map(...))`) keeps
+  // the LAST entry for a given name. So a context field that happens to
+  // share a name with one of these (e.g. "name", "tags") would have its
+  // `schema` silently overridden by the schema-less core definition below on
+  // the GraphQL side, while the tool path (which reads `field.schema`
+  // straight off `this.fields`, never through this converter) still
+  // validates it -- the exact two-paths-disagree shape Task 4's Critical
+  // fix exists to close, reopened one level up. Almost certainly
+  // unreachable in practice (the name would also collide with the physical
+  // column these core fields are declared for), but worth a line here so
+  // the next person does not have to rediscover it the hard way.
   definition.fields.push({
     name: "id",
     type: "text",

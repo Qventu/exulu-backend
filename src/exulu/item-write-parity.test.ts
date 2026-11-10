@@ -999,4 +999,67 @@ describe("item-write parity: the tool path and the GraphQL path agree", () => {
       expect(row(TABLE_NAME, "c1")!.felder).toEqual(existingFelder);
     });
   });
+
+  // --- Fix round 3: the actual import-pipeline bug, through the real
+  // --- context.ts write paths, not a hand-built parsed object -------------
+  //
+  // src/exulu/import/coerce.ts validates a json cell with JSON.parse and
+  // deliberately returns the STRING (confirmed by reading it, not assumed):
+  // `case "json": { try { JSON.parse(trimmed); return { raw, value: trimmed
+  // }; } catch { return err(raw, "json"); } }`. That string then flows,
+  // completely unchanged, through rows.ts's `cellValues`/`buildCreateInput`/
+  // `buildUpdateInput` into `context.createItem`/`updateItem`'s own `item`
+  // object -- exactly what these tests build by hand with `JSON.stringify`,
+  // never a pre-parsed object, so this exercises the real string-valued
+  // path the bug report named, not a shape that only looks like it.
+  describe("the import pipeline's own wire form (a JSON string, coerce.ts) now reaches the chokepoint correctly", () => {
+    it("context.updateItem accepts a valid import cell string for a schema-carrying field", async () => {
+      const { db, row } = makeFakeDb({
+        [TABLE_NAME]: { r1: { name: "A", felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } } },
+      });
+      sharedDb = db;
+      const ctx = makeContext();
+
+      // Exactly coerceValue's own return shape for a json cell: `{ raw, value: trimmed }`.
+      const importCellValue = JSON.stringify({ budget_gesamt: { wert: "1000", konfidenz: "low" } });
+      await ctx.updateItem({ id: "r1", felder: importCellValue } as any, {} as any);
+
+      expect(row(TABLE_NAME, "r1")!.felder).toEqual({ budget_gesamt: { wert: "1000", konfidenz: "low" } });
+    });
+
+    it("context.updateItem refuses an import cell string whose PARSED content violates the schema, with the real leaf violation -- not 'a string was sent'", async () => {
+      const existingFelder = { budget_gesamt: { wert: "OLD", konfidenz: "low" } };
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { r1: { name: "A", felder: existingFelder } } });
+      sharedDb = db;
+      const ctx = makeContext();
+
+      // THE EXACT REPORTED REPRO, as coerceValue would actually hand it over.
+      const badImportCellValue = JSON.stringify({ budget_gesamt: { wert: "1000", konfidenz: "sehr hoch" } });
+
+      let message: string | undefined;
+      try {
+        await ctx.updateItem({ id: "r1", felder: badImportCellValue } as any, {} as any);
+      } catch (e) {
+        message = e instanceof Error ? e.message : String(e);
+      }
+
+      expect(message).toBeDefined();
+      expect(message).toContain("budget_gesamt.konfidenz");
+      expect(message).toContain("sehr hoch");
+      expect(message).not.toContain("a string was sent");
+      // The write never happened -- the stored row is untouched.
+      expect(row(TABLE_NAME, "r1")!.felder).toEqual(existingFelder);
+    });
+
+    it("context.createItem (bulk import's create path) accepts a valid import cell string", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: {} });
+      sharedDb = db;
+      const ctx = makeContext();
+
+      const importCellValue = JSON.stringify({ budget_gesamt: { wert: "1000", konfidenz: "low" } });
+      await ctx.createItem({ id: "c1", name: "A", felder: importCellValue } as any, {} as any);
+
+      expect(row(TABLE_NAME, "c1")!.felder).toEqual({ budget_gesamt: { wert: "1000", konfidenz: "low" } });
+    });
+  });
 });

@@ -292,6 +292,37 @@ function mergeNonObjectRefusalMessage(fieldName: string, value: unknown): string
 }
 
 /**
+ * Task 4 fix round 3: the refusal for a json field's STRING value that is
+ * not valid JSON at all — distinct from `shapeRefusalMessage`/
+ * `mergeNonObjectRefusalMessage`, which both describe a value whose PARSED
+ * kind is wrong (an array where an object belongs, say). A string that
+ * cannot be parsed has no kind to report yet; saying "a string was sent" in
+ * this case is the exact misleading framing the coordinator's ruling
+ * rejected, because a JSON string IS a legitimate wire form for a json
+ * field here (coerce.ts's import cells, and the generated tool's `z.string()`
+ * transport for a schema-less field) — the actual defect is that THIS
+ * string's content does not parse, not that a string arrived at all.
+ * Schema paths are included (the same way `shapeRefusalMessage` includes
+ * them) only when a schema was actually in play — a schema-less field
+ * reaching this at all means it was merge-listed (see `prepareItemWrite`'s
+ * call site), and there is no schema to cite paths from.
+ */
+function stringParseFailedMessage(
+  fieldName: string,
+  raw: string,
+  schema?: NonNullable<ExuluContextFieldDefinition["schema"]>,
+): string {
+  const base =
+    `Write to field "${fieldName}" rejected: the value is a string, but it does not parse as JSON ` +
+    `(${safeStringify(raw)}). A json field may be sent as a serialized JSON string, but the string ` +
+    `itself must be valid JSON.`;
+  if (!schema) return base;
+  const validPaths = schemaPaths(schema);
+  const validList = validPaths.length > 0 ? validPaths.join(", ") : "(the schema declares no paths)";
+  return `${base} Valid paths for "${fieldName}": ${validList}.`;
+}
+
+/**
  * The four-part refusal for the shape check above: a schema declares an
  * object/record at its top level, but the incoming value for that field is
  * not a plain object at all. "What is available instead" reuses
@@ -367,6 +398,11 @@ function leafRefusalMessage(fieldName: string, violations: LeafViolation[]): str
 /**
  * Checks and shapes one write's values. For each key in `input`:
  *
+ * - If its field is `type: "json"` and the incoming value is a STRING, it is
+ *   tentatively parsed first (Task 4 fix round 3) — see the module doc's
+ *   note on string-valued json below for why. Every check and the merge
+ *   input below operate on that parsed value (`checkValue`); only the
+ *   WRITTEN value for a non-merge key is ever the caller's original `value`.
  * - If its field is `type: "json"` and declares a `schema`:
  *   - A value that violates the schema's shape (not a plain object where
  *     one is required) refuses the write outright — see the module doc's
@@ -378,15 +414,15 @@ function leafRefusalMessage(fieldName: string, violations: LeafViolation[]): str
  *     of independently-committable fields).
  * - If the field is `type: "json"` AND the key is named in `merge`, the
  *   stored value and the incoming patch are combined with `mergeJson` — but
- *   only when the incoming value is itself a plain object (the shape check
- *   above already refuses a schema-carrying field's non-object value before
- *   this point; a merge-listed field with NO schema and a non-object value
- *   has nothing stopping it from reaching here, so it still falls back to
- *   replace rather than feeding a non-object into `mergeJson`). Gating on
- *   `type === "json"` (not just membership in `merge`) matters: `merge` is a
- *   concept Part B defines for `json` fields only, so a non-`json` field
- *   named there by mistake must not have `mergeJson` run against it (Task 3
- *   review, Important 4).
+ *   only when the (possibly just-parsed) incoming value is itself a plain
+ *   object (the shape check above already refuses a schema-carrying field's
+ *   non-object value before this point; a merge-listed field with NO schema
+ *   and a non-object, non-parseable value has nothing stopping it from
+ *   reaching here, so it still falls back to replace rather than feeding a
+ *   non-object into `mergeJson`). Gating on `type === "json"` (not just
+ *   membership in `merge`) matters: `merge` is a concept Part B defines for
+ *   `json` fields only, so a non-`json` field named there by mistake must
+ *   not have `mergeJson` run against it (Task 3 review, Important 4).
  * - Otherwise the value replaces whatever was stored, exactly as today.
  *
  * A key with no matching entry in `fields` (or a field whose type isn't
@@ -394,6 +430,42 @@ function leafRefusalMessage(fieldName: string, violations: LeafViolation[]): str
  * unchanged — this helper's job is merge-and-validate for declared `json`
  * shapes, not column-existence checking, which the generated tool/GraphQL
  * input types already own.
+ *
+ * **String-valued json (Task 4 fix round 3).** A JSON field's incoming
+ * value is not always already-parsed: `src/exulu/import/coerce.ts` returns
+ * a SERIALIZED STRING for a json cell on purpose (confirmed by the
+ * coordinator directly against its code — both write paths stringify only
+ * `typeof value === "object"`/arrays before a jsonb write, so a string
+ * passes straight through and Postgres casts it; that convention is also
+ * why a schema-LESS field's generated-tool transport type is bare
+ * `z.string()`). A json field's incoming value being a string is therefore
+ * NOT itself a violation anywhere in this codebase — but before this round,
+ * this module treated a valid-JSON string exactly like a non-object
+ * violation, refusing a perfectly well-formed import cell with "the value
+ * must be a JSON object... but a string was sent" — true of the WIRE FORM,
+ * false and misleading about the CONTENT, which the model/importer has no
+ * way to act on (it already sent a JSON object; the message tells it to
+ * send one).
+ *
+ * So: a `json`-typed field's string value is parsed FIRST, and every check
+ * below — the shape gate, `unknownPaths`, `leafViolations`, and what counts
+ * as a plain-object merge patch — runs against the PARSED value, never the
+ * raw string. A string that fails to parse is its own refusal
+ * (`stringParseFailedMessage`), distinct from "wrong kind", because there
+ * is no kind to report yet — saying "a string was sent" would be exactly as
+ * misleading for garbage as for valid JSON, since a string is legitimate
+ * wire form either way. What gets WRITTEN never changes because of this:
+ * a REPLACE still writes the caller's original string untouched
+ * (never-strip — parsing exists only to inform the checks, not to
+ * substitute what is stored), and a MERGE still writes `mergeJson`'s own
+ * object output, exactly as before; only a merge's PATCH input is ever the
+ * parsed form. This incidentally closes a second, independently-noticed gap
+ * for free: the generated update tool offers `merge` on every json field
+ * including schema-less ones, whose transport is `z.string()` — before this
+ * fix, Important 4's own check refused every such merge "by construction"
+ * (a string is never `isPlainObject`), so the tool offered an option it
+ * could never satisfy. A schema-less field's string-that-parses-to-an-object
+ * merge patch now actually merges.
  */
 export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteResult {
   const { fields, existing, input, merge } = args;
@@ -405,11 +477,40 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
     const schema = field?.type === "json" ? field.schema : undefined;
     const isMergeField = field?.type === "json" && (merge?.includes(key) ?? false);
 
+    // Tentative parse (Task 4 fix round 3) — see the module doc's note on
+    // string-valued json. `checkValue` is used for every decision below;
+    // `value` (the caller's original) is still what gets WRITTEN for a
+    // non-merge key, further down.
+    let checkValue: unknown = value;
+    let stringParseFailed = false;
+    if (field?.type === "json" && typeof value === "string") {
+      try {
+        checkValue = JSON.parse(value);
+      } catch {
+        stringParseFailed = true;
+      }
+    }
+
     // Checked first, above the schema check and independent of it (Task 3
     // third re-review, Important 1): an operation question, not a type
-    // question — see the module doc's note above this function.
-    if (isMergeField && value === null) {
+    // question — see the module doc's note above this function. Reads on
+    // `checkValue`, not `value`: a merge patch that is the literal STRING
+    // `"null"` means the same thing operationally as a bare `null` patch —
+    // clear the whole field, which merge never allows — and deserves the
+    // identical, more actionable refusal rather than falling through to a
+    // generic "wrong kind" message.
+    if (isMergeField && checkValue === null) {
       return { ok: false, message: mergeClearRefusalMessage(key) };
+    }
+
+    // A string that will not parse at all matters only where something
+    // actually needs to inspect its content: a merge needs an object patch
+    // no matter what the field's schema says, and a schema that commits to
+    // an object/record shape needs to check that shape. A schema-less,
+    // non-merge field's garbage string is untouched — same as always, that
+    // combination validates nothing at all.
+    if (stringParseFailed && (isMergeField || (schema && requiresPlainObject(schema)))) {
+      return { ok: false, message: stringParseFailedMessage(key, value as string, schema) };
     }
 
     // Task 4 fix round 2, Important 4: the symmetric check for a
@@ -417,17 +518,19 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
     // (an array, string, number, ...) — see mergeNonObjectRefusalMessage's
     // own doc comment for why this is scoped to `!schema` specifically. A
     // schema-carrying field reaches the equivalent, better-informed check
-    // just below instead (it can cite valid paths; this can't).
-    if (isMergeField && !schema && !isPlainObject(value)) {
-      return { ok: false, message: mergeNonObjectRefusalMessage(key, value) };
+    // just below instead (it can cite valid paths; this can't). Reads
+    // `checkValue` so a string that parsed to, say, an array is described
+    // by its actual parsed kind ("an array"), not reported as "a string".
+    if (isMergeField && !schema && !isPlainObject(checkValue)) {
+      return { ok: false, message: mergeNonObjectRefusalMessage(key, checkValue) };
     }
 
     if (schema) {
-      if (requiresPlainObject(schema) && !isPlainObject(value) && !schema.safeParse(value).success) {
-        return { ok: false, message: shapeRefusalMessage(key, value, schema) };
+      if (requiresPlainObject(schema) && !isPlainObject(checkValue) && !schema.safeParse(checkValue).success) {
+        return { ok: false, message: shapeRefusalMessage(key, checkValue, schema) };
       }
 
-      const toValidate = isMergeField && isPlainObject(value) ? omitNullEntries(value) : value;
+      const toValidate = isMergeField && isPlainObject(checkValue) ? omitNullEntries(checkValue) : checkValue;
 
       const badPaths = unknownPaths(schema, toValidate);
       if (badPaths.length > 0) {
@@ -452,8 +555,15 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
     // `omitNullEntries`'s internal-only copy) because it crosses this
     // module's boundary into the write paths that consume it — the same
     // reason `mergeJson` keeps its own return value a normal object too.
-    if (isMergeField && isPlainObject(value)) {
-      Object.defineProperty(values, key, { value: mergeJson(existing?.[key], value), writable: true, enumerable: true, configurable: true });
+    //
+    // The merge branch feeds `mergeJson` the PARSED patch (`checkValue`) —
+    // a string can't be iterated as a patch's keys at all — but the replace
+    // branch still writes `value`, the caller's untouched original: parsing
+    // only ever informs a decision here, it never becomes what is stored
+    // (never-strip holds for a string-valued json field exactly as it does
+    // for an already-parsed one).
+    if (isMergeField && isPlainObject(checkValue)) {
+      Object.defineProperty(values, key, { value: mergeJson(existing?.[key], checkValue), writable: true, enumerable: true, configurable: true });
     } else {
       Object.defineProperty(values, key, { value, writable: true, enumerable: true, configurable: true });
     }

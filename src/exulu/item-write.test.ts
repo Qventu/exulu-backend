@@ -74,6 +74,26 @@ describe("prepareItemWrite", () => {
   // this closes the identical gap for the schema-LESS case, inverting the
   // original gap-report test rather than deleting it.
   test("a merge-listed, SCHEMA-LESS field whose incoming value is not an object is now refused, not silently replaced", () => {
+    // A NUMBER, not a string (Task 4 fix round 3 moved the "a plain string"
+    // version of this input onto a different, now-dedicated code path --
+    // see "a merge-listed, SCHEMA-LESS field whose string value is not
+    // valid JSON at all" below). This keeps testing Important 4's original
+    // claim in isolation: a non-object, non-string merge value is refused.
+    const existing = { notes: { a: 1 } };
+    const input = { notes: 42 };
+
+    const result = prepareItemWrite({ fields, existing, input, merge: ["notes"] });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.message).toContain("notes");
+    expect(result.message.toLowerCase()).toContain("merge");
+  });
+
+  // --- Task 4 fix round 3: a json field's value may legitimately be a
+  // SERIALIZED STRING (coerce.ts's import cells; the generated tool's
+  // z.string() transport for a schema-less field) -------------------------
+  test("a merge-listed, SCHEMA-LESS field whose string value is not valid JSON at all is refused, naming the parse failure (not 'a string was sent')", () => {
     const existing = { notes: { a: 1 } };
     const input = { notes: "a plain string, not a patch" };
 
@@ -82,7 +102,25 @@ describe("prepareItemWrite", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected a refusal");
     expect(result.message).toContain("notes");
-    expect(result.message.toLowerCase()).toContain("merge");
+    expect(result.message.toLowerCase()).toContain("json");
+    expect(result.message.toLowerCase()).toContain("parse");
+    // The misleading framing this round replaced:
+    expect(result.message).not.toContain("a string was sent");
+  });
+
+  test("a merge-listed, SCHEMA-LESS field whose value is a STRING that DOES parse to an object now actually merges (closes the 'merge refused by construction' gap)", () => {
+    // Before this fix: isPlainObject(value) was false for ANY string, so
+    // this fell into Important 4's non-object refusal even though the
+    // string's CONTENT was a perfectly valid patch -- the generated tool
+    // advertises `merge` on every json field, including schema-less ones
+    // whose transport is bare z.string(), so merge on those was refused
+    // by construction until now.
+    const existing = { notes: { a: 1, b: 2 } };
+    const input = { notes: JSON.stringify({ a: 9 }) };
+
+    const result = prepareItemWrite({ fields, existing, input, merge: ["notes"] });
+
+    expect(result).toEqual({ ok: true, values: { notes: { a: 9, b: 2 } } });
   });
 
   test("the exact live repro: a schema-less json ARRAY column merge-listed with a replacement array is refused, not silently replaced", () => {
@@ -132,6 +170,98 @@ describe("prepareItemWrite", () => {
     // can retry with a path that actually exists.
     expect(result.message).toContain("<key>.wert");
     expect(result.message).toContain("<key>.konfidenz");
+  });
+
+  // --- Task 4 fix round 3: coerce.ts's wire form (a serialized JSON STRING)
+  // --------------------------------------------------------------------
+  //
+  // src/exulu/import/coerce.ts validates a json cell with JSON.parse and
+  // then deliberately returns the STRING, not the parsed value -- both
+  // write paths only stringify an object/array before a jsonb write, so a
+  // string passes straight through and Postgres casts it. Before this
+  // fix, every bulk-import row touching a schema-carrying json column was
+  // refused with "the value must be a JSON object... but a string was
+  // sent" -- true of the wire form, false and misleading about the
+  // content, which was already a valid JSON object.
+  describe("a json field's value may legitimately arrive as a serialized JSON string (coerce.ts's own wire form)", () => {
+    const importCellValue = JSON.stringify({ budget_gesamt: { wert: "1000", konfidenz: "low" } });
+
+    test("a STRING that parses to a valid value is accepted, not refused for 'being a string'", () => {
+      const result = prepareItemWrite({ fields, existing: null, input: { felder: importCellValue } });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("expected success, got: " + result.message);
+    });
+
+    test("the WRITTEN value is still the caller's original STRING, unchanged — never-strip holds for a string input too", () => {
+      const input = { felder: importCellValue };
+      const result = prepareItemWrite({ fields, existing: null, input });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("expected success, got: " + result.message);
+      // Same reference, not the parsed object -- parsing only ever informs
+      // the checks; it never becomes what gets stored.
+      expect(result.values.felder).toBe(input.felder);
+      expect(typeof result.values.felder).toBe("string");
+    });
+
+    test("THE EXACT REPORTED REPRO: a STRING whose parsed content violates the schema is refused with the real leaf violation, not 'a string was sent'", () => {
+      // mv_pitches_itemsUpdateOneById(id, input: { felder: { budget_gesamt:
+      // { wert: "1000", konfidenz: "sehr hoch" } } }) serialized exactly as
+      // coerce.ts would hand it to context.ts.
+      const badImportCellValue = JSON.stringify({ budget_gesamt: { wert: "1000", konfidenz: "sehr hoch" } });
+      const result = prepareItemWrite({ fields, existing: null, input: { felder: badImportCellValue } });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.message).toContain("felder");
+      expect(result.message).toContain("budget_gesamt.konfidenz");
+      expect(result.message).toContain("sehr hoch");
+      // The misleading framing this round replaced:
+      expect(result.message).not.toContain("a string was sent");
+    });
+
+    test("a STRING that does not parse as JSON at all is refused naming the parse failure, not 'a string was sent'", () => {
+      const result = prepareItemWrite({ fields, existing: null, input: { felder: "not json at all" } });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.message).toContain("felder");
+      expect(result.message.toLowerCase()).toContain("parse");
+      expect(result.message).not.toContain("a string was sent");
+    });
+
+    test("a MERGE-listed field's STRING patch is parsed and merged, keeping stored keys the string patch omits", () => {
+      const existing = {
+        felder: {
+          budget_gesamt: { wert: "OLD", konfidenz: "low" },
+          zielgruppe: { wert: "UNTOUCHED", konfidenz: "medium" },
+        },
+      };
+      const input = { felder: JSON.stringify({ budget_gesamt: { wert: "NEW", konfidenz: "high" } }) };
+
+      const result = prepareItemWrite({ fields, existing, input, merge: ["felder"] });
+
+      expect(result).toEqual({
+        ok: true,
+        values: {
+          felder: {
+            budget_gesamt: { wert: "NEW", konfidenz: "high" },
+            zielgruppe: { wert: "UNTOUCHED", konfidenz: "medium" },
+          },
+        },
+      });
+    });
+
+    test("a MERGE-listed field's STRING value of literal 'null' is refused the same way a bare null patch is", () => {
+      const existing = { felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } };
+      const result = prepareItemWrite({ fields, existing, input: { felder: "null" }, merge: ["felder"] });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.message.toLowerCase()).toContain("merge");
+      expect(result.message.toLowerCase()).toContain("replace");
+    });
   });
 
   test("a refusal message never contains SQL or a Postgres type name", () => {
@@ -350,12 +480,25 @@ describe("prepareItemWrite", () => {
     });
 
     test("also refused on a plain REPLACE (not merge-listed) — the shape check is unconditional", () => {
+      // "oops" is not valid JSON at all, so (Task 4 fix round 3) this is
+      // refused via the string-parse-failure path rather than the shape
+      // check directly -- both still refuse unconditionally, merge or not.
       const result = prepareItemWrite({ fields, existing: null, input: { felder: "oops" } });
 
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected a refusal");
       expect(result.message).toContain("felder");
+      expect(result.message.toLowerCase()).toContain("parse");
+    });
+
+    test("also refused on a plain REPLACE for a string that IS valid JSON but the wrong shape — the shape check itself, not just the parse-failure path", () => {
+      const result = prepareItemWrite({ fields, existing: null, input: { felder: JSON.stringify([1, 2, 3]) } });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.message).toContain("felder");
       expect(result.message).toContain("object");
+      expect(result.message).toContain("array");
     });
 
     test("the refusal names the field, what was sent, and the valid paths (four-part contract)", () => {
