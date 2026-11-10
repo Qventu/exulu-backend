@@ -25,15 +25,13 @@ jest.mock("@SRC/exulu/resolve-embedder", () => ({ resolveEmbedder: jest.fn() }))
 jest.mock("@SRC/graphql/resolvers/vector-search", () => ({
   vectorSearch: jest.fn(async () => ({ chunks: [], itemFilters: [], chunkFilters: [] })),
 }));
-jest.mock("@SRC/graphql/utilities/convert-context-to-table-definition", () => ({
-  convertContextToTableDefinition: (ctx: any) => ({
-    id: ctx.id,
-    name: { singular: ctx.id + "_item", plural: ctx.id + "_items" },
-    type: "items",
-    RBAC: false,
-    fields: ctx.fields,
-  }),
-}));
+// Deliberately NOT mocked (Task 4 fix round 2, Critical): the whole point of
+// this round's fix is that the REAL convertContextToTableDefinition must be
+// what builds the table createMutations receives below -- a mock here is
+// exactly what let the Critical (schema dropped on the way into the GraphQL
+// path) go unnoticed in round 1's version of this file. @EE/schemas / addCoreFields
+// (its own transitive deps) are plain data/constant modules with no import-time
+// side effects, so no mock is needed for them either.
 jest.mock("@SRC/exulu/chunker", () => ({ defaultChunker: jest.fn() }));
 jest.mock("@EE/queues/decorator", () => ({ bullmqDecorator: jest.fn() }));
 jest.mock("@SRC/utils/query-preprocessing", () => ({
@@ -121,6 +119,7 @@ jest.mock("@EE/rbac-update.ts", () => ({ handleRBACUpdate: jest.fn() }));
 import { z } from "zod";
 import { ExuluContext, type ExuluContextFieldDefinition } from "./context";
 import { createMutations } from "@SRC/graphql/mutations/index";
+import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
 
 // Same M&V fixture used throughout json-field-schema.test.ts/item-write.test.ts.
 const feld = z.object({ wert: z.string(), konfidenz: z.enum(["low", "medium", "high"]) });
@@ -153,9 +152,76 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>>) {
     return tables.get(name)!;
   };
 
+  // Counts every `.first()` call across every table (Task 4 fix round 2,
+  // Important 3): the behaviour-identical claim for gating the existing-row
+  // fetch on `args.merge?.length` can't be proven by comparing stored
+  // values -- gated and ungated produce the SAME final row when merge is
+  // absent. Only counting the actual round trips proves the fetch didn't
+  // happen.
+  let firstCallCount = 0;
+
+  // Both write paths JSON.stringify a json-typed column's object/array value
+  // before handing it to knex (jsonb columns bind as text) -- undo that
+  // half of the round trip here, the same way the real `pg` driver parses a
+  // jsonb column back into a JS value on read, so a row stored through this
+  // fake looks the same regardless of which write path produced it.
+  const parseJsonColumns = (patch: Record<string, unknown>) => {
+    const parsed: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(patch)) {
+      parsed[key] = typeof value === "string" && /^[{[]/.test(value) ? JSON.parse(value) : value;
+    }
+    return parsed;
+  };
+
+  let nextGeneratedId = 1;
+
+  /**
+   * Every state-setting method below (select/where/insert/onConflict/
+   * merge/update/returning) just records intent and returns `api` --
+   * unlike the single-purpose builder round 1 of this file used, this one
+   * has to support `insert(...).returning(...)` and, separately,
+   * `insert(...).onConflict(col).merge()` (CreateOne's upsert path, per the
+   * coordinator's Important 1 ruling), where knex mutates the SAME
+   * chainable in place rather than the caller reassigning each step. The
+   * actual table mutation happens once, lazily, in `then()` -- i.e. only
+   * when the chain is finally awaited -- via `execute()`.
+   */
   function builder(tableName: string) {
     let whereId: string | undefined;
     let selectCols: string[] | undefined;
+    let insertObj: Record<string, unknown> | undefined;
+    let updatePatch: Record<string, unknown> | undefined;
+    let conflictCol: string | undefined;
+    let isUpsert = false;
+
+    const execute = async (): Promise<Record<string, unknown>[]> => {
+      const t = tableFor(tableName);
+      if (insertObj !== undefined) {
+        const row = parseJsonColumns(insertObj);
+        if (isUpsert && conflictCol && row[conflictCol] !== undefined) {
+          const existing = [...t.entries()].find(([, r]) => r[conflictCol as string] === row[conflictCol]);
+          if (existing) {
+            const [existingId, existingRow] = existing;
+            const merged = { ...existingRow, ...row };
+            t.set(existingId, merged);
+            return [{ ...merged }];
+          }
+        }
+        const id = row.id !== undefined ? String(row.id) : `generated-${nextGeneratedId++}`;
+        const stored = { ...row, id };
+        t.set(id, stored);
+        return [{ ...stored }];
+      }
+      if (updatePatch !== undefined) {
+        if (whereId === undefined) throw new Error("fake db: update with no where clause");
+        const existing = t.get(whereId) ?? { id: whereId };
+        const merged = { ...existing, ...parseJsonColumns(updatePatch) };
+        t.set(whereId, merged);
+        return [{ ...merged }];
+      }
+      throw new Error("fake db: awaited a builder with nothing to execute");
+    };
+
     const api: any = {
       select: (cols: any) => {
         selectCols = Array.isArray(cols) ? cols : undefined;
@@ -166,6 +232,7 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>>) {
         return api;
       },
       first: async () => {
+        firstCallCount++;
         const row = whereId !== undefined ? tableFor(tableName).get(whereId) : undefined;
         if (!row) return undefined;
         if (!selectCols) return { ...row };
@@ -178,38 +245,48 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>>) {
         name: {},
         felder: {},
         notes: {},
+        favourite_items: {},
+        external_id: {},
         updatedAt: {},
         rights_mode: {},
         created_by: {},
       }),
-      update: (patch: Record<string, unknown>) => {
-        if (whereId === undefined) throw new Error("fake db: update with no where clause");
-        const t = tableFor(tableName);
-        const existing = t.get(whereId) ?? { id: whereId };
-        // Both write paths JSON.stringify a json-typed column's object/array
-        // value before handing it to knex (jsonb columns bind as text) --
-        // mirror the other half of that round trip here, the same way the
-        // real `pg` driver parses a jsonb column back into a JS value on
-        // read, so assertions compare objects rather than JSON text.
-        const parsed: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(patch)) {
-          parsed[key] = typeof value === "string" && /^[{[]/.test(value) ? JSON.parse(value) : value;
-        }
-        t.set(whereId, { ...existing, ...parsed });
-        const thenable: any = {
-          returning: async (_cols: any) => [{ ...t.get(whereId) }],
-          then: (resolve: any, reject: any) => Promise.resolve().then(resolve, reject),
-        };
-        return thenable;
+      insert: (obj: Record<string, unknown>) => {
+        insertObj = obj;
+        return api;
       },
+      // CreateOne's own upsert call (mutations/index.ts) calls `onConflict()`
+      // with NO column -- real Postgres/knex resolve that against the
+      // table's primary key; this fake does the same by defaulting to "id".
+      onConflict: (col?: string) => {
+        conflictCol = col ?? "id";
+        return api;
+      },
+      merge: () => {
+        isUpsert = true;
+        return api;
+      },
+      update: (patch: Record<string, unknown>) => {
+        updatePatch = patch;
+        return api;
+      },
+      // A marker, not a terminal call -- real knex returns the same
+      // chainable here too; execution happens on await, via `then` below.
+      returning: (_cols: any) => api,
+      then: (resolve: any, reject: any) => execute().then(resolve, reject),
     };
     return api;
   }
 
   const db: any = Object.assign((name: string) => builder(name), {
     from: (name: string) => builder(name),
+    fn: { uuid: () => `generated-${nextGeneratedId++}` },
   });
-  return { db, row: (name: string, id: string) => tableFor(name).get(id) };
+  return {
+    db,
+    row: (name: string, id: string) => tableFor(name).get(id),
+    firstCallCount: () => firstCallCount,
+  };
 }
 
 function makeContext(overrides: Record<string, unknown> = {}) {
@@ -225,16 +302,20 @@ function makeContext(overrides: Record<string, unknown> = {}) {
   } as any);
 }
 
-const presetsLikeTable: any = {
-  name: { singular: "docs_item", plural: TABLE_NAME },
-  type: "presets", // deliberately not "items": postprocessUpdate's embedder/processor
-  // branch is out of scope for this task and not touched by it.
-  RBAC: false,
-  fields: FIELDS,
-};
-
-function makeGraphqlMutations() {
-  return createMutations(presetsLikeTable, [], [], [], {} as any);
+/**
+ * Builds the GraphQL-side table definition the SAME way the real server
+ * does -- through the real convertContextToTableDefinition, from a real (or
+ * default) ExuluContext -- rather than a hand-built table that already
+ * carries `schema` (Task 4 fix round 2, Critical: that was exactly the
+ * shortcut that let the converter's dropped `schema` property go unnoticed
+ * by round 1's version of this file). `table.type` comes back "items" for
+ * real now, so `[ctx]` is passed as `contexts` -- postprocessUpdate's
+ * embedder/processor branch needs to find a context by id to decide there's
+ * nothing to do (`ctx.embedder` is undefined here, so it returns early).
+ */
+function makeGraphqlMutations(ctx: ExuluContext = makeContext()) {
+  const table = convertContextToTableDefinition(ctx);
+  return createMutations(table, [ctx], [], [], {} as any);
 }
 
 function graphqlContext() {
@@ -351,8 +432,21 @@ describe("item-write parity: the tool path and the GraphQL path agree", () => {
     expect(row(TABLE_NAME, "row-gql")!.felder).toEqual(existingFelder);
   });
 
-  // --- Review Focus 5: the concurrency claim -------------------------------
-  it("two merges on different keys both survive (same path, sequential)", async () => {
+  // --- Review Focus 5: two SERIALIZED merges both survive -------------------
+  //
+  // Wording corrected (Task 4 fix round 2, Important 5): what these two
+  // tests actually prove is that two merges, run one after the other (fully
+  // awaited, no overlap), both land. That is weaker than "concurrent-safe"
+  // and this file no longer claims the stronger thing. Fetch-then-write is
+  // two separate statements here, with no transaction, no row lock, and no
+  // SQL-side `jsonb_set` -- two GENUINELY concurrent merges (both reading
+  // the row before either writes) can still race and lose one's key, the
+  // same lost-update shape any read-modify-write without locking has. Not
+  // fixed in this round: the coordinator's own ruling is that adding
+  // locking is a deliberate, separate decision with performance
+  // consequences, not something to slip into a fix round. Flagged as a
+  // known limitation in the task report.
+  it("two merges on different keys both survive (same path, run one after the other)", async () => {
     const { db, row } = makeFakeDb({
       [TABLE_NAME]: { r1: { name: "A", felder: {} } },
     });
@@ -384,13 +478,17 @@ describe("item-write parity: the tool path and the GraphQL path agree", () => {
     });
   });
 
-  it("two merges on different keys both survive, INTERLEAVED ACROSS the tool path and the GraphQL path", async () => {
-    // The strongest form of the parity claim: not just "each path's own
-    // merge is non-destructive" but "the two independent implementations
-    // can take turns editing the same row and neither clobbers the other" --
-    // exactly the M&V two-analysts-editing-the-same-matrix scenario the spec
-    // names. Reverting either path's routing through prepareItemWrite would
-    // turn its half of this into a silent REPLACE, dropping a DIFFERENT
+  it("two merges on different keys both survive, run one after the other ACROSS the tool path and the GraphQL path", async () => {
+    // The strongest form of the parity claim this file makes: not just
+    // "each path's own merge is non-destructive" but "the two independent
+    // implementations can edit the same row one after the other and
+    // neither clobbers the other's prior edit" -- the SERIALIZED form of
+    // the M&V two-analysts-editing-the-same-matrix scenario the spec names
+    // (wording corrected, Task 4 fix round 2, Important 5: this is NOT a
+    // test of concurrent/racing writes -- see the describe block's own
+    // note above and the task report's "known limitation" section).
+    // Reverting either path's routing through prepareItemWrite would turn
+    // its half of this into a silent REPLACE, dropping a DIFFERENT
     // existing key -- this test would then fail on the final `toEqual`.
     //
     // Seeded non-empty on purpose (confirmed by reverting each wiring in
@@ -742,6 +840,163 @@ describe("item-write parity: the tool path and the GraphQL path agree", () => {
       ).rejects.toThrow(/merge/i);
 
       expect(row(TABLE_NAME, "r1")!.felder).toEqual(existingFelder);
+    });
+  });
+
+  // --- Important 3 (coordinator ruling): the existing-row fetch is gated --
+  //
+  // `prepareItemWrite` only reads `existing` inside its merge branch, so
+  // with no `merge` on a call that row is never consulted. The fetch used
+  // to run unconditionally -- one wasted `SELECT *` round trip per update,
+  // on every table, every time. Stored values are IDENTICAL whether the
+  // fetch runs or not when there's no merge (that's the point -- it's
+  // dead weight, not a behaviour change), so only a call-count check can
+  // actually tell the gated and ungated versions apart.
+  describe("the existing-row fetch only happens when merge is actually requested", () => {
+    it("UpdateOneById does not fetch the existing row at all when merge is absent, but does when merge is present", async () => {
+      const seedRow = { name: "A", felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } };
+      const { db, firstCallCount } = makeFakeDb({ [TABLE_NAME]: { r1: { ...seedRow } } });
+      sharedDb = db;
+      const updateOneById = makeGraphqlMutations()[`${TABLE_NAME}UpdateOneById`];
+
+      const beforeNoMerge = firstCallCount();
+      await updateOneById(null, { id: "r1", input: { name: "B" } }, graphqlContext(), {});
+      // Only the post-write result re-fetch (unconditional, unrelated to
+      // this gate) should have run -- the existing-row fetch must not have.
+      expect(firstCallCount() - beforeNoMerge).toBe(1);
+
+      const beforeWithMerge = firstCallCount();
+      await updateOneById(
+        null,
+        { id: "r1", input: { felder: { zielgruppe: { wert: "x", konfidenz: "low" } } }, merge: ["felder"] },
+        graphqlContext(),
+        {},
+      );
+      // Now BOTH the existing-row fetch and the post-write re-fetch ran.
+      expect(firstCallCount() - beforeWithMerge).toBe(2);
+    });
+
+    it("UpdateOne does not fetch the existing row at all when merge is absent, but does when merge is present", async () => {
+      const seedRow = { name: "A", felder: { budget_gesamt: { wert: "OLD", konfidenz: "low" } } };
+      const { db, firstCallCount } = makeFakeDb({ [TABLE_NAME]: { r1: { ...seedRow } } });
+      sharedDb = db;
+      const updateOne = makeGraphqlMutations()[`${TABLE_NAME}UpdateOne`];
+
+      const beforeNoMerge = firstCallCount();
+      await updateOne(null, { where: [{ id: { eq: "r1" } }], input: { name: "B" } }, graphqlContext(), {});
+      // Only UpdateOne's own unconditional "find the row by `where`" fetch
+      // should have run -- the existing-row fetch for merge must not have.
+      expect(firstCallCount() - beforeNoMerge).toBe(1);
+
+      const beforeWithMerge = firstCallCount();
+      await updateOne(
+        null,
+        {
+          where: [{ id: { eq: "r1" } }],
+          input: { felder: { zielgruppe: { wert: "x", konfidenz: "low" } } },
+          merge: ["felder"],
+        },
+        graphqlContext(),
+        {},
+      );
+      expect(firstCallCount() - beforeWithMerge).toBe(2);
+    });
+  });
+
+  // --- Important 1 (coordinator ruling): creates validate too, no merge ---
+  //
+  // The design spec's own "Left to the builder" left this open; the ruling
+  // closes it: validation only (there is no existing row to merge into).
+  // Goal 2 has the generated CREATE tool expose the schema to the model, so
+  // without this the model is SHOWN the shape on create and gets no
+  // refusal for violating it, while the identical shape on update was
+  // refused. `upsert: true` (`insert.onConflict().merge()`) is an update in
+  // disguise that bulk import uses, so it is covered the same way.
+  describe("creates validate too (no merge semantics -- there is nothing to merge into)", () => {
+    it("the tool path's createItem refuses a schema violation before any insert happens", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: {} });
+      sharedDb = db;
+      const ctx = makeContext();
+
+      await expect(
+        ctx.createItem(
+          { id: "c1", name: "A", felder: { budget_gesamt: { wert: "1000", konfidenz: "sehr hoch" } } } as any,
+          {} as any,
+        ),
+      ).rejects.toThrow(/budget_gesamt\.konfidenz/);
+
+      expect(row(TABLE_NAME, "c1")).toBeUndefined();
+    });
+
+    it("the tool path's createItem still succeeds for a valid value (backward-compat baseline)", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: {} });
+      sharedDb = db;
+      const ctx = makeContext();
+
+      await ctx.createItem(
+        { id: "c1", name: "A", felder: { budget_gesamt: { wert: "1000", konfidenz: "low" } } } as any,
+        {} as any,
+      );
+
+      expect(row(TABLE_NAME, "c1")!.felder).toEqual({ budget_gesamt: { wert: "1000", konfidenz: "low" } });
+    });
+
+    it("the tool path's createItem with upsert:true (an update in disguise) also refuses a schema violation", async () => {
+      const existingFelder = { budget_gesamt: { wert: "OLD", konfidenz: "low" } };
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { c1: { name: "A", felder: existingFelder } } });
+      sharedDb = db;
+      const ctx = makeContext();
+
+      await expect(
+        ctx.createItem(
+          { id: "c1", name: "A", felder: { budget_gesamt: { wert: "NEW", konfidenz: "sehr hoch" } } } as any,
+          {} as any,
+          undefined,
+          undefined,
+          true, // upsert
+        ),
+      ).rejects.toThrow(/budget_gesamt\.konfidenz/);
+
+      // The upsert never ran -- the row that was there before is still there.
+      expect(row(TABLE_NAME, "c1")!.felder).toEqual(existingFelder);
+    });
+
+    it("the GraphQL CreateOne resolver refuses a schema violation before any insert happens", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: {} });
+      sharedDb = db;
+
+      const createOne = makeGraphqlMutations()[`${TABLE_NAME}CreateOne`];
+      await expect(
+        createOne(
+          null,
+          { input: { id: "c1", name: "A", felder: { budget_gesamt: { wert: "1000", konfidenz: "sehr hoch" } } } },
+          graphqlContext(),
+          {},
+        ),
+      ).rejects.toThrow(/budget_gesamt\.konfidenz/);
+
+      expect(row(TABLE_NAME, "c1")).toBeUndefined();
+    });
+
+    it("the GraphQL CreateOne resolver with upsert:true (the door bulk import uses) also refuses a schema violation", async () => {
+      const existingFelder = { budget_gesamt: { wert: "OLD", konfidenz: "low" } };
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { c1: { name: "A", felder: existingFelder } } });
+      sharedDb = db;
+
+      const createOne = makeGraphqlMutations()[`${TABLE_NAME}CreateOne`];
+      await expect(
+        createOne(
+          null,
+          {
+            input: { id: "c1", name: "A", felder: { budget_gesamt: { wert: "NEW", konfidenz: "sehr hoch" } } },
+            upsert: true,
+          },
+          graphqlContext(),
+          {},
+        ),
+      ).rejects.toThrow(/budget_gesamt\.konfidenz/);
+
+      expect(row(TABLE_NAME, "c1")!.felder).toEqual(existingFelder);
     });
   });
 });

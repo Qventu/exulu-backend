@@ -57,20 +57,63 @@ describe("prepareItemWrite", () => {
     expect(result).toEqual({ ok: true, values: { notes: { a: 9, b: 2 } } });
   });
 
-  test("a merge-listed, SCHEMA-LESS field whose incoming value is not an object falls back to replace", () => {
-    // Degenerate input the spec never anticipates a caller sending — merging
-    // a non-object patch has no defined meaning, so this does not merge into
-    // whatever is stored; it replaces, the same as an un-merge-listed field.
-    // This is specifically the schema-LESS case ("notes" has no declared
-    // schema): a schema-carrying field's non-object value is refused
-    // outright instead (see the "Critical 1" tests below) — this module has
-    // no basis to refuse anything about a field's shape without a schema.
+  // --- Formerly a known limitation, now closed (Task 4 fix round 2,
+  // Important 4) ---------------------------------------------------------
+  //
+  // This used to silently fall back to a plain REPLACE: merging a
+  // non-object patch has no defined meaning, so there was nothing to merge
+  // INTO whatever was stored — it just replaced, the same as an
+  // un-merge-listed field. That was reachable in production (confirmed
+  // live): `users.favourite_items`/`favourite_artifacts`/`favourite_projects`
+  // are schema-less json ARRAY columns, and merge-listing one of them with
+  // an array value silently replaced the whole list instead of refusing —
+  // directly contradicting the generated tools' and the GraphQL SDL's own
+  // "only the keys given are changed, other stored keys are kept"
+  // description of what `merge` does. A schema-carrying field's non-object
+  // value is refused outright already (see the "Critical 1" tests below);
+  // this closes the identical gap for the schema-LESS case, inverting the
+  // original gap-report test rather than deleting it.
+  test("a merge-listed, SCHEMA-LESS field whose incoming value is not an object is now refused, not silently replaced", () => {
     const existing = { notes: { a: 1 } };
     const input = { notes: "a plain string, not a patch" };
 
     const result = prepareItemWrite({ fields, existing, input, merge: ["notes"] });
 
-    expect(result).toEqual({ ok: true, values: { notes: "a plain string, not a patch" } });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.message).toContain("notes");
+    expect(result.message.toLowerCase()).toContain("merge");
+  });
+
+  test("the exact live repro: a schema-less json ARRAY column merge-listed with a replacement array is refused, not silently replaced", () => {
+    // users.favourite_items/favourite_artifacts/favourite_projects shape:
+    // a schema-less json field whose stored value is always an array.
+    const arrayFields: ExuluContextFieldDefinition[] = [{ name: "favourite_items", type: "json" }];
+    const existing = { favourite_items: ["old-1", "old-2"] };
+    const input = { favourite_items: ["new-1"] };
+
+    const result = prepareItemWrite({ fields: arrayFields, existing, input, merge: ["favourite_items"] });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error(
+        `expected a refusal, got the list silently replaced: ${JSON.stringify(result.values.favourite_items)}`,
+      );
+    }
+    expect(result.message).toContain("favourite_items");
+    expect(result.message.toLowerCase()).toContain("array");
+    expect(result.message.toLowerCase()).toContain("merge");
+  });
+
+  test("the SAME array value is accepted on a plain REPLACE (no merge) — this rule is merge-only", () => {
+    const arrayFields: ExuluContextFieldDefinition[] = [{ name: "favourite_items", type: "json" }];
+    const result = prepareItemWrite({
+      fields: arrayFields,
+      existing: { favourite_items: ["old-1"] },
+      input: { favourite_items: ["new-1"] },
+    });
+
+    expect(result).toEqual({ ok: true, values: { favourite_items: ["new-1"] } });
   });
 
   test("a schema violation is refused, and the message names the field and what was expected", () => {

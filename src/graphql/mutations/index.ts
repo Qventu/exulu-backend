@@ -596,6 +596,19 @@ export function createMutations(
         input = await applyAgentGuestFieldTransforms(input);
       }
 
+      // Validation only, no merge (Task 4 fix round 2, Important 1): a
+      // create has no existing row, so `merge` is never passed and
+      // prepareItemWrite's merge branch never applies -- its result is
+      // discarded and `input` keeps flowing downstream exactly as before;
+      // the only effect of this call is throwing on a schema violation.
+      // Closes the same gap `context.ts`'s `createItem` closes for the tool
+      // path -- including `upsert: true` below (`insert.onConflict().merge()`),
+      // which is an update in disguise that bulk import uses.
+      const createValidation = prepareItemWrite({ fields: table.fields, existing: null, input });
+      if (!createValidation.ok) {
+        throw new Error(createValidation.message);
+      }
+
       // Check for each field if it is a json field, and if
       // so, check if it is an object or array and convert
       // it to a string.
@@ -728,7 +741,15 @@ export function createMutations(
       // mergeJson treat an unrequested field as empty and silently drop
       // every stored key the patch didn't just mention. A full-row fetch,
       // same as UpdateOneById's, avoids that.
-      const existingRow = await db.from(tableNamePlural).where({ id: item.id }).first();
+      //
+      // Gated on `args.merge?.length` (Task 4 fix round 2, Important 3):
+      // `prepareItemWrite` only ever reads `existing` inside its merge
+      // branch, so with no `merge` on this call (every caller today) this
+      // row is never consulted -- fetching it anyway was one wasted extra
+      // round trip, with a full `SELECT *`, on EVERY update of EVERY table
+      // in the system, dragging a context's longText columns and the
+      // generated `fts` tsvector along for no reason.
+      const existingRow = args.merge?.length ? await db.from(tableNamePlural).where({ id: item.id }).first() : null;
       const prepared = prepareItemWrite({
         fields: table.fields,
         existing: existingRow ?? null,
@@ -853,7 +874,14 @@ export function createMutations(
       // fetch it fresh here purely to have an "existing" value for
       // mergeJson -- validation itself only ever looks at the INCOMING
       // value (see prepareItemWrite's own doc comment), never at this row.
-      const existingRow = await db.from(tableNamePlural).where({ id }).first();
+      //
+      // Gated on `args.merge?.length` (Task 4 fix round 2, Important 3):
+      // `prepareItemWrite` only reads `existing` inside its merge branch, so
+      // with no `merge` on this call this row is never consulted -- fetching
+      // it anyway was a wasted extra `SELECT *` round trip on every update of
+      // every table, dragging a context's longText columns and the
+      // generated `fts` tsvector along for nothing.
+      const existingRow = args.merge?.length ? await db.from(tableNamePlural).where({ id }).first() : null;
       const prepared = prepareItemWrite({
         fields: table.fields,
         existing: existingRow ?? null,

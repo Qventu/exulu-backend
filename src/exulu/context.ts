@@ -692,6 +692,23 @@ export class ExuluContext {
 
     const { db } = await postgresClient();
 
+    // Validation only, no merge (Task 4 fix round 2, Important 1): there is
+    // no existing row to merge into on a create, so this call never passes
+    // `merge` and `existing` is always `null` -- `prepareItemWrite` then
+    // never applies its merge branch (every key is a plain replace) and
+    // `prepared.values` is content-identical to `item`, so the result is
+    // deliberately discarded and `item` keeps flowing downstream exactly as
+    // before -- the ONLY effect of this call is the throw on a schema
+    // violation. Without it, create exposed the SAME schema the model is
+    // shown (Part A) and then refused nothing a bad value violated, while
+    // the identical shape sent to `updateItem` was refused -- and
+    // `upsert: true` (`onConflict().merge()`, right below) is an update in
+    // disguise that bulk import uses, so this also closes that door.
+    const createValidation = prepareItemWrite({ fields: this.fields, existing: null, input: item });
+    if (!createValidation.ok) {
+      throw new Error(createValidation.message);
+    }
+
     // Check for each field if it is a json field, and if
     // so, check if it is an object or array and convert
     // it to a string.

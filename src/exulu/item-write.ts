@@ -115,6 +115,19 @@ import {
  * to clear a field says so with a plain REPLACE (no `merge`), which is
  * untouched by this rule and behaves exactly as before.
  *
+ * Sitting right beside that rule, checked immediately after it (Task 4 fix
+ * round 2, Important 4): a MERGE-listed, SCHEMA-LESS field whose incoming
+ * value is non-null but still not a plain object (an array, a string, a
+ * number...) is ALSO refused unconditionally, for the identical reason —
+ * merging into something that isn't a keyed structure has no defined
+ * meaning, and without this it silently fell through to a plain REPLACE
+ * that overwrote the whole value, reachable in production on
+ * `users.favourite_items`/`favourite_artifacts`/`favourite_projects` (all
+ * schema-less json ARRAY columns). A schema-carrying field whose schema
+ * commits to an object/record shape already gets the equivalent refusal
+ * from the shape check below; this is the schema-LESS half of the same
+ * question, which had no check to fall back on at all.
+ *
  * Task 4 (both production write paths went live) owned four more decisions
  * about the wire, not the chokepoint itself:
  *
@@ -250,6 +263,35 @@ function mergeClearRefusalMessage(fieldName: string): string {
 }
 
 /**
+ * The symmetric case to `mergeClearRefusalMessage`, for a SCHEMA-LESS
+ * merge-listed field (Task 4 fix round 2, Important 4): a merge patch that
+ * is non-null but still not a plain object (an array, a string, a number,
+ * ...). A schema-carrying field whose schema commits to an object/record
+ * shape already gets an equivalent refusal from the shape check below
+ * (`requiresPlainObject` + `shapeRefusalMessage`, Task 3's Critical 1); a
+ * field with NO declared schema has no such check to fall back on, so
+ * without this a merge-listed, schema-less field silently degraded to a
+ * plain REPLACE for any non-object value — live and reachable today:
+ * `users.favourite_items`/`favourite_artifacts`/`favourite_projects` are
+ * schema-less json ARRAY columns, and `usersUpdateOne(input: {
+ * favourite_items: [...] }, merge: ["favourite_items"])` would silently
+ * replace the whole list instead of refusing, exactly contradicting the
+ * SDL's own "only the keys given are changed, other stored keys are kept"
+ * description. Deliberately scoped to the schema-LESS case only — an
+ * array- or union-rooted *declared* schema is Task 3's own documented,
+ * separately-tracked residual (this module validates neither shape at all
+ * today), not reopened here.
+ */
+function mergeNonObjectRefusalMessage(fieldName: string, value: unknown): string {
+  const kind = Array.isArray(value) ? "an array" : `a ${typeof value}`;
+  return (
+    `Write to field "${fieldName}" rejected: a merge patch must be a JSON object with named keys, ` +
+    `but ${kind} was sent (${safeStringify(value)}). A merge patch cannot be ${kind} — only its ` +
+    `object keys are merged. To replace "${fieldName}" entirely with ${kind}, resend it WITHOUT "merge".`
+  );
+}
+
+/**
  * The four-part refusal for the shape check above: a schema declares an
  * object/record at its top level, but the incoming value for that field is
  * not a plain object at all. "What is available instead" reuses
@@ -368,6 +410,16 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
     // question — see the module doc's note above this function.
     if (isMergeField && value === null) {
       return { ok: false, message: mergeClearRefusalMessage(key) };
+    }
+
+    // Task 4 fix round 2, Important 4: the symmetric check for a
+    // SCHEMA-LESS merge-listed field given a non-null, non-object value
+    // (an array, string, number, ...) — see mergeNonObjectRefusalMessage's
+    // own doc comment for why this is scoped to `!schema` specifically. A
+    // schema-carrying field reaches the equivalent, better-informed check
+    // just below instead (it can cite valid paths; this can't).
+    if (isMergeField && !schema && !isPlainObject(value)) {
+      return { ok: false, message: mergeNonObjectRefusalMessage(key, value) };
     }
 
     if (schema) {

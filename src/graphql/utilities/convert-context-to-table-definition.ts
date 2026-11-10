@@ -24,6 +24,19 @@ export const convertContextToTableDefinition = (context: ExuluContext): ExuluTab
       enumValues: field.enumValues,
       allowedFileTypes: field.allowedFileTypes,
       unique: field.unique,
+      // Task 4 fix round 2, Critical: without this, every context item
+      // table's fields lose their declared json schema on the way into
+      // createMutations/createQueries -- the GraphQL write path (and
+      // vector-search.ts's filter path, Task 5) would see `schema:
+      // undefined` for every field, no matter what the context declares.
+      // This is an explicit allowlist with NO spread (by design, so a
+      // write-only secret like `hidden` doesn't leak into read-side SDL by
+      // accident) -- which also means every new ExuluContextFieldDefinition
+      // property has to be added here deliberately. `hidden` itself is a
+      // known, still-open instance of exactly this failure mode (not fixed
+      // here -- out of this task's scope); `schema` must not become a
+      // second one.
+      schema: field.schema,
     })),
   };
   definition.fields.push({
