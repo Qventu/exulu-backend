@@ -1,6 +1,7 @@
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { getChunksTableName, getTableName } from "@SRC/exulu/context";
+import { prepareItemWrite } from "@SRC/exulu/item-write";
 import { resolveEntityModel, setEntityModelSetting } from "@SRC/exulu/entities";
 import { updateStatistic } from "@SRC/exulu/statistics";
 import type { ExuluTool } from "@SRC/exulu/tool";
@@ -595,6 +596,19 @@ export function createMutations(
         input = await applyAgentGuestFieldTransforms(input);
       }
 
+      // Validation only, no merge (Task 4 fix round 2, Important 1): a
+      // create has no existing row, so `merge` is never passed and
+      // prepareItemWrite's merge branch never applies -- its result is
+      // discarded and `input` keeps flowing downstream exactly as before;
+      // the only effect of this call is throwing on a schema violation.
+      // Closes the same gap `context.ts`'s `createItem` closes for the tool
+      // path -- including `upsert: true` below (`insert.onConflict().merge()`),
+      // which is an update in disguise that bulk import uses.
+      const createValidation = prepareItemWrite({ fields: table.fields, existing: null, input });
+      if (!createValidation.ok) {
+        throw new Error(createValidation.message);
+      }
+
       // Check for each field if it is a json field, and if
       // so, check if it is an object or array and convert
       // it to a string.
@@ -701,17 +715,6 @@ export function createMutations(
         input = await applyAgentGuestFieldTransforms(input);
       }
 
-      // Check for each field if it is a json field, and if
-      // so, check if it is an object or array and convert
-      // it to a string.
-      Object.keys(input).forEach((key) => {
-        if (table.fields.find((field) => field.name === key)?.type === "json") {
-          if (typeof input[key] === "object" || Array.isArray(input[key])) {
-            input[key] = JSON.stringify(input[key]);
-          }
-        }
-      });
-
       const requestedFields = getRequestedFields(info);
       const sanitizedFields = sanitizeRequestedFields(table, requestedFields);
 
@@ -729,6 +732,46 @@ export function createMutations(
       }
       await validateWriteAccess(item.id, context);
 
+      // The same chokepoint UpdateOneById routes through
+      // (src/exulu/item-write.ts) -- a third write path with its own rules
+      // is not a chokepoint. `item` above is deliberately NOT reused as
+      // `existing` here: it was fetched with `sanitizedFields` (only the
+      // columns the caller's response selection asked for), which may well
+      // omit the very json field being merged -- feeding that in would make
+      // mergeJson treat an unrequested field as empty and silently drop
+      // every stored key the patch didn't just mention. A full-row fetch,
+      // same as UpdateOneById's, avoids that.
+      //
+      // Gated on `args.merge?.length` (Task 4 fix round 2, Important 3):
+      // `prepareItemWrite` only ever reads `existing` inside its merge
+      // branch, so with no `merge` on this call (every caller today) this
+      // row is never consulted -- fetching it anyway was one wasted extra
+      // round trip, with a full `SELECT *`, on EVERY update of EVERY table
+      // in the system, dragging a context's longText columns and the
+      // generated `fts` tsvector along for no reason.
+      const existingRow = args.merge?.length ? await db.from(tableNamePlural).where({ id: item.id }).first() : null;
+      const prepared = prepareItemWrite({
+        fields: table.fields,
+        existing: existingRow ?? null,
+        input,
+        merge: args.merge,
+      });
+      if (!prepared.ok) {
+        throw new Error(prepared.message);
+      }
+      input = prepared.values;
+
+      // Check for each field if it is a json field, and if
+      // so, check if it is an object or array and convert
+      // it to a string.
+      Object.keys(input).forEach((key) => {
+        if (table.fields.find((field) => field.name === key)?.type === "json") {
+          if (typeof input[key] === "object" || Array.isArray(input[key])) {
+            input[key] = JSON.stringify(input[key]);
+          }
+        }
+      });
+
       // We need to retrieve all the columns for potential post processing
       // operations that might need to be performed on the fields.
       const columns = await db(tableNamePlural).columnInfo();
@@ -738,6 +781,9 @@ export function createMutations(
       // matches at most one, so destructure the first element — downstream
       // code (`result.id`, RBAC lookups, postprocessUpdate, finalizeRequestedFields)
       // expects a single object, not an array.
+      // A key `prepareItemWrite` wrote with value `undefined` compiles to
+      // the identical SQL as omitting it (checked against the installed
+      // knex in item-write-parity.test.ts) -- already a safe no-op here.
       const [result] = await db(tableNamePlural)
         .where({ id: item.id })
         .update({
@@ -820,6 +866,33 @@ export function createMutations(
         input = await applyAgentGuestFieldTransforms(input);
       }
 
+      // The same chokepoint the tool path routes through (context.ts's
+      // updateItem, src/exulu/item-write.ts): validates a declared json
+      // schema against the incoming value and, for a field named in
+      // `merge`, combines it with the stored value instead of replacing it.
+      // This mutation never reads the row before writing it otherwise, so
+      // fetch it fresh here purely to have an "existing" value for
+      // mergeJson -- validation itself only ever looks at the INCOMING
+      // value (see prepareItemWrite's own doc comment), never at this row.
+      //
+      // Gated on `args.merge?.length` (Task 4 fix round 2, Important 3):
+      // `prepareItemWrite` only reads `existing` inside its merge branch, so
+      // with no `merge` on this call this row is never consulted -- fetching
+      // it anyway was a wasted extra `SELECT *` round trip on every update of
+      // every table, dragging a context's longText columns and the
+      // generated `fts` tsvector along for nothing.
+      const existingRow = args.merge?.length ? await db.from(tableNamePlural).where({ id }).first() : null;
+      const prepared = prepareItemWrite({
+        fields: table.fields,
+        existing: existingRow ?? null,
+        input,
+        merge: args.merge,
+      });
+      if (!prepared.ok) {
+        throw new Error(prepared.message);
+      }
+      input = prepared.values;
+
       // Check for each field if it is a json field, and if
       // so, check if it is an object or array and convert
       // it to a string.
@@ -831,6 +904,14 @@ export function createMutations(
         }
       });
 
+      // A key `prepareItemWrite` wrote with value `undefined` (an
+      // `.optional()`/`.default()` json schema legitimately allows this,
+      // though neither GraphQL's JSON scalar nor the AI SDK's own
+      // `params[key] !== undefined` guard can actually produce one in
+      // practice today) is not a column to null out -- confirmed against
+      // the installed knex: `.update({ x: undefined })` compiles to the
+      // IDENTICAL SQL as omitting `x` entirely, so it is already a safe
+      // no-op on that column with no change needed here.
       await db(tableNamePlural)
         .where({ id })
         .update({

@@ -21,6 +21,7 @@ import { needsPinRerun } from "./pin-rerun";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import { parsePreselectedItems } from "./global-ids";
 import { isExternalOrAnonymousUser } from "@SRC/exulu/resolve-max-steps";
+import { UnknownFilterPathError } from "@SRC/graphql/utilities/convert-graphql-filter-operator-to-pg-query";
 export { parsePreselectedItems } from "./global-ids";
 
 // ---------------------------------------------------------------------------
@@ -803,6 +804,33 @@ export function createAgenticRetrievalTool(opts: {
       yield { result: serializeOutput(result, hideSources) };
       return { result: serializeOutput(result, hideSources) };
       } catch (err) {
+        // A refused json filter path is the one failure here that is the
+        // CALLER's to fix, and the one that must never be reported as a
+        // degraded search (final review, Important 4). Spec Part C is
+        // explicit that a refused filter comes back as a normal tool
+        // RESULT carrying the message, not as a thrown error: a bad filter
+        // is a typo the model corrects on its next call, not a turn-ending
+        // condition. Reported as "Retrieval degraded due to an internal
+        // error — returning partial results", it was Part C's exact target
+        // failure in new wording — the model got partial results, no path
+        // list, and no reason to retry. `err.message` is already the
+        // complete four-part refusal (what was rejected, why, what was
+        // expected, and the full list of paths the schema DOES define), so
+        // it is surfaced verbatim as the step text. The throw itself stays
+        // where it is, deliberately (see UnknownFilterPathError's own doc
+        // comment); this is the boundary mapping that was missing.
+        if (err instanceof UnknownFilterPathError) {
+          console.warn("[EXULU pipeline] retrieval refused an unknown json filter path:", err.message);
+          result.steps.push({
+            stepNumber: 1,
+            text: err.message,
+            toolCalls: [],
+            chunks: [],
+            tokens: 0,
+          });
+          yield { result: serializeOutput(result, hideSources) };
+          return;
+        }
         console.warn("[EXULU pipeline] retrieval pipeline failed:", err);
         result.steps.push({
           stepNumber: 1,

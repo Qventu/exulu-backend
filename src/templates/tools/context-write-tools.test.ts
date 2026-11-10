@@ -104,6 +104,84 @@ describe("createContextWriteTools", () => {
     expect(skipped.needsApproval).toBe(false);
   });
 
+  describe("json field schema", () => {
+    // Backward-compatibility guard (Global Constraints): a json field that
+    // declares no schema must still behave exactly as it does without this
+    // feature — an opaque JSON string, on every path, forever.
+    it("a json field with no schema is still offered as a JSON string", () => {
+      const [createTool, updateTool] = createContextWriteTools(makeContext(), { create: true, update: true }, false);
+      for (const tool of [createTool, updateTool]) {
+        // specs is optional (not a required field), so the description lives
+        // on the wrapped inner schema, not the ZodOptional itself.
+        const specs = (tool.inputSchema as z.ZodObject<any>).shape.specs as z.ZodOptional<z.ZodTypeAny>;
+        expect(specs.unwrap().description).toBe("The specs of the item, as a valid JSON string.");
+        expect(specs.parse('{"a":1}')).toBe('{"a":1}');
+        expect(() => specs.parse({ a: 1 })).toThrow();
+      }
+    });
+
+    it("a json field with a schema offers that schema to the model", () => {
+      const schemaFields = BASE_FIELDS.map((f) =>
+        f.name === "specs" ? { ...f, schema: z.object({ wert: z.string() }) } : f,
+      );
+      const [updateTool] = createContextWriteTools(makeContext({ fields: schemaFields }), { create: false, update: true }, false);
+      const specs = (updateTool.inputSchema as z.ZodObject<any>).shape.specs as z.ZodOptional<z.ZodTypeAny>;
+      // Minor (Task 2 review): the description text itself must be asserted,
+      // not just that parsing works — a regression that dropped or reworded
+      // it would otherwise pass unnoticed.
+      expect(specs.unwrap().description).toBe("The specs of the item.");
+      expect(specs.parse({ wert: "x" })).toEqual({ wert: "x" });
+      expect(() => specs.parse({ wert: 1 })).toThrow();
+    });
+
+    describe("transport looseness (Task 2 review, Critical)", () => {
+      // field.schema goes straight into this tool's inputSchema, and the `ai`
+      // package parses the model's raw tool-call JSON with that schema's own
+      // safeParseAsync before any Exulu code runs. z.object() strips
+      // undeclared keys by default — unloosened, that silently destroys a
+      // key the model sent, one layer before Task 3's chokepoint ever gets a
+      // chance to refuse it with a message (the design spec's named
+      // anti-goal: "never strips"). These tests parse through the REAL
+      // `inputSchema` the tool exposes — the whole object, the way the model
+      // actually calls the tool — not the `specs` field's subschema in
+      // isolation; a test against the subschema alone would have passed
+      // while the real path still dropped the key, which is exactly how
+      // this defect hid the first time.
+      const schemaFields = BASE_FIELDS.map((f) =>
+        f.name === "specs" ? { ...f, schema: z.object({ felder: z.object({ wert: z.string() }) }) } : f,
+      );
+      const buildInputSchema = (): z.ZodObject<any> => {
+        const [updateTool] = createContextWriteTools(
+          makeContext({ fields: schemaFields }),
+          { create: false, update: true },
+          false,
+        );
+        return updateTool.inputSchema as z.ZodObject<any>;
+      };
+
+      it("keeps a top-level unknown key under the json field instead of stripping it", () => {
+        const result: any = buildInputSchema().safeParse({
+          specs: { felder: { wert: "x" }, unknown: "KEEP" },
+        });
+        expect(result.success).toBe(true);
+        expect(result.data.specs.unknown).toBe("KEEP");
+      });
+
+      it("keeps an unknown key nested one level deeper under the json field", () => {
+        const result: any = buildInputSchema().safeParse({
+          specs: { felder: { wert: "x", unknown: "KEEP" } },
+        });
+        expect(result.success).toBe(true);
+        expect(result.data.specs.felder.unknown).toBe("KEEP");
+      });
+
+      it("still rejects a wrong type on a declared key after loosening", () => {
+        const result = buildInputSchema().safeParse({ specs: { felder: { wert: 1 } } });
+        expect(result.success).toBe(false);
+      });
+    });
+  });
+
   describe("create execute", () => {
     const run = async (params: Record<string, unknown>, context = makeContext()) => {
       const [tool] = createContextWriteTools(context, { create: true, update: false }, false);
@@ -193,7 +271,15 @@ describe("createContextWriteTools", () => {
       const { result } = await run({ external_id: "ext-1", price: 25 }, context);
       expect(context.getItem).toHaveBeenNthCalledWith(1, { item: { id: undefined, external_id: "ext-1" } });
       // external_id is lookup-only: the patch must not write it back.
-      expect(context.updateItem).toHaveBeenCalledWith({ id: "item-1", price: 25 }, exuluConfig, 7, "role-1");
+      expect(context.updateItem).toHaveBeenCalledWith(
+        { id: "item-1", price: 25 },
+        exuluConfig,
+        7,
+        "role-1",
+        undefined,
+        undefined,
+        undefined,
+      );
       expect(result.result).toContain('"price":25');
     });
 
@@ -203,6 +289,80 @@ describe("createContextWriteTools", () => {
       const { result } = await run({ id: "item-1" }, context);
       expect(context.updateItem).not.toHaveBeenCalled();
       expect(result.result).toContain("No fields");
+    });
+
+    it("forwards a merge list to context.updateItem as the merge argument, not as part of the patch", async () => {
+      writeGate.mockResolvedValue(true);
+      const context = makeContext({
+        getItem: jest.fn(async () => ({ id: "item-1", rights_mode: "public", specs: { a: 1 } })),
+      });
+      await run({ id: "item-1", specs: { b: 2 }, merge: ["specs"] }, context);
+      expect(context.updateItem).toHaveBeenCalledWith(
+        { id: "item-1", specs: { b: 2 } },
+        exuluConfig,
+        7,
+        "role-1",
+        undefined,
+        undefined,
+        ["specs"],
+      );
+    });
+
+    it("omitting merge entirely still calls updateItem with undefined (today's replace behaviour)", async () => {
+      writeGate.mockResolvedValue(true);
+      const context = makeContext({
+        getItem: jest.fn(async () => ({ id: "item-1", rights_mode: "public", specs: { a: 1 } })),
+      });
+      await run({ id: "item-1", specs: { b: 2 } }, context);
+      expect(context.updateItem).toHaveBeenCalledWith(
+        { id: "item-1", specs: { b: 2 } },
+        exuluConfig,
+        7,
+        "role-1",
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+  });
+
+  describe("the merge wire parameter", () => {
+    it("the update tool offers a merge list naming the json fields when the context has one", () => {
+      const [, updateTool] = createContextWriteTools(makeContext(), { create: true, update: true }, false);
+      const shape = (updateTool.inputSchema as z.ZodObject<any>).shape;
+      expect(shape.merge).toBeDefined();
+      expect(shape.merge.isOptional()).toBe(true);
+      expect(shape.merge.description).toContain("specs");
+    });
+
+    it("the merge description tells the model the two things that bite: an unmatched name is refused, and overlapping merges lose writes", () => {
+      // Final review, Important 7 (and Important 1): this description is
+      // the only place the model learns what merge does. It used to promise
+      // "other stored keys are kept" unconditionally, with the
+      // serialized-only limitation recorded nowhere a model or a human
+      // reads, and said nothing about a name that matches no field in the
+      // call -- which used to degrade into a destructive replace.
+      const [, updateTool] = createContextWriteTools(makeContext(), { create: true, update: true }, false);
+      const shape = (updateTool.inputSchema as z.ZodObject<any>).shape;
+      expect(shape.merge.description).toContain("refused, not ignored");
+      expect(shape.merge.description).toContain("Do not run two merges on the same item at once");
+    });
+
+    it("the create tool never offers merge — there is nothing stored yet to merge into", () => {
+      const [createTool] = createContextWriteTools(makeContext(), { create: true, update: false }, false);
+      const shape = (createTool.inputSchema as z.ZodObject<any>).shape;
+      expect(shape.merge).toBeUndefined();
+    });
+
+    it("a context with no json field never offers merge on update either", () => {
+      const noJsonFields = BASE_FIELDS.filter((f) => f.type !== "json");
+      const [updateTool] = createContextWriteTools(
+        makeContext({ fields: noJsonFields }),
+        { create: false, update: true },
+        false,
+      );
+      const shape = (updateTool.inputSchema as z.ZodObject<any>).shape;
+      expect(shape.merge).toBeUndefined();
     });
   });
 });

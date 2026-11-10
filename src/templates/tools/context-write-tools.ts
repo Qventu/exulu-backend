@@ -10,6 +10,7 @@ import { copyS3Object } from "@SRC/uppy/index";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { checkItemWriteAccess } from "@SRC/utils/check-item-write-access";
 import { KB_EDITOR_TOOL_ID, parseKbEditorConfig, type KbWritePermissions } from "./kb-editor-config";
+import { loosenForTransport } from "@SRC/exulu/json-field-schema";
 
 // Tool ids must match ^[a-z_][a-z0-9_]{4,79}: "create_" (7) + segment + "_item" (5)
 // caps the sanitized context-id segment at 68 chars.
@@ -47,10 +48,11 @@ const RESERVED_INPUT_KEYS = new Set([
 const buildWriteSchema = (
   context: ExuluContext,
   mode: WriteMode,
-): { shape: Record<string, ZodSchema>; contentKeys: string[]; fileFields: FileField[] } => {
+): { shape: Record<string, ZodSchema>; contentKeys: string[]; fileFields: FileField[]; jsonFieldNames: string[] } => {
   const shape: Record<string, ZodSchema> = {};
   const contentKeys: string[] = [];
   const fileFields: FileField[] = [];
+  const jsonFieldNames: string[] = [];
 
   const addContent = (key: string, schema: ZodSchema, required: boolean) => {
     shape[key] = required && mode === "create" ? schema : schema.optional();
@@ -109,7 +111,25 @@ const buildWriteSchema = (
           );
         break;
       case "json":
-        schema = z.string().describe(`The ${field.name} of the item, as a valid JSON string.`);
+        // Tracked so `merge` (below) can name which fields are eligible and
+        // the model can see that list, instead of a parameter nothing
+        // documents the shape of.
+        jsonFieldNames.push(field.name);
+        // Without a declared schema the model only ever sees an opaque JSON
+        // string and has to guess its shape. When the field declares one,
+        // offer that shape directly instead — the model gets real structure
+        // to fill in. This is strictly a transport-level schema: it exists
+        // to GUIDE the model, not to validate the write. loosenForTransport
+        // is required here, not optional — the raw declared schema would
+        // otherwise be parsed by the AI SDK's own safeParseAsync before any
+        // Exulu code runs, and zod's default object behaviour silently
+        // strips a key the model sends that the schema didn't declare. That
+        // is the one thing this feature must never do (see json-field-
+        // schema.ts for the full reasoning); the actual accept/reject
+        // decision on an unknown key still belongs to the write chokepoint.
+        schema = field.schema
+          ? loosenForTransport(field.schema).describe(`The ${field.name} of the item.`)
+          : z.string().describe(`The ${field.name} of the item, as a valid JSON string.`);
         break;
       case "markdown":
         schema = z.string().describe(`The ${field.name} of the item, as a valid Markdown string.`);
@@ -131,7 +151,43 @@ const buildWriteSchema = (
     addContent(field.name, schema, field.required === true);
   }
 
-  return { shape, contentKeys, fileFields };
+  // The wire form of spec Part B's merge: a sibling list, not nested inside
+  // any one field's own schema, so it stays expressible for every json field
+  // at once without touching loosenForTransport's per-field shape. Update-
+  // only (merge has no meaning on create, there's nothing stored yet to
+  // merge into) and only offered when the context actually has a json field
+  // to merge into. `!shape["merge"]` guards the one-in-a-million case where a
+  // context field is itself literally named "merge" -- that field's own slot
+  // wins rather than being silently overwritten.
+  //
+  // The description below is the ONE place the model learns what `merge`
+  // does, so it carries the two things that bite (final review, Important 1
+  // and 7): a name that matches nothing in this call is refused rather than
+  // ignored (it used to degrade into a destructive REPLACE of the field the
+  // caller was trying to patch), and a merge is a two-statement
+  // read-modify-write with no transaction or row lock -- safe serialized,
+  // not safe overlapped. The promise used to be stated unconditionally here
+  // and in the SDL, with the limitation recorded only inside a test file.
+  // The same correction is now on the SDL's own `merge` description
+  // (src/graphql/schemas/index.ts) and in src/exulu/item-write.ts's module
+  // doc.
+  if (mode === "update" && jsonFieldNames.length > 0 && !shape["merge"]) {
+    shape["merge"] = z
+      .array(z.string())
+      .optional()
+      .describe(
+        `Names of json fields in THIS call (choose from: ${jsonFieldNames.join(", ")}) whose given ` +
+          `value should be merged into the stored value instead of replacing it: only the keys given ` +
+          `are changed, every other stored key is kept, and giving a key an explicit null value deletes ` +
+          `just that key. Omit a field's name here (or omit "merge" entirely) to replace its whole value, as normal. ` +
+          `Every name must be spelled exactly as listed above AND be a field you are sending a value for in this ` +
+          `same call; a name that is neither is refused, not ignored. Do not run two merges on the same item at ` +
+          `once: a merge reads the stored value and writes the combined result in two steps with no lock, so ` +
+          `overlapping merges can lose one of them.`,
+      );
+  }
+
+  return { shape, contentKeys, fileFields, jsonFieldNames };
 };
 
 const BARE_FILENAME = /^[^/\\]+$/;
@@ -344,7 +400,16 @@ export const createContextWriteTools = (
               return { result: "No fields to update were provided." };
             }
             patch.id = existing.id;
-            const { job } = await context.updateItem(patch, exuluConfig, user?.id, user?.role?.id);
+            const merge = Array.isArray(params.merge) ? (params.merge as string[]) : undefined;
+            const { job } = await context.updateItem(
+              patch,
+              exuluConfig,
+              user?.id,
+              user?.role?.id,
+              undefined,
+              undefined,
+              merge,
+            );
             // updateItem returns the PRE-update record — re-fetch for a fresh view.
             const fresh = await context.getItem({ item: { id: existing.id } });
             const summary: Record<string, unknown> = { id: existing.id };
