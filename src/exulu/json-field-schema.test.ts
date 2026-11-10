@@ -3,6 +3,7 @@ import {
   leafViolations,
   loosenForTransport,
   mergeJson,
+  missingRequiredKeys,
   requiresPlainObject,
   schemaPaths,
   unknownPaths,
@@ -337,5 +338,75 @@ describe("mergeJson", () => {
 
     expect(Object.prototype.hasOwnProperty.call(result, "__proto__")).toBe(false);
     expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+  });
+});
+
+describe("missingRequiredKeys", () => {
+  // Final review, Important 6. The half of the shape contract
+  // `leafViolations` deliberately does not cover: it visits only PRESENT
+  // keys, so an absent required key was invisible to every check.
+  test("names the required top-level keys an object-rooted schema declares and the value omits", () => {
+    const o = z.object({ a: z.string(), b: z.string() });
+    expect(missingRequiredKeys(o, { a: "x" })).toEqual(["b"]);
+    expect(missingRequiredKeys(o, { a: "x", b: "y" })).toEqual([]);
+    expect(missingRequiredKeys(o, {})).toEqual(["a", "b"]);
+  });
+
+  test("optionality is asked of the sub-schema, not of its .def.type", () => {
+    // Every one of these spellings accepts `undefined`, so none of them is
+    // required -- and a `.def.type === "optional"` test gets at least the
+    // last two wrong.
+    const o = z.object({
+      plain: z.string(),
+      optional: z.string().optional(),
+      withDefault: z.string().default("d"),
+      any: z.any(),
+      nullableOptional: z.string().optional().nullable(),
+      optionalNullable: z.string().nullable().optional(),
+    });
+    expect(missingRequiredKeys(o, {})).toEqual(["plain"]);
+  });
+
+  test(".nullable() alone does not make a key optional -- it may be null, not absent", () => {
+    const o = z.object({ a: z.string().nullable() });
+    expect(missingRequiredKeys(o, {})).toEqual(["a"]);
+    expect(missingRequiredKeys(o, { a: null })).toEqual([]);
+  });
+
+  test("sees through the field-level optional/nullable/default wrappers, same as every other function here", () => {
+    const o = z.object({ a: z.string(), b: z.string() });
+    expect(missingRequiredKeys(o.optional(), { a: "x" })).toEqual(["b"]);
+    expect(missingRequiredKeys(o.nullable(), { a: "x" })).toEqual(["b"]);
+  });
+
+  test("a record has no required keys -- every key is a caller-chosen id (the M&V case)", () => {
+    expect(missingRequiredKeys(schema, {})).toEqual([]);
+    expect(missingRequiredKeys(schema, { anything: { wert: "x", konfidenz: "low" } })).toEqual([]);
+  });
+
+  test("an array- or union-rooted schema, or a non-object value, reports nothing", () => {
+    expect(missingRequiredKeys(z.array(z.object({ a: z.string() })), { a: "x" })).toEqual([]);
+    expect(missingRequiredKeys(z.union([z.object({ a: z.string() }), z.string()]), {})).toEqual([]);
+    expect(missingRequiredKeys(z.object({ a: z.string() }), "not an object")).toEqual([]);
+    expect(missingRequiredKeys(z.object({ a: z.string() }), null)).toEqual([]);
+  });
+
+  test("a declared key named after an Object.prototype member is read with hasOwn, not `in`", () => {
+    // `"toString" in value` is true for ANY object, so a `key in value`
+    // presence test would report a key the caller never sent as present --
+    // the same prototype-chain read this module fixes everywhere else.
+    const o = z.object({ toString: z.string() });
+    expect(missingRequiredKeys(o, {})).toEqual(["toString"]);
+    expect(missingRequiredKeys(o, JSON.parse('{"toString":"x"}'))).toEqual([]);
+  });
+
+  test("does not read .data from the probe parse -- the value it is handed is never rewritten", () => {
+    // The module's central rule, asserted on the one function that parses
+    // something other than the caller's value: `undefined` is parsed only
+    // to ask whether a key is optional.
+    const o = z.object({ a: z.string().default("injected"), b: z.string() });
+    const value = { a: "mine" } as Record<string, unknown>;
+    expect(missingRequiredKeys(o, value)).toEqual(["b"]);
+    expect(value).toEqual({ a: "mine" });
   });
 });

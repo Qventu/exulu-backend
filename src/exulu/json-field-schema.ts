@@ -389,6 +389,53 @@ function describeExpectedValues(issue: unknown): string | undefined {
 }
 
 /**
+ * Declared top-level keys an object-rooted `schema` REQUIRES that `value`
+ * does not have. The missing half of `leafViolations`' contract, and
+ * deliberately not folded into it: `leafViolations` checks only the keys
+ * that are PRESENT, which is exactly right for a merge patch (spec Part B
+ * merges at the top level, so a patch legitimately omits every key it is
+ * not touching) and exactly wrong for a REPLACE, which is a whole value
+ * and has to satisfy the declared shape on its own. Before this existed,
+ * `z.object({ a: z.string(), b: z.string() })` accepted a create of
+ * `{ a: "x" }` with `ok: true` and stored a row the declared schema
+ * rejects — see `prepareItemWrite`'s own call site for the `{}` exemption
+ * and why clearing a field is an operation rather than a value.
+ *
+ * "Required" is asked of the sub-schema itself, never of `.def.type`: a
+ * key is optional exactly when its declared schema accepts `undefined`,
+ * which is one question that covers `.optional()`, `.default()`,
+ * `z.any()`/`z.unknown()`, and any nesting of those wrappers in either
+ * order — all of which a `.def.type === "optional"` test gets wrong for at
+ * least one spelling. Only `.success` is read from that parse, never
+ * `.data`, same as every other check in this module.
+ *
+ * Returns `[]` for anything but an object-rooted schema. A record's keys
+ * are caller-chosen ids by definition — there is no such thing as a
+ * required one — and an array- or union-rooted schema is the same
+ * documented residual `requiresPlainObject` describes below.
+ */
+export function missingRequiredKeys(schema: z.ZodTypeAny, value: unknown): string[] {
+  if (!isPlainObject(value)) return [];
+
+  const def = unwrap(schema).def as AnyDef;
+  if (def.type !== "object") return [];
+
+  const shape = def.shape as Record<string, z.ZodTypeAny>;
+  const missing: string[] = [];
+  for (const key of Object.keys(shape)) {
+    const child = shape[key];
+    if (!child) continue;
+    // `hasOwn`, not `key in value` / `value[key]`: `value` is model-supplied
+    // and `key` can be the name of an `Object.prototype` member, in which
+    // case both direct forms report a key the caller never sent as present
+    // (the same prototype-chain read this module fixes everywhere else).
+    if (hasOwn(value, key)) continue;
+    if (!child.safeParse(undefined).success) missing.push(key);
+  }
+  return missing;
+}
+
+/**
  * Whether `schema`'s unwrapped top level commits to a plain-object shape —
  * `z.object()` or `z.record()`, the only two kinds `unknownPaths` and
  * `leafViolations` each special-case. Exists for `prepareItemWrite`

@@ -159,6 +159,18 @@ const buildWriteSchema = (
   // to merge into. `!shape["merge"]` guards the one-in-a-million case where a
   // context field is itself literally named "merge" -- that field's own slot
   // wins rather than being silently overwritten.
+  //
+  // The description below is the ONE place the model learns what `merge`
+  // does, so it carries the two things that bite (final review, Important 1
+  // and 7): a name that matches nothing in this call is refused rather than
+  // ignored (it used to degrade into a destructive REPLACE of the field the
+  // caller was trying to patch), and a merge is a two-statement
+  // read-modify-write with no transaction or row lock -- safe serialized,
+  // not safe overlapped. The promise used to be stated unconditionally here
+  // and in the SDL, with the limitation recorded only inside a test file.
+  // The same correction is now on the SDL's own `merge` description
+  // (src/graphql/schemas/index.ts) and in src/exulu/item-write.ts's module
+  // doc.
   if (mode === "update" && jsonFieldNames.length > 0 && !shape["merge"]) {
     shape["merge"] = z
       .array(z.string())
@@ -167,7 +179,11 @@ const buildWriteSchema = (
         `Names of json fields in THIS call (choose from: ${jsonFieldNames.join(", ")}) whose given ` +
           `value should be merged into the stored value instead of replacing it: only the keys given ` +
           `are changed, every other stored key is kept, and giving a key an explicit null value deletes ` +
-          `just that key. Omit a field's name here (or omit "merge" entirely) to replace its whole value, as normal.`,
+          `just that key. Omit a field's name here (or omit "merge" entirely) to replace its whole value, as normal. ` +
+          `Every name must be spelled exactly as listed above AND be a field you are sending a value for in this ` +
+          `same call; a name that is neither is refused, not ignored. Do not run two merges on the same item at ` +
+          `once: a merge reads the stored value and writes the combined result in two steps with no lock, so ` +
+          `overlapping merges can lose one of them.`,
       );
   }
 

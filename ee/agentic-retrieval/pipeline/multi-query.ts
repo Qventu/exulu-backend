@@ -1,3 +1,4 @@
+import { UnknownFilterPathError } from "@SRC/graphql/utilities/convert-graphql-filter-operator-to-pg-query";
 import { RRF_K } from "./config";
 import type { Chunk } from "./types";
 
@@ -13,6 +14,18 @@ export type SearchCallConfig = {
 /**
  * Performs a single search with the given query and configuration.
  * Wraps the context.search call in try/catch to handle failures gracefully.
+ *
+ * One exception is deliberately NOT handled gracefully (final review,
+ * Important 4): a refused json filter path (`UnknownFilterPathError`) is
+ * not a search that failed, it is a filter that cannot be answered — the
+ * caller asked about a path the field's declared schema does not define,
+ * and degrading that to zero chunks reproduces the exact silence spec Part
+ * C exists to end (an empty result the model reports as "there are none").
+ * It is re-thrown so it reaches the pipeline's own boundary
+ * (`pipeline/index.ts`), which turns it into a step the model can read and
+ * act on. `pipeline/search.ts`'s per-context catch re-throws it for the
+ * same reason — every swallow point between the query and that boundary
+ * has to pass it along, or the mapping exists and never fires.
  */
 export async function singleSearch({
   query,
@@ -53,6 +66,7 @@ export async function singleSearch({
 
     return results.chunks || [];
   } catch (e) {
+    if (e instanceof UnknownFilterPathError) throw e;
     console.warn("[EXULU] singleSearch failed for query:", query, e);
     return [];
   }

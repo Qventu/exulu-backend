@@ -1,4 +1,5 @@
 import { multiQuerySearch, singleSearch } from "./multi-query";
+import { UnknownFilterPathError } from "@SRC/graphql/utilities/convert-graphql-filter-operator-to-pg-query";
 
 const chunk = (id: string, score = 1) => ({
   chunk_id: id,
@@ -47,5 +48,60 @@ describe("multiQuerySearch", () => {
       context: ctx,
     });
     expect(ctx.search.mock.calls[0][0].itemFilters).toEqual([{ id: { in: ["x"] } }]);
+  });
+});
+
+// Final review, Important 4: singleSearch's catch-all turns any failure into
+// zero chunks, which is right for a search that broke and wrong for a filter
+// that cannot be answered -- an undeclared json filter path degraded to an
+// empty result the model reports as "there are none", the exact silence spec
+// Part C exists to end. It is re-thrown so the pipeline's boundary can
+// surface the refusal message instead.
+describe("singleSearch and a refused json filter path", () => {
+  it("re-throws UnknownFilterPathError instead of degrading it to zero chunks", async () => {
+    const err = new UnknownFilterPathError("felder", ["konfidenz"], ["<key>.konfidenz"]);
+    const ctx = { search: jest.fn().mockRejectedValue(err) };
+
+    await expect(
+      singleSearch({
+        query: "q",
+        config: { method: "hybridSearch", limit: 5 },
+        user: {},
+        role: "r",
+        pinnedItemIds: [],
+        context: ctx,
+      }),
+    ).rejects.toBe(err);
+  });
+
+  it("every OTHER failure is still swallowed into an empty result, exactly as before", async () => {
+    const ctx = { search: jest.fn().mockRejectedValue(new Error("connection reset")) };
+
+    await expect(
+      singleSearch({
+        query: "q",
+        config: { method: "hybridSearch", limit: 5 },
+        user: {},
+        role: "r",
+        pinnedItemIds: [],
+        context: ctx,
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it("multiQuerySearch propagates it too -- one refused filter is refused for every query variation", async () => {
+    const err = new UnknownFilterPathError("felder", ["konfidenz"], ["<key>.konfidenz"]);
+    const ctx = { search: jest.fn().mockRejectedValue(err) };
+
+    await expect(
+      multiQuerySearch({
+        queries: ["q1", "q2"],
+        config: { method: "hybridSearch", limit: 5 },
+        user: {},
+        role: "r",
+        pinnedItemIds: [],
+        context: ctx,
+      }),
+    ).rejects.toBe(err);
   });
 });

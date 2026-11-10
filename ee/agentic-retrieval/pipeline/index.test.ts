@@ -1,5 +1,6 @@
 // ee/agentic-retrieval/pipeline/index.test.ts
 import { createAgenticRetrievalTool, parsePreselectedItems } from "./index";
+import { UnknownFilterPathError } from "@SRC/graphql/utilities/convert-graphql-filter-operator-to-pg-query";
 
 jest.mock("@EE/entitlements", () => ({ checkLicense: () => ({ "agentic-retrieval": true }) }));
 jest.mock("@SRC/exulu/resolve-reranker", () => ({ resolveReranker: jest.fn(async () => ({ model: "m", rerank: async (_q: any, c: any) => c })) }));
@@ -390,5 +391,51 @@ describe("engine v2 — identifier pins run alongside memory and routing", () =>
     await drain(run(inputs));
     expect(resolveIdentifierPins).toHaveBeenCalledTimes(1);
     expect(runMemoryPhase.mock.calls[0][0].mergedCall).toBeFalsy();
+  });
+});
+
+describe("a refused json filter path reaching the pipeline boundary", () => {
+  // --- Final review, Important 4 -----------------------------------------
+  //
+  // Spec Part C: a refused filter must come back as a normal tool RESULT
+  // carrying the message, not as a thrown error -- a bad filter is a typo
+  // the model fixes on its next call, not a turn-ending condition. This
+  // boundary's catch-all was reporting it as "Retrieval degraded due to an
+  // internal error -- returning partial results", so the model got partial
+  // results and no path list: Part C's exact target failure in new wording.
+  it("surfaces the refusal as the step text, not as the generic degraded message", async () => {
+    const { searchContexts } = jest.requireMock("./search");
+    searchContexts.mockRejectedValueOnce(
+      new UnknownFilterPathError("felder", ["konfidenz"], ["<key>.wert", "<key>.konfidenz"]),
+    );
+
+    const run = makeTool({});
+    const out = await drain(run(inputs));
+    // The tool result is the serialized output, so assert on the parsed
+    // step text rather than on the JSON-escaped string.
+    const payload = JSON.parse(out[out.length - 1].result as string);
+    const texts = (payload.steps as { text: string }[]).map((step) => step.text);
+
+    // The four-part refusal reaches the model verbatim, list of valid paths
+    // included -- that list is the whole point of Part C.
+    expect(texts).toContainEqual(expect.stringContaining('Filter on field "felder" rejected'));
+    expect(texts).toContainEqual(expect.stringContaining("<key>.konfidenz"));
+    expect(texts).not.toContainEqual(
+      expect.stringContaining("Retrieval degraded due to an internal error"),
+    );
+  });
+
+  it("every OTHER pipeline failure still reports the generic degraded message", async () => {
+    const { searchContexts } = jest.requireMock("./search");
+    searchContexts.mockRejectedValueOnce(new Error("connection reset"));
+
+    const run = makeTool({});
+    const out = await drain(run(inputs));
+    const payload = JSON.parse(out[out.length - 1].result as string);
+    const texts = (payload.steps as { text: string }[]).map((step) => step.text);
+
+    expect(texts).toContainEqual(
+      expect.stringContaining("Retrieval degraded due to an internal error"),
+    );
   });
 });

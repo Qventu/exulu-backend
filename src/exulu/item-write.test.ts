@@ -373,19 +373,31 @@ describe("prepareItemWrite", () => {
     expect(result).toEqual({ ok: true, values: { untracked_legacy_column: "whatever was here stays" } });
   });
 
-  test("a non-json field is never touched by merge or schema logic", () => {
-    // Task 3 review, Important 4: must use an OBJECT fixture, or this test
-    // can never reach the merge branch at all regardless of the type gate —
-    // a string can never satisfy `isPlainObject`, so the old string fixture
-    // passed even with the gate missing entirely. With an object value,
-    // "name" being listed in `merge` must NOT cause a merge with `existing`
-    // (merge is a `json`-field-only concept, spec Part B) — the field is
-    // replaced wholesale, losing `existing.name.b`, exactly like a normal
-    // non-merge-listed write would.
+  test("a non-json field named in merge is refused, not silently replaced", () => {
+    // Task 3 review, Important 4 required an OBJECT fixture here, or this
+    // test could never reach the merge branch at all regardless of the type
+    // gate — a string can never satisfy `isPlainObject`, so the original
+    // string fixture passed even with the gate missing entirely. Kept as an
+    // object for that reason.
+    //
+    // The ASSERTION is inverted by the final review's Important 1. The old
+    // expectation was `ok: true` with `name` replaced wholesale, losing
+    // `existing.name.b` — i.e. the caller asked to merge and silently got a
+    // destructive replace. That is the same failure as the `"Felder"`
+    // capitalisation repro, reached by naming a non-json field instead of
+    // misspelling a json one, so it gets the same answer: refused. The type
+    // gate the original test was written for is still there and still stops
+    // `mergeJson` from running on a non-json field; the write just no longer
+    // proceeds as a replace behind the caller's back.
     const input = { name: { a: 1 } };
     const result = prepareItemWrite({ fields, existing: { name: { a: 1, b: 2 } }, input, merge: ["name"] });
 
-    expect(result).toEqual({ ok: true, values: { name: { a: 1 } } });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.message).toContain('"merge" names "name"');
+    expect(result.message).toContain("not a json field");
+    // "What is available instead": the json fields this write could merge.
+    expect(result.message).toContain("json fields this write can merge into");
   });
 
   // --- Formerly a known limitation, now closed (coordinator ruling) ------
@@ -982,13 +994,41 @@ describe("prepareItemWrite", () => {
       expect(result).toEqual({ ok: true, values: { felder: null } });
     });
 
-    test("a required json field's null is still refused even with NO declared schema -- the rule is about required, not about the schema", () => {
+    // --- Inverted by the final review, Important 2 ------------------------
+    //
+    // Formerly asserted the opposite: "a required json field's null is
+    // still refused even with NO declared schema -- the rule is about
+    // required, not about the schema". That was the round-5 ruling applied
+    // one scope too wide, and it broke the one guarantee this plan calls
+    // absolute: a json field with no declared schema behaves exactly as it
+    // did before the feature. Twelve live `required` json columns across
+    // eleven tables sit in that gap (workflow_templates.steps_json,
+    // platform_configurations.config_value, context_projections.mean/basis/
+    // map/intercept, test_cases.inputs, eval_sets.*, workflow_triggers.
+    // config, memory_conflicts.members, image_generations.image_keys,
+    // context_presets.preset_items, memory_conflict_scans.context_ids), and
+    // any existing client that clears one works today and would have
+    // started throwing. The gap the rule was added for still closes for
+    // every field this feature introduces, because a field only reaches any
+    // rule in this module by declaring a schema.
+    test("a required json field with NO declared schema accepts null -- the no-schema path is untouched by this feature, absolutely", () => {
       const requiredNoSchemaFields: ExuluContextFieldDefinition[] = [{ name: "notes", type: "json", required: true }];
       const result = prepareItemWrite({ fields: requiredNoSchemaFields, existing: null, input: { notes: null } });
 
+      expect(result).toEqual({ ok: true, values: { notes: null } });
+    });
+
+    test("the required rule still fires for a required json field that DOES declare a schema", () => {
+      // The other half of the same scoping: narrowing the rule to
+      // schema-carrying fields must not narrow it to nothing.
+      const requiredFields: ExuluContextFieldDefinition[] = [
+        { name: "felder", type: "json", schema: felderSchema, required: true },
+      ];
+      const result = prepareItemWrite({ fields: requiredFields, existing: null, input: { felder: null } });
+
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected a refusal");
-      expect(result.message).toContain("notes");
+      expect(result.message.toLowerCase()).toContain("required");
     });
 
     test("required is scoped to json fields only -- this module does not enforce it for any other field type", () => {
@@ -1126,6 +1166,367 @@ describe("prepareItemWrite", () => {
       expect(badPatchResult.message).not.toBe(badStoredResult.message);
       expect(badPatchResult.message.toLowerCase()).not.toContain("stored");
       expect(badStoredResult.message.toLowerCase()).toContain("stored");
+    });
+  });
+  // --- Final review, Important 1: an unmatched `merge` entry ---------------
+  //
+  // `merge` entries were never validated: `merge?.includes(key)` simply
+  // failed to match and the field fell through to the REPLACE branch. The
+  // exact reported repro, verbatim, is the first test below -- a single
+  // capital letter, `ok: true`, and the stored key `b` gone.
+  describe("Important 1: a merge entry that names nothing this write can merge is refused", () => {
+    test("THE EXACT REPORTED REPRO: a capitalisation typo in merge no longer destroys the column", () => {
+      const existing = {
+        felder: {
+          a: { wert: "A", konfidenz: "low" },
+          b: { wert: "B", konfidenz: "high" },
+        },
+      };
+      const result = prepareItemWrite({
+        fields,
+        existing,
+        input: { felder: { a: { wert: "9", konfidenz: "low" } } },
+        merge: ["Felder"], // capital F
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        throw new Error(
+          `expected a refusal; got values.felder = ${JSON.stringify(result.values.felder)}`,
+        );
+      }
+      expect(result.message).toContain('"merge" names "Felder"');
+      // The actionable half: the correct spelling is in the message.
+      expect(result.message).toContain('"felder"');
+    });
+
+    test("a json field named in merge that this write sends no value for is refused, with its own wording", () => {
+      const result = prepareItemWrite({
+        fields,
+        existing: { felder: { a: { wert: "A", konfidenz: "low" } } },
+        input: { name: "only the name" },
+        merge: ["felder"],
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.message).toContain("sends no value for it");
+      expect(result.message).toContain("(none");
+    });
+
+    test("the two reasons get different messages -- they are fixed at different ends", () => {
+      const notJson = prepareItemWrite({ fields, existing: null, input: { name: { a: 1 } }, merge: ["name"] });
+      const absent = prepareItemWrite({ fields, existing: null, input: { name: "x" }, merge: ["felder"] });
+
+      expect(notJson.ok).toBe(false);
+      expect(absent.ok).toBe(false);
+      if (notJson.ok || absent.ok) throw new Error("expected both to refuse");
+      expect(notJson.message).not.toBe(absent.message);
+    });
+
+    test("a correct merge entry is unaffected, and so is a write with no merge at all", () => {
+      const existing = { felder: { a: { wert: "A", konfidenz: "low" } } };
+
+      const merged = prepareItemWrite({
+        fields,
+        existing,
+        input: { felder: { b: { wert: "B", konfidenz: "high" } } },
+        merge: ["felder"],
+      });
+      expect(merged).toEqual({
+        ok: true,
+        values: { felder: { a: { wert: "A", konfidenz: "low" }, b: { wert: "B", konfidenz: "high" } } },
+      });
+
+      // An empty list, and an absent one, both mean "no merge" -- neither
+      // may be turned into a refusal by the new check.
+      expect(prepareItemWrite({ fields, existing, input: { name: "x" }, merge: [] })).toEqual({
+        ok: true,
+        values: { name: "x" },
+      });
+      expect(prepareItemWrite({ fields, existing, input: { name: "x" } })).toEqual({
+        ok: true,
+        values: { name: "x" },
+      });
+    });
+
+    test("a declared json field literally named after an Object.prototype member still works -- the presence check is hasOwn, not `in`", () => {
+      // `"toString" in input` is true for ANY object, so a `key in input`
+      // presence check would wave through a merge of a field this write
+      // never sent -- the same prototype-chain read this module fixes
+      // everywhere else. The field IS declared and IS sent here, so the
+      // write must succeed; the inverse (declared, not sent) must refuse.
+      const protoNamedFields: ExuluContextFieldDefinition[] = [{ name: "toString", type: "json" }];
+      const sent = prepareItemWrite({
+        fields: protoNamedFields,
+        existing: JSON.parse('{"toString":{"a":1}}'),
+        input: JSON.parse('{"toString":{"b":2}}'),
+        merge: ["toString"],
+      });
+      expect(sent.ok).toBe(true);
+
+      const notSent = prepareItemWrite({
+        fields: protoNamedFields,
+        existing: JSON.parse('{"toString":{"a":1}}'),
+        input: { other: 1 },
+        merge: ["toString"],
+      });
+      expect(notSent.ok).toBe(false);
+    });
+  });
+
+  // --- Final review, Important 3: an array-/union-rooted declared schema --
+  //
+  // The non-object merge guard was scoped `!schema`, and a schema that is
+  // not object/record-rooted satisfies neither it nor the shape check
+  // (`requiresPlainObject` is false for it) -- so it reached the replace
+  // branch. Same shape as the `users.favourite_items` bug an earlier round
+  // fixed, left one condition away.
+  describe("Important 3: a non-object-rooted declared schema cannot turn merge into a silent replace", () => {
+    const listFields: ExuluContextFieldDefinition[] = [
+      { name: "list", type: "json", schema: z.array(z.object({ a: z.string() })) },
+    ];
+
+    test("THE EXACT REPORTED REPRO: an array-rooted schema's merge-listed array value is refused, not written over the stored list", () => {
+      const existing = { list: [{ a: "keep" }] };
+      const result = prepareItemWrite({
+        fields: listFields,
+        existing,
+        input: { list: [{ a: "new" }] },
+        merge: ["list"],
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        throw new Error(`expected a refusal; got values.list = ${JSON.stringify(result.values.list)}`);
+      }
+      expect(result.message).toContain("list");
+      expect(result.message.toLowerCase()).toContain("merge patch");
+    });
+
+    test("a union-rooted schema's merge-listed non-object value is refused for the same reason", () => {
+      const unionFields: ExuluContextFieldDefinition[] = [
+        { name: "either", type: "json", schema: z.union([z.object({ a: z.string() }), z.array(z.string())]) },
+      ];
+      const result = prepareItemWrite({
+        fields: unionFields,
+        existing: { either: { a: "keep" } },
+        input: { either: ["replaced"] },
+        merge: ["either"],
+      });
+
+      expect(result.ok).toBe(false);
+    });
+
+    test("a plain REPLACE on the same array-rooted field is untouched -- this guard is merge-only", () => {
+      const existing = { list: [{ a: "keep" }] };
+      const result = prepareItemWrite({ fields: listFields, existing, input: { list: [{ a: "new" }] } });
+
+      expect(result).toEqual({ ok: true, values: { list: [{ a: "new" }] } });
+    });
+
+    test("an object-rooted schema still gets the better-informed shape refusal, not this one", () => {
+      // The two messages must stay distinguishable: only the shape check
+      // can cite the schema's valid paths.
+      const existing = { felder: { a: { wert: "A", konfidenz: "low" } } };
+      const shapeRefusal = prepareItemWrite({ fields, existing, input: { felder: [1, 2] }, merge: ["felder"] });
+
+      expect(shapeRefusal.ok).toBe(false);
+      if (shapeRefusal.ok) throw new Error("expected a refusal");
+      expect(shapeRefusal.message).toContain("Valid paths");
+    });
+  });
+
+  // --- Final review, Important 6: required top-level keys on a REPLACE ----
+  //
+  // `leafViolations` checks only PRESENT keys -- correct for a merge patch,
+  // wrong for a create or a non-merge update, which are full values.
+  describe("Important 6: an object-rooted schema's required top-level keys are enforced on a replace", () => {
+    const objectFields: ExuluContextFieldDefinition[] = [
+      { name: "o", type: "json", schema: z.object({ a: z.string(), b: z.string() }) },
+    ];
+
+    test("THE EXACT REPORTED REPRO: a create missing a required top-level key is refused, not stored", () => {
+      const result = prepareItemWrite({ fields: objectFields, existing: null, input: { o: { a: "x" } } });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error(`expected a refusal; got ${JSON.stringify(result.values.o)}`);
+      expect(result.message).toContain('"b"');
+      // Both escapes are named, so a model does not "fix" this by resending
+      // the whole object and losing the stored keys it never meant to touch.
+      expect(result.message).toContain('"merge"');
+      expect(result.message).toContain("{}");
+    });
+
+    test("a non-merge UPDATE is held to the same completeness -- it replaces the whole field", () => {
+      const result = prepareItemWrite({
+        fields: objectFields,
+        existing: { o: { a: "old", b: "old" } },
+        input: { o: { a: "x" } },
+      });
+
+      expect(result.ok).toBe(false);
+    });
+
+    test("{} is explicitly exempt -- clearing a schema-carrying field is an operation, not a value", () => {
+      const result = prepareItemWrite({
+        fields: objectFields,
+        existing: { o: { a: "old", b: "old" } },
+        input: { o: {} },
+      });
+
+      expect(result).toEqual({ ok: true, values: { o: {} } });
+    });
+
+    test("a MERGE patch is exempt -- omitting a key is what a patch is for", () => {
+      const result = prepareItemWrite({
+        fields: objectFields,
+        existing: { o: { a: "old", b: "keep" } },
+        input: { o: { a: "x" } },
+        merge: ["o"],
+      });
+
+      expect(result).toEqual({ ok: true, values: { o: { a: "x", b: "keep" } } });
+    });
+
+    test("a complete value passes, and optional/default/nullable keys are not required", () => {
+      const mixedFields: ExuluContextFieldDefinition[] = [
+        {
+          name: "o",
+          type: "json",
+          schema: z.object({
+            a: z.string(),
+            opt: z.string().optional(),
+            def: z.string().default("d"),
+            nullableButPresent: z.string().nullable(),
+          }),
+        },
+      ];
+
+      const complete = prepareItemWrite({
+        fields: mixedFields,
+        existing: null,
+        input: { o: { a: "x", nullableButPresent: null } },
+      });
+      expect(complete.ok).toBe(true);
+
+      // `.nullable()` alone does NOT make a key optional -- it may be null,
+      // it may not be absent.
+      const missingNullable = prepareItemWrite({ fields: mixedFields, existing: null, input: { o: { a: "x" } } });
+      expect(missingNullable.ok).toBe(false);
+      if (missingNullable.ok) throw new Error("expected a refusal");
+      expect(missingNullable.message).toContain('"nullableButPresent"');
+      expect(missingNullable.message).not.toContain('"opt"');
+      expect(missingNullable.message).not.toContain('"def"');
+    });
+
+    test("a RECORD-rooted schema is unaffected -- a record has no required keys (the M&V case)", () => {
+      const result = prepareItemWrite({
+        fields,
+        existing: null,
+        input: { felder: { just_one: { wert: "x", konfidenz: "low" } } },
+      });
+
+      expect(result.ok).toBe(true);
+    });
+
+    test("a schema-less json field is unaffected -- nothing validated it before, nothing does now", () => {
+      const result = prepareItemWrite({ fields, existing: null, input: { notes: { anything: 1 } } });
+      expect(result).toEqual({ ok: true, values: { notes: { anything: 1 } } });
+    });
+
+    test("an unknown key is reported as the typo it is, not as the correctly-spelled key being absent", () => {
+      // Ordering matters for what a model is told: `unknownPaths` runs
+      // first and its message lists every valid path.
+      const result = prepareItemWrite({
+        fields: objectFields,
+        existing: null,
+        input: { o: { a: "x", bee: "y" } },
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.message).toContain('"bee"');
+      expect(result.message).toContain("Valid paths");
+      expect(result.message).not.toContain("missing");
+    });
+  });
+
+  // --- Final review, "also fold in": the null-vs-"null" seam --------------
+  //
+  // A literal `null` was exempt from schema validation on a REPLACE and the
+  // string `"null"` was refused by the shape check, although both store
+  // jsonb null after each write path's stringify loop. Two inputs, one
+  // stored result, opposite answers.
+  describe("the two spellings of a null replace get the same answer", () => {
+    test('the string "null" is accepted on a replace, exactly as a literal null is', () => {
+      const existing = { felder: { a: { wert: "A", konfidenz: "low" } } };
+
+      const literal = prepareItemWrite({ fields, existing, input: { felder: null } });
+      const stringForm = prepareItemWrite({ fields, existing, input: { felder: "null" } });
+
+      expect(literal).toEqual({ ok: true, values: { felder: null } });
+      // never-strip: the caller's own original value is what gets written,
+      // so the string stays a string here. Both store jsonb null.
+      expect(stringForm).toEqual({ ok: true, values: { felder: "null" } });
+    });
+
+    test('a required, schema-carrying field refuses BOTH spellings, with the identical message', () => {
+      const requiredFields: ExuluContextFieldDefinition[] = [
+        { name: "felder", type: "json", schema: felderSchema, required: true },
+      ];
+      const literal = prepareItemWrite({ fields: requiredFields, existing: null, input: { felder: null } });
+      const stringForm = prepareItemWrite({ fields: requiredFields, existing: null, input: { felder: "null" } });
+
+      expect(literal.ok).toBe(false);
+      expect(stringForm.ok).toBe(false);
+      if (literal.ok || stringForm.ok) throw new Error("expected both to refuse");
+      expect(literal.message).toBe(stringForm.message);
+    });
+
+    test('under merge, BOTH spellings are still refused as "a merge patch cannot be null" (unchanged)', () => {
+      const existing = { felder: { a: { wert: "A", konfidenz: "low" } } };
+      const literal = prepareItemWrite({ fields, existing, input: { felder: null }, merge: ["felder"] });
+      const stringForm = prepareItemWrite({ fields, existing, input: { felder: "null" }, merge: ["felder"] });
+
+      expect(literal.ok).toBe(false);
+      expect(stringForm.ok).toBe(false);
+      if (literal.ok || stringForm.ok) throw new Error("expected both to refuse");
+      expect(literal.message).toBe(stringForm.message);
+    });
+  });
+
+  // --- Final review, "also fold in": refusal-message grammar -------------
+  describe("refusal messages name a value's kind with the right article", () => {
+    test('"undefined" is named bare, not as "a undefined"', () => {
+      const existing = { felder: { a: { wert: "A", konfidenz: "low" } } };
+      const result = prepareItemWrite({ fields, existing, input: { felder: undefined }, merge: ["felder"] });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.message).not.toContain("a undefined");
+      expect(result.message).toContain("undefined was sent");
+    });
+
+    test("the same helper names the kind in the patch-side refusal too", () => {
+      // `describeKind` is shared by all three refusal messages, so this
+      // pins the shared call rather than a per-message copy of the phrase.
+      // (The `an <vowel>` branch of the helper is defensive only: the one
+      // typeof that would reach it is "object", and every call site is
+      // guarded by `!isPlainObject`, so no input can produce it. It is a
+      // regex, not a branch worth a test that cannot fail.)
+      const protoFields: ExuluContextFieldDefinition[] = [{ name: "notes", type: "json" }];
+      const result = prepareItemWrite({
+        fields: protoFields,
+        existing: { notes: { a: 1 } },
+        input: { notes: 42 },
+        merge: ["notes"],
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.message).toContain("a number was sent");
+      expect(result.message).not.toContain("a undefined");
     });
   });
 });

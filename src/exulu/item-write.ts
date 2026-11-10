@@ -2,6 +2,7 @@ import type { ExuluContextFieldDefinition } from "./context";
 import {
   leafViolations,
   mergeJson,
+  missingRequiredKeys,
   requiresPlainObject,
   schemaPaths,
   unknownPaths,
@@ -54,7 +55,7 @@ import {
  *    never consulted about what `existing` CONTAINS — only this module's
  *    own `isPlainObject` is.
  *
- * Three checks run against the incoming value, in order:
+ * Four checks run against the incoming value, in order:
  * - **Shape** (`requiresPlainObject` + a `schema.safeParse` confirmation) —
  *   does this schema even commit to an object/record shape, and if so, is
  *   the incoming value a plain object at all? `unknownPaths`/`leafViolations`
@@ -91,7 +92,9 @@ import {
  *   get written. A schema that does NOT require a plain object at all
  *   (array- or union-rooted — this module validates neither at all today,
  *   see `requiresPlainObject`'s own doc comment) skips this whole check,
- *   same as before.
+ *   same as before; a merge-listed field is nonetheless protected from the
+ *   silent replace that used to follow from that, by the widened
+ *   non-object merge guard below (final review, Important 3).
  * - `unknownPaths` — is this path even one the schema recognises (an
  *   unnamed key, or an object/record declared where a scalar was supplied)?
  * - `leafViolations` — for a path the schema DOES recognise, does the leaf
@@ -106,6 +109,22 @@ import {
  *   as a missing required field. See `leafViolations`' own doc comment in
  *   `json-field-schema.ts` for why that distinction matters and how both
  *   shapes (`z.object()`, `z.record()`) resolve it the same way.
+ * - `missingRequiredKeys` — the other half of that same distinction, and
+ *   the reason it is a separate check rather than a `leafViolations`
+ *   option (final review, Important 6). `leafViolations` only ever visits
+ *   the keys that are PRESENT, which is right for a merge patch and wrong
+ *   for a REPLACE: a create or a non-merge update is a whole value, so an
+ *   object-rooted schema's required top-level keys have to be there. A
+ *   create of `{ a: "x" }` against `z.object({ a: z.string(), b:
+ *   z.string() })` used to return `ok: true` and store a row violating the
+ *   very schema the model was shown. So this check runs for a REPLACE only,
+ *   with `{}` EXPLICITLY EXEMPT — the same shape of ruling as the two
+ *   `null` rules below: `{}` is this feature's documented way to CLEAR a
+ *   schema-carrying field (Task 4 decision 1), and clearing is an
+ *   OPERATION, not a value that has to satisfy the declared shape.
+ *   Record-rooted schemas are unaffected (a record's keys are
+ *   caller-chosen ids; there is no such thing as a required one), which is
+ *   the M&V case and therefore most real schemas.
  *
  * Before the last two checks run on a MERGE-listed field, any of the
  * patch's own top-level entries whose value is `null` are exempted (Task 3
@@ -119,6 +138,23 @@ import {
  * the whole value and destroys every other key the deletion wasn't touching.
  * A plain REPLACE has no such sentinel (the spec only defines it for merge),
  * so a `null` entry there is still checked normally.
+ *
+ * Before any of those four looks at any value at all, the `merge` LIST
+ * itself is validated (final review, Important 1): every name in it must
+ * be a `json` field that this same write sends a value for, or the whole
+ * write is refused (`mergeUnknownFieldMessage`). `merge` entries were
+ * never checked — `merge?.includes(key)` simply failed to match an entry
+ * that named nothing, the field fell through to the REPLACE branch, and
+ * the write succeeded having deleted every stored key the value sent did
+ * not mention. A capitalisation slip in one list entry (`"Felder"` for
+ * `felder`) is the single most likely error a model makes here, and it
+ * degraded in the destructive direction with no refusal: exactly the data
+ * loss this feature exists to prevent, through the one input nothing
+ * validated. Note the consequence for a non-`json` field named in `merge`:
+ * that used to be silently replaced (Task 3 review, Important 4 — the type
+ * gate is still there and still stops `mergeJson` running on it), and is
+ * now refused instead, which is the same ruling applied to the same
+ * mistake.
  *
  * Above every other check sits one more rule, checked first, for a
  * different reason than any of them (Task 3 third re-review, Important 1):
@@ -136,58 +172,89 @@ import {
  * untouched by this rule and behaves exactly as before.
  *
  * Sitting right beside that rule, checked immediately after it (Task 4 fix
- * round 2, Important 4): a MERGE-listed, SCHEMA-LESS field whose incoming
- * value is non-null but still not a plain object (an array, a string, a
- * number...) is ALSO refused unconditionally, for the identical reason —
- * merging into something that isn't a keyed structure has no defined
- * meaning, and without this it silently fell through to a plain REPLACE
- * that overwrote the whole value, reachable in production on
- * `users.favourite_items`/`favourite_artifacts`/`favourite_projects` (all
- * schema-less json ARRAY columns). A schema-carrying field whose schema
- * commits to an object/record shape already gets the equivalent refusal
- * from the shape check below; this is the schema-LESS half of the same
- * question, which had no check to fall back on at all.
+ * round 2, Important 4; widened in the final review, Important 3): a
+ * MERGE-listed field whose incoming value is non-null but still not a
+ * plain object (an array, a string, a number...) is ALSO refused
+ * unconditionally, for the identical reason — merging into something that
+ * isn't a keyed structure has no defined meaning, and without this it
+ * silently fell through to a plain REPLACE that overwrote the whole value,
+ * reachable in production on `users.favourite_items`/`favourite_artifacts`/
+ * `favourite_projects` (all schema-less json ARRAY columns). It fires for
+ * a field with NO schema and for one whose schema does not commit to an
+ * object/record shape — the two cases the shape check below cannot speak
+ * for, because `requiresPlainObject` is false for both. Scoping it to
+ * `!schema` alone left an array- or union-rooted DECLARED schema one
+ * condition away from the same silent replace (see
+ * `mergeNonObjectRefusalMessage`'s own doc comment for the repro). A
+ * schema that DOES commit to an object/record shape gets the equivalent,
+ * better-informed refusal from the shape check below instead, which can
+ * cite the schema's valid paths.
  *
  * Checked next, specifically for a REPLACE and nowhere else (Task 4 fix
- * round 4, Critical): a json field's top-level value being a literal
- * `null` is exempt from schema validation ENTIRELY — it skips the shape
- * check above, `unknownPaths`, and `leafViolations` outright, rather than
- * being evaluated against any of them. The reasoning, because it
- * generalises: a schema describes the shape of a value that EXISTS;
- * whether a column may be `null` at all is a separate concern this
- * codebase already expresses via `required` (see the very next rule) —
- * conflating the two is what caused the defect this rule fixes. Reachable
- * constantly in production: a blank CSV cell is the most common sparse-
- * column shape there is, and `coerce.ts` maps one to a literal `null`
- * (never `""`, never an error) — so before this rule, declaring a schema
- * broke every sparse column's bulk import, refusing a perfectly normal
- * blank cell as "the value must be a JSON object... but null was sent".
- * This exemption is REPLACE-only on purpose: the merge-null rule two
- * paragraphs up is untouched by it and still refuses `null` unconditionally
- * under `merge`, because merge means patch and null-as-the-whole-patch is
- * an operation question, not a shape one, regardless of what this rule
- * says about replace.
+ * round 4, Critical): a json field's top-level value being `null` is
+ * exempt from schema validation ENTIRELY — it skips the shape check above,
+ * `unknownPaths`, and `leafViolations` outright, rather than being
+ * evaluated against any of them. The reasoning, because it generalises: a
+ * schema describes the shape of a value that EXISTS; whether a column may
+ * be `null` at all is a separate concern this codebase already expresses
+ * via `required` (see the very next rule) — conflating the two is what
+ * caused the defect this rule fixes. Reachable constantly in production: a
+ * blank CSV cell is the most common sparse-column shape there is, and
+ * `coerce.ts` maps one to a literal `null` (never `""`, never an error) —
+ * so before this rule, declaring a schema broke every sparse column's bulk
+ * import, refusing a perfectly normal blank cell as "the value must be a
+ * JSON object... but null was sent". This exemption is REPLACE-only on
+ * purpose: the merge-null rule two paragraphs up is untouched by it and
+ * still refuses `null` unconditionally under `merge`, because merge means
+ * patch and null-as-the-whole-patch is an operation question, not a shape
+ * one, regardless of what this rule says about replace.
  *
- * Immediately above the replace-null exemption, checked first, is the one
- * case the exemption does NOT cover (Task 4 fix round 5, Important 1 —
+ * "`null`" here means BOTH spellings of it (final review, "also fold in"):
+ * a literal `null` and the string `"null"`, which is what a json field's
+ * serialized wire form looks like when the value is null. Both store jsonb
+ * `null` after each write path's own stringify loop, so one stored result
+ * cannot have two opposite answers — the literal exempted here and the
+ * string refused by the shape check as "null was sent" was a seam, not two
+ * rules. This rule therefore reads `checkValue` (the parsed form), exactly
+ * as the merge-null rule above it already did for the same reason, and as
+ * `mergeJson`'s own one-level-in `null` sentinel does.
+ *
+ * Folded into the replace-null block as its first branch is the one case
+ * the exemption does NOT cover (Task 4 fix round 5, Important 1 —
  * completing the fix round 4 ruling above rather than contradicting it): a
- * `required: true` json field's REPLACE `null` is refused instead of
- * exempted (`requiredNullRefusalMessage`). The round 4 ruling leaned on
- * `required` already being the codebase's answer to "may this column be
- * null" — checked, rather than assumed, and found true for only two of
- * four write doors: the bulk-import row builder rejects a blank cell on a
- * `required` field before it ever reaches this module, and the generated
- * tool cannot send `null` at all. For GraphQL and any other programmatic
- * write, nothing enforced it anywhere — not the jsonb column definition
- * (`t.jsonb(name)`, no `notNullable`), not `createItemsTable`, not the
- * generated Input type (which omits `required` while the OUTPUT type still
- * declares the field `JSON!`) — so a `required: true` json field could be
- * set to `null` and every subsequent READ of it would then error against
- * that non-null output type. This rule is the chokepoint closing that gap
- * itself rather than continuing to assume another layer already had.
- * Deliberately scoped to json fields only: enforcing `required` for every
- * field type, across every table in the system, is a real behaviour change
- * this module does not make and a fix round does not get to decide.
+ * `required: true` json field that ALSO declares a schema has its REPLACE
+ * `null` refused instead of exempted (`requiredNullRefusalMessage`). The
+ * round 4 ruling leaned on `required` already being the codebase's answer
+ * to "may this column be null" — checked, rather than assumed, and found
+ * true for only two of four write doors: the bulk-import row builder
+ * rejects a blank cell on a `required` field before it ever reaches this
+ * module, and the generated tool cannot send `null` at all. For GraphQL
+ * and any other programmatic write, nothing enforced it anywhere — not the
+ * jsonb column definition (`t.jsonb(name)`, no `notNullable`), not
+ * `createItemsTable`, not the generated Input type (which omits `required`
+ * while the OUTPUT type still declares the field `JSON!`) — so a
+ * `required: true` json field could be set to `null` and every subsequent
+ * READ of it would then error against that non-null output type.
+ *
+ * The `&& schema` half of that condition is the final review's Important 2,
+ * correcting round 5's own ruling: round 5 scoped the rule to json and
+ * forgot to scope it to SCHEMA-CARRYING json, which broke the one
+ * guarantee the plan calls absolute — a json field with NO declared schema
+ * and a write with no `merge` behaves exactly as it did before this
+ * feature, which is the path almost every real write in the system takes,
+ * since nothing in the repo declares a schema yet. There are twelve live
+ * `required` json columns across eleven tables (`workflow_templates.
+ * steps_json`, `platform_configurations.config_value`, `context_projections.
+ * mean/basis/map/intercept`, `test_cases.inputs`, `eval_sets.*`,
+ * `workflow_triggers.config`, `memory_conflicts.members`,
+ * `image_generations.image_keys`, `context_presets.preset_items`,
+ * `memory_conflict_scans.context_ids`), and any existing client that clears
+ * one works today and would have started throwing on merge. The gap still
+ * closes for every field this feature introduces: a field only reaches any
+ * rule in this module by declaring a schema. Still scoped to json fields
+ * only beyond that — enforcing `required` for every field type, across
+ * every table in the system, is a real behaviour change this module does
+ * not make and a fix round does not get to decide.
  *
  * Checked right after the two null-handling rules above, about `existing`
  * rather than the incoming value (Task 4 fix round 4, Important — the
@@ -252,6 +319,47 @@ import {
  *    choosing to strip legitimate data for a risk that lives in how a
  *    future reader might copy the result, which is exactly backwards for a
  *    module whose central rule is "never strip".
+ *
+ * **Merge is not concurrency-safe, and nothing here claims it is** (final
+ * review, Important 7). A merge is a read-modify-write across two separate
+ * statements: each write path fetches the row, calls this function, and
+ * writes the combined object back, with no transaction, no row lock and no
+ * SQL-side `jsonb_set`. Two merges that are SERIALIZED (each fully awaited
+ * before the next begins) both land — that is what the merge feature
+ * delivers over a plain replace, and what `item-write-parity.test.ts`
+ * actually tests. Two merges that OVERLAP in time can still lose one of
+ * them: both read the same stored value, and the second write's object,
+ * built from the value the first had not written yet, overwrites the first
+ * one's key. That is the ordinary lost-update shape of any unlocked
+ * read-modify-write, and it is the limitation the spec's own M&V scenario
+ * (two analysts editing one pitch matrix through a 600 ms per-field
+ * debounce) runs straight into. Adding locking has real performance
+ * consequences and is a deliberate separate decision, not something a fix
+ * round gets to slip in. Recorded HERE, and in the two places a human and
+ * a model actually read the promise — `src/graphql/schemas/index.ts`'s SDL
+ * description and `src/templates/tools/context-write-tools.ts`'s `merge`
+ * description — because documenting it only inside a test file (where it
+ * was, before this review) is documenting it where nobody affected by it
+ * looks.
+ *
+ * **Two residuals this module knowingly does not close.** Recorded so the
+ * next reader does not have to rediscover them: (1) an array- or
+ * union-rooted declared schema is validated by nothing here, for any value
+ * — `unknownPaths`, `leafViolations` and `missingRequiredKeys` all return
+ * "nothing wrong" for it by construction (see `requiresPlainObject`'s own
+ * doc comment). As of the final review it can no longer silently REPLACE a
+ * merge-listed field, which was the data-loss half; what remains is that
+ * its contents are unchecked. (2) `loosenForTransport` does not recognise
+ * `intersection`/`pipe`/`transform`/`catch`/`lazy`/`readonly`/`tuple`, so
+ * a strict `z.object()` nested inside one of those is returned untouched
+ * and the AI SDK's own parse would strip a key the model sent that the
+ * schema did not declare — the never-strip anti-goal, reached through a
+ * zod node kind rather than through this module. Both would be closed at
+ * once by refusing such a schema at boot (the `attachments.
+ * documentProcessor` precedent); that needs an allowlist walk over zod's
+ * node kinds, which is a change of its own size and not a fix-round
+ * decision. Neither is reachable today: nothing in the repo declares a
+ * schema at all.
  */
 
 export type PrepareItemWriteArgs = {
@@ -268,6 +376,38 @@ export type PrepareItemWriteResult =
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Names the KIND of a value for a refusal message, with the right article.
+ * Hand-rolled `a ${typeof value}` produced "a undefined" and "a object"
+ * (final review, "also fold in") — a model is not confused by it, but a
+ * refusal message is the one thing this module ships to a reader, and
+ * three separate messages were building the same phrase three times.
+ * `null` and `undefined` are named bare, without an article, because they
+ * are the values themselves rather than a class of value. The `an
+ * <vowel>` branch is defensive: the only vowel-initial `typeof` is
+ * "object", and every caller is guarded by `!isPlainObject`, so nothing
+ * can currently reach it.
+ */
+function describeKind(value: unknown): string {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (Array.isArray(value)) return "an array";
+  const kind = typeof value;
+  return /^[aeiou]/.test(kind) ? `an ${kind}` : `a ${kind}`;
+}
+
+/**
+ * `Object.prototype.hasOwnProperty.call`, never `key in input` or
+ * `input[key]`: `input` is model-supplied and `key` comes from the
+ * caller's `merge` list, so a name like `"toString"` would otherwise
+ * resolve against `Object.prototype` and report a key the caller never
+ * sent as present. Same rule, same reason, as `json-field-schema.ts`'s own
+ * `hasOwn`.
+ */
+function hasOwnKey(target: object, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(target, key);
 }
 
 /**
@@ -353,6 +493,14 @@ function mergeClearRefusalMessage(fieldName: string): string {
  * the schema) is the thing that says this field may not be null. Checked
  * instead of the round-4 exemption, never alongside it: a required field
  * never reaches that exemption at all (see the call site).
+ *
+ * Scoped in the final review (Important 2) to a `required` json field that
+ * also DECLARES A SCHEMA. Round 5 scoped it to json and stopped there,
+ * which broke the one guarantee the plan calls absolute: a json field with
+ * no declared schema behaves exactly as it did before this feature. Twelve
+ * live `required` json columns across eleven tables fall in that gap, and
+ * any existing client that clears one works today and would have started
+ * throwing. See the call site for the full list and reasoning.
  */
 function requiredNullRefusalMessage(fieldName: string): string {
   return (
@@ -376,10 +524,27 @@ function requiredNullRefusalMessage(fieldName: string): string {
  * favourite_items: [...] }, merge: ["favourite_items"])` would silently
  * replace the whole list instead of refusing, exactly contradicting the
  * SDL's own "only the keys given are changed, other stored keys are kept"
- * description. Deliberately scoped to the schema-LESS case only — an
- * array- or union-rooted *declared* schema is Task 3's own documented,
- * separately-tracked residual (this module validates neither shape at all
- * today), not reopened here.
+ * description.
+ *
+ * Widened in the final review (Important 3) from `!schema` to "no schema
+ * OR a schema that does not commit to an object/record shape". Scoping it
+ * to `!schema` left the identical silent-replace one condition away: an
+ * array- or union-rooted declared schema satisfies neither this check (it
+ * HAS a schema) nor the shape check below (`requiresPlainObject` is false
+ * for it), so it reached the replace branch —
+ *
+ *     fields: [{ name: "list", type: "json", schema: z.array(z.object({ a: z.string() })) }]
+ *     stored: list = [{ a: "keep" }]
+ *     input:  { list: [{ a: "new" }] }, merge: ["list"]
+ *     result: ok: true -> list = [{ a: "new" }]   // "keep" gone, no refusal
+ *
+ * — the same shape as the `users.favourite_items` bug this message was
+ * added for, reached through a declared schema instead of no schema. The
+ * fix is at this chokepoint rather than as a boot-time refusal of
+ * non-object-rooted schemas, because this check covers every caller
+ * including a context constructed outside the app's boot path; what a boot
+ * check would additionally have covered (`loosenForTransport`'s unhandled
+ * wrapper kinds) is recorded as a residual in the module doc instead.
  */
 function mergeNonObjectRefusalMessage(fieldName: string, value: unknown): string {
   // One input still produces the literal phrase "a string was sent" here,
@@ -391,7 +556,7 @@ function mergeNonObjectRefusalMessage(fieldName: string, value: unknown): string
   // The CONTENT genuinely is a string there, so saying so is correct; the
   // misleading case round 3 fixed was reporting "a string was sent" about
   // the WIRE FORM while the content was a well-formed object.
-  const kind = Array.isArray(value) ? "an array" : `a ${typeof value}`;
+  const kind = describeKind(value);
   return (
     `Write to field "${fieldName}" rejected: a merge patch must be a JSON object with named keys, ` +
     `but ${kind} was sent (${safeStringify(value)}). A merge patch cannot be ${kind} — only its ` +
@@ -417,7 +582,7 @@ function mergeNonObjectRefusalMessage(fieldName: string, value: unknown): string
  * list with `{"0":"x"}`.
  */
 function mergeStoredNonObjectRefusalMessage(fieldName: string, stored: unknown): string {
-  const kind = Array.isArray(stored) ? "an array" : `a ${typeof stored}`;
+  const kind = describeKind(stored);
   return (
     `Write to field "${fieldName}" rejected: the STORED value is ${kind}, not a JSON object with ` +
     `named keys (${safeStringify(stored)}), so a merge patch cannot be combined into it. A merge ` +
@@ -470,13 +635,101 @@ function shapeRefusalMessage(
   value: unknown,
   schema: NonNullable<ExuluContextFieldDefinition["schema"]>,
 ): string {
-  const kind = value === null ? "null" : Array.isArray(value) ? "an array" : `a ${typeof value}`;
+  const kind = describeKind(value);
   const validPaths = schemaPaths(schema);
   const validList = validPaths.length > 0 ? validPaths.join(", ") : "(the schema declares no paths)";
 
   return (
     `Write to field "${fieldName}" rejected: the value must be a JSON object with named keys, ` +
     `but ${kind} was sent (${safeStringify(value)}). ` +
+    `Valid paths for "${fieldName}": ${validList}.`
+  );
+}
+
+/**
+ * Final review, Important 1: the refusal for a `merge` entry that does not
+ * name a `json` field this same write sends a value for. `merge` entries
+ * were never validated — `merge?.includes(key)` simply failed to match,
+ * the field fell through to the REPLACE branch, and the write returned
+ * `ok: true` having deleted every stored key the patch did not mention:
+ *
+ *     stored felder = { a: {...}, b: {...} }
+ *     input  { felder: { a: {...} } }, merge: ["Felder"]   // capital F
+ *     result ok: true -> felder = { a: {...} }             // b is gone
+ *
+ * A capitalisation or spelling slip in one list entry is the single most
+ * likely error a model makes here, and it degraded in the destructive
+ * direction with no refusal at all — the exact data loss this whole
+ * feature exists to prevent. So an unmatched entry is now refused outright
+ * rather than ignored: there is no reading of "merge this field" that
+ * "replace this field" satisfies, and silence is not available as an
+ * answer to a request the system cannot carry out.
+ *
+ * Two distinct reasons get two distinct wordings, because they are fixed
+ * at different ends: the name is not a `json` field of this item at all
+ * (a typo, or a non-json field named by mistake — `merge` is a concept
+ * spec Part B defines for `json` fields only), or it IS a json field but
+ * this write sends no value for it (nothing to merge; the caller probably
+ * meant a field it did send). "What is available instead" is the list of
+ * json fields this write could actually merge into, which is also what
+ * shows a case-typo its own correct spelling.
+ */
+function mergeUnknownFieldMessage(
+  name: string,
+  reason: "not-json" | "absent",
+  mergeableNames: string[],
+): string {
+  const availableList =
+    mergeableNames.length > 0
+      ? mergeableNames.map((mergeable) => `"${mergeable}"`).join(", ")
+      : "(none — this write sends no json field, so there is nothing to merge into)";
+  const why =
+    reason === "not-json"
+      ? `"${name}" is not a json field of this item`
+      : `"${name}" is a json field but this write sends no value for it`;
+
+  return (
+    `Write rejected: "merge" names "${name}", but ${why}. Every name in "merge" must be a json ` +
+    `field that this same write sends a value for — an unmatched name would otherwise silently ` +
+    `REPLACE that field instead of merging into it, deleting every stored key the value sent does ` +
+    `not mention. json fields this write can merge into: ${availableList}.`
+  );
+}
+
+/**
+ * Final review, Important 6: the refusal for a REPLACE that omits a
+ * top-level key an object-rooted schema declares as required.
+ * `leafViolations` only ever checks the keys that are PRESENT — correct
+ * for a merge patch, which legitimately omits what it is not touching, and
+ * wrong for a create or a non-merge update, which is the whole value. A
+ * create of `{ a: "x" }` against `z.object({ a: z.string(), b: z.string()
+ * })` therefore stored a row violating the very schema the model was
+ * shown.
+ *
+ * `{}` is deliberately exempt at the call site, not here: an empty object
+ * is this feature's documented way to CLEAR a schema-carrying field (Task
+ * 4 decision 1, now that `null` under `merge` is refused), and clearing is
+ * an OPERATION, not a value that has to satisfy the declared shape — the
+ * same reasoning the two `null` rules above rest on. "What is available
+ * instead" names both escapes explicitly, because a model that is told
+ * only "a key is missing" will resend the whole object and lose the stored
+ * keys it never meant to touch.
+ */
+function missingKeysRefusalMessage(
+  fieldName: string,
+  missing: string[],
+  schema: NonNullable<ExuluContextFieldDefinition["schema"]>,
+): string {
+  const plural = missing.length > 1;
+  const missingList = missing.map((key) => `"${key}"`).join(", ");
+  const validPaths = schemaPaths(schema);
+  const validList = validPaths.length > 0 ? validPaths.join(", ") : "(the schema declares no paths)";
+
+  return (
+    `Write to field "${fieldName}" rejected: required ${plural ? "keys" : "key"} ${missingList} ` +
+    `${plural ? "are" : "is"} missing. This write REPLACES "${fieldName}" (it is not named in ` +
+    `"merge"), so the value sent must be complete. To change only some keys and keep the rest, ` +
+    `resend this write with "merge": ["${fieldName}"]. To clear "${fieldName}" entirely, send {}. ` +
     `Valid paths for "${fieldName}": ${validList}.`
   );
 }
@@ -531,7 +784,13 @@ function leafRefusalMessage(fieldName: string, violations: LeafViolation[]): str
 }
 
 /**
- * Checks and shapes one write's values. For each key in `input`:
+ * Checks and shapes one write's values.
+ *
+ * First, once, before any value is examined: every name in `merge` must be
+ * a `json` field that `input` itself sends a value for, or the whole write
+ * is refused (final review, Important 1 — see `mergeUnknownFieldMessage`).
+ *
+ * Then, for each key in `input`:
  *
  * - If its field is `type: "json"` and the incoming value is a STRING, it is
  *   tentatively parsed first (Task 4 fix round 3) — see the module doc's
@@ -544,20 +803,22 @@ function leafRefusalMessage(fieldName: string, violations: LeafViolation[]): str
  *     note on the shape check.
  *   - Otherwise the incoming value (with a merge-listed field's own
  *     null-valued deletion markers exempted first) is checked with
- *     `unknownPaths`, then `leafViolations`. Either finding something
- *     refuses the *entire* write (fail fast; a write is one unit, not a bag
- *     of independently-committable fields).
+ *     `unknownPaths`, then `leafViolations`, and — for a REPLACE of a
+ *     non-empty object only — `missingRequiredKeys`. Any of them finding
+ *     something refuses the *entire* write (fail fast; a write is one
+ *     unit, not a bag of independently-committable fields).
  * - If the field is `type: "json"` AND the key is named in `merge`, the
- *   stored value and the incoming patch are combined with `mergeJson` — but
- *   only when the (possibly just-parsed) incoming value is itself a plain
- *   object (the shape check above already refuses a schema-carrying field's
- *   non-object value before this point; a merge-listed field with NO schema
- *   and a non-object, non-parseable value has nothing stopping it from
- *   reaching here, so it still falls back to replace rather than feeding a
- *   non-object into `mergeJson`). Gating on `type === "json"` (not just
- *   membership in `merge`) matters: `merge` is a concept Part B defines for
- *   `json` fields only, so a non-`json` field named there by mistake must
- *   not have `mergeJson` run against it (Task 3 review, Important 4).
+ *   stored value and the incoming patch are combined with `mergeJson` — and
+ *   the (possibly just-parsed) incoming value is guaranteed to be a plain
+ *   object by then: a schema-carrying field whose schema commits to an
+ *   object/record shape is refused by the shape check above, and every
+ *   other non-object patch (no schema, or an array-/union-rooted one) by
+ *   the widened non-object merge guard (final review, Important 3). Gating
+ *   on `type === "json"` (not just membership in `merge`) matters: `merge`
+ *   is a concept Part B defines for `json` fields only, so a non-`json`
+ *   field named there by mistake must not have `mergeJson` run against it
+ *   (Task 3 review, Important 4) — and, since the final review, is refused
+ *   outright rather than silently replaced.
  * - Otherwise the value replaces whatever was stored, exactly as today.
  *
  * A key with no matching entry in `fields` (or a field whose type isn't
@@ -603,8 +864,9 @@ function leafRefusalMessage(fieldName: string, violations: LeafViolation[]): str
  * merge patch now actually merges.
  *
  * **Two more rules this summary would otherwise omit (Task 4 fix rounds 4
- * and 5).** A REPLACE's top-level `null` is exempt from every check above
- * UNLESS the field is `required: true`, in which case it is refused
+ * and 5).** A REPLACE's top-level `null` — literal or the string `"null"`,
+ * which are one write — is exempt from every check above UNLESS the field
+ * is `required: true` AND declares a schema, in which case it is refused
  * instead — see the module doc's paragraphs on both rules for the full
  * reasoning (why null is a `required` question, not a schema question, and
  * why `required` needed its own rule here rather than being safe to assume
@@ -619,6 +881,25 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
   const { fields, existing, input, merge } = args;
   const fieldsByName = new Map(fields.map((field) => [field.name, field]));
   const values: Record<string, unknown> = {};
+
+  // Final review, Important 1: every `merge` entry has to NAME something
+  // this write can merge, checked before a single value is looked at. An
+  // entry that matches nothing used to be silently ignored, which turned
+  // the write into a REPLACE of the field the caller was trying to patch —
+  // see `mergeUnknownFieldMessage` for the repro. Refused as a whole write
+  // rather than per field: a write is one unit here, same as every other
+  // refusal in this function.
+  if (merge && merge.length > 0) {
+    const mergeableNames = Object.keys(input).filter((name) => fieldsByName.get(name)?.type === "json");
+    for (const name of merge) {
+      if (fieldsByName.get(name)?.type !== "json") {
+        return { ok: false, message: mergeUnknownFieldMessage(String(name), "not-json", mergeableNames) };
+      }
+      if (!hasOwnKey(input, name)) {
+        return { ok: false, message: mergeUnknownFieldMessage(String(name), "absent", mergeableNames) };
+      }
+    }
+  }
 
   for (const [key, value] of Object.entries(input)) {
     const field = fieldsByName.get(key);
@@ -651,35 +932,61 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
       return { ok: false, message: mergeClearRefusalMessage(key) };
     }
 
-    // Task 4 fix round 5, Important 1: completing round 4's own ruling. A
-    // schema says nothing about whether a column may be null — that is
-    // `required`'s question — but the round 4 exemption below was only
-    // honest if `required` is actually enforced somewhere, and it is not,
-    // for GraphQL/programmatic writes: `map-types.ts` emits a bare
-    // `t.jsonb(name)`, `createItemsTable` never reads `field.required`,
-    // and the generated Input type omits `required` while the OUTPUT type
-    // still declares the field `JSON!` — so writing `null` into a
-    // `required: true` json field via `UpdateOne`/`UpdateOneById`/direct
-    // API calls produced a row that errors on every subsequent read.
-    // Checked BEFORE the general exemption, so a required field never
-    // reaches it; a non-required (or `required` unset) field is
-    // unaffected and still falls through to that exemption exactly as
-    // round 4 left it.
-    if (!isMergeField && field?.type === "json" && value === null && field.required === true) {
-      return { ok: false, message: requiredNullRefusalMessage(key) };
-    }
-
-    // Task 4 fix round 4, Critical: a plain REPLACE's literal `null` is
-    // exempt from schema validation entirely — see the module doc's note
-    // on why null is a nullability question (`required`), not a shape
-    // question. ONLY the replace path is exempt: the check above already
-    // refuses `null` unconditionally under `merge`, and that stays exactly
-    // as it is (merge means patch, and null-as-patch is nonsense regardless
-    // of whether the field may be null). Keyed on the literal `value`, not
-    // `checkValue` — a STRING that happens to parse to `null` (not
-    // something coerce.ts or any real caller produces) is not this case
-    // and is left to the ordinary checks below.
-    if (!isMergeField && field?.type === "json" && value === null) {
+    // A plain REPLACE whose value IS null — the two rules that answer
+    // "may this column be null", kept in one block because they are one
+    // question with two answers (Task 4 fix rounds 4 and 5; scope
+    // corrected and the two spellings of null unified in the final
+    // review).
+    //
+    // Keyed on `checkValue`, not the literal `value` (final review, "also
+    // fold in"): the literal `null` and the string `"null"` are the same
+    // write — both store jsonb `null` after each write path's stringify
+    // loop — and used to get opposite answers, the literal exempted here
+    // and the string refused by the shape check below as "null was sent".
+    // Two inputs, one stored result, so one rule. The merge-null rule
+    // above already read `checkValue` for exactly this reason; this is the
+    // replace half catching up, and it also matches what `mergeJson`'s
+    // own one-level-in `null` sentinel does with the two spellings.
+    //
+    // 1. `required: true` AND a declared schema: refused. Nothing else
+    //    enforces `required` for a json column on the GraphQL/programmatic
+    //    doors (`map-types.ts` emits a bare `t.jsonb(name)`,
+    //    `createItemsTable` never reads `field.required`, and the generated
+    //    Input type omits `required` while the OUTPUT type still declares
+    //    the field `JSON!`), so a `null` there produced a row that errors
+    //    on every subsequent read.
+    //
+    //    `&& schema` is the final review's Important 2 (correcting round
+    //    5's own ruling, which scoped this to json and forgot to scope it
+    //    to SCHEMA-CARRYING json): without it, this rule changed the
+    //    no-schema path the plan guarantees is untouched. There are twelve
+    //    live `required` json columns across eleven tables today
+    //    (`workflow_templates.steps_json`, `platform_configurations.
+    //    config_value`, `context_projections.mean/basis/map/intercept`,
+    //    `test_cases.inputs`, `eval_sets.*`, `workflow_triggers.config`,
+    //    `memory_conflicts.members`, `image_generations.image_keys`,
+    //    `context_presets.preset_items`, `memory_conflict_scans.
+    //    context_ids`) and every existing client that clears one works
+    //    today and would have thrown after this merge. The gap still
+    //    closes for every field this feature introduces, because a field
+    //    only reaches the rest of this module by declaring a schema.
+    //
+    // 2. Otherwise: exempt from schema validation ENTIRELY — the shape
+    //    check, `unknownPaths` and `leafViolations` are all skipped rather
+    //    than evaluated. A schema describes the shape of a value that
+    //    EXISTS; `required` is this codebase's answer to whether a column
+    //    may be null at all. Reachable constantly in production: a blank
+    //    CSV cell is the commonest sparse-column shape there is and
+    //    `coerce.ts` maps one to a literal `null`, so without this,
+    //    declaring a schema broke every sparse column's bulk import.
+    //
+    // Replace-only on purpose either way: `null` under `merge` is refused
+    // unconditionally by the rule above, because merge means patch and
+    // null-as-the-whole-patch is an operation question, not a shape one.
+    if (!isMergeField && field?.type === "json" && checkValue === null) {
+      if (schema && field.required === true) {
+        return { ok: false, message: requiredNullRefusalMessage(key) };
+      }
       Object.defineProperty(values, key, { value, writable: true, enumerable: true, configurable: true });
       continue;
     }
@@ -702,7 +1009,7 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
     // just below instead (it can cite valid paths; this can't). Reads
     // `checkValue` so a string that parsed to, say, an array is described
     // by its actual parsed kind ("an array"), not reported as "a string".
-    if (isMergeField && !schema && !isPlainObject(checkValue)) {
+    if (isMergeField && (!schema || !requiresPlainObject(schema)) && !isPlainObject(checkValue)) {
       return { ok: false, message: mergeNonObjectRefusalMessage(key, checkValue) };
     }
 
@@ -741,6 +1048,23 @@ export function prepareItemWrite(args: PrepareItemWriteArgs): PrepareItemWriteRe
       const violations = leafViolations(schema, toValidate);
       if (violations.length > 0) {
         return { ok: false, message: leafRefusalMessage(key, violations) };
+      }
+
+      // Final review, Important 6: checked LAST of the three, and only for
+      // a REPLACE. `leafViolations` above checks the keys that are present;
+      // this checks the declared keys that are not. A merge patch is
+      // exempt by construction (it is a patch — omitting a key is what it
+      // is FOR), and so is `{}`, which is this feature's documented way to
+      // clear a schema-carrying field rather than a value claiming to
+      // satisfy the shape. Last rather than first so a model that mistyped
+      // a key name gets told about the typo (whose message lists every
+      // valid path) instead of being told the correctly-spelled key is
+      // absent, which is the same mistake described from the far end.
+      if (!isMergeField && isPlainObject(checkValue) && Object.keys(checkValue).length > 0) {
+        const missing = missingRequiredKeys(schema, checkValue);
+        if (missing.length > 0) {
+          return { ok: false, message: missingKeysRefusalMessage(key, missing, schema) };
+        }
       }
     }
 

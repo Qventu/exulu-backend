@@ -123,3 +123,115 @@ describe("convertGraphqlOperatorToPostgresQuery — contains on a schema-carryin
     expect(sql).toContain("@>");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Final review, Important 5: the path check applies to every operator that
+// compiles a json VALUE, not only `contains`.
+//
+// `eq` compiles to `?? = ?::jsonb` and `in` to an OR of the same; `ne`
+// compiles to `?? IS DISTINCT FROM ?::jsonb`. JSON.stringify never throws
+// and the cast never fails, so an undeclared path on any of them matched
+// zero rows (every row, for `ne`) with no error -- the identical silence
+// `contains` was fixed for.
+// ---------------------------------------------------------------------------
+describe("convertGraphqlOperatorToPostgresQuery — eq / ne / in on a schema-carrying json field", () => {
+  test("an eq filter on an undeclared path is refused, not compiled to a zero-row query", () => {
+    expect(() =>
+      convertGraphqlOperatorToPostgresQuery(knex("items"), "felder", { eq: { konfidenz: "low" } }, table),
+    ).toThrow(UnknownFilterPathError);
+  });
+
+  test("an ne filter on an undeclared path is refused -- it would otherwise match EVERY row", () => {
+    expect(() =>
+      convertGraphqlOperatorToPostgresQuery(knex("items"), "felder", { ne: { konfidenz: "low" } }, table),
+    ).toThrow(UnknownFilterPathError);
+  });
+
+  test("an in filter is checked per element -- one bad entry among good ones is still refused", () => {
+    expect(() =>
+      convertGraphqlOperatorToPostgresQuery(
+        knex("items"),
+        "felder",
+        { in: [{ budget_gesamt: { konfidenz: "low" } }, { konfidenz: "low" }] },
+        table,
+      ),
+    ).toThrow(UnknownFilterPathError);
+  });
+
+  test("the same bad path across two operators is reported once, not twice", () => {
+    try {
+      convertGraphqlOperatorToPostgresQuery(
+        knex("items"),
+        "felder",
+        { eq: { konfidenz: "low" }, contains: { konfidenz: "low" } },
+        table,
+      );
+      throw new Error("expected convertGraphqlOperatorToPostgresQuery to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(UnknownFilterPathError);
+      expect((error as UnknownFilterPathError).offendingPaths).toEqual(["konfidenz"]);
+    }
+  });
+
+  test("eq / ne / in on a DECLARED path still compile exactly as before", () => {
+    const eqSql = convertGraphqlOperatorToPostgresQuery(
+      knex("items"),
+      "felder",
+      { eq: { budget_gesamt: { konfidenz: "low" } } },
+      table,
+    )
+      .toString()
+      .toLowerCase();
+    expect(eqSql).toContain("::jsonb");
+
+    const neSql = convertGraphqlOperatorToPostgresQuery(
+      knex("items"),
+      "felder",
+      { ne: { budget_gesamt: { konfidenz: "low" } } },
+      table,
+    )
+      .toString()
+      .toLowerCase();
+    expect(neSql).toContain("is distinct from");
+
+    const inSql = convertGraphqlOperatorToPostgresQuery(
+      knex("items"),
+      "felder",
+      { in: [{ budget_gesamt: { konfidenz: "low" } }] },
+      table,
+    )
+      .toString()
+      .toLowerCase();
+    expect(inSql).toContain("::jsonb");
+  });
+
+  test("a json field with NO schema is unaffected by any of them -- backward compatibility is absolute", () => {
+    for (const operators of [{ eq: { konfidenz: "low" } }, { ne: { konfidenz: "low" } }, { in: [{ konfidenz: "low" }] }]) {
+      expect(() =>
+        convertGraphqlOperatorToPostgresQuery(knex("items"), "notes", operators, table),
+      ).not.toThrow();
+    }
+  });
+
+  test("lte / gte are not path-checked -- they compile a scalar comparison, not a path lookup", () => {
+    // Deliberate scope note, asserted so a later change has to be
+    // deliberate too: the spec's non-goals close the door on new json
+    // operators, and these two carry no path to be wrong.
+    expect(() =>
+      convertGraphqlOperatorToPostgresQuery(knex("items"), "felder", { gte: 5 }, table),
+    ).not.toThrow();
+    expect(() =>
+      convertGraphqlOperatorToPostgresQuery(knex("items"), "felder", { lte: 5 }, table),
+    ).not.toThrow();
+  });
+
+  test("a non-json field with the same name shape is untouched (the check is gated on type json)", () => {
+    const textTable: ExuluTableDefinition = {
+      name: { singular: "test_item", plural: "test_items" },
+      fields: [{ name: "felder", type: "text", schema: felderSchema } as any],
+    };
+    expect(() =>
+      convertGraphqlOperatorToPostgresQuery(knex("items"), "felder", { eq: "anything" }, textTable),
+    ).not.toThrow();
+  });
+});

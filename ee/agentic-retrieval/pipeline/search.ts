@@ -6,6 +6,7 @@ import { withTiming } from "./timing";
 import { applyRewrites } from "./text-utils";
 import type { Chunk } from "./types";
 import { isEmbedderNotConfigured } from "@SRC/exulu/embedder-not-configured";
+import { UnknownFilterPathError } from "@SRC/graphql/utilities/convert-graphql-filter-operator-to-pg-query";
 
 /** Attach the source knowledge base to each chunk so citations and the chat UI can
  * attribute passages deterministically. Only memory chunks were labeled before; the
@@ -185,6 +186,13 @@ export async function searchContexts(opts: {
 
         return [];
       } catch (err) {
+        // A refused json filter path is not "this context failed to search"
+        // (final review, Important 4): the filter names a path no schema
+        // defines, so it is wrong for every context, and returning [] here
+        // would hand the model an empty result instead of the refusal that
+        // tells it what to fix. Re-thrown so `pipeline/index.ts`'s own
+        // boundary can surface the message as a step.
+        if (err instanceof UnknownFilterPathError) throw err;
         if (isEmbedderNotConfigured(err)) {
           console.warn(
             `[EXULU pipeline] context "${ctxId}" is not searchable: ${(err as Error).message}`,

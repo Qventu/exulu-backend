@@ -7,6 +7,7 @@ jest.mock("./prefilter", () => ({ fuzzyPrefilter: jest.fn(async () => [{ id: "p1
 import { multiQuerySearch, singleSearch } from "./multi-query";
 import { generateHydePassage } from "./hyde";
 import { fuzzyPrefilter } from "./prefilter";
+import { UnknownFilterPathError } from "@SRC/graphql/utilities/convert-graphql-filter-operator-to-pg-query";
 
 const contextsById = new Map<string, any>([
   ["docs", { id: "docs", configuration: {} }],
@@ -187,5 +188,25 @@ describe("searchContexts", () => {
       scopedItemsByContext: new Map([["docs", ["pj1"]]]),
     });
     expect((multiQuerySearch as jest.Mock).mock.calls[0][0].pinnedItemIds).toEqual(["s1"]);
+  });
+});
+
+// Final review, Important 4: the second swallow point between the query and
+// the pipeline's boundary. Its per-context catch returns [] so one broken
+// context cannot take the whole retrieval down -- correct for a failed
+// search, wrong for a filter path no schema defines, which is wrong for
+// every context and has a message the model can act on.
+describe("searchContexts and a refused json filter path", () => {
+  it("re-throws UnknownFilterPathError instead of degrading that context to zero chunks", async () => {
+    const err = new UnknownFilterPathError("felder", ["konfidenz"], ["<key>.konfidenz"]);
+    (multiQuerySearch as jest.Mock).mockRejectedValueOnce(err);
+
+    await expect(searchContexts({ ...base, contextIds: ["docs"] })).rejects.toBe(err);
+  });
+
+  it("every OTHER per-context failure is still swallowed, exactly as before", async () => {
+    (multiQuerySearch as jest.Mock).mockRejectedValueOnce(new Error("connection reset"));
+
+    await expect(searchContexts({ ...base, contextIds: ["docs"] })).resolves.toEqual({ chunks: [] });
   });
 });

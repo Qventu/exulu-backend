@@ -335,6 +335,19 @@ describe("createContextWriteTools", () => {
       expect(shape.merge.description).toContain("specs");
     });
 
+    it("the merge description tells the model the two things that bite: an unmatched name is refused, and overlapping merges lose writes", () => {
+      // Final review, Important 7 (and Important 1): this description is
+      // the only place the model learns what merge does. It used to promise
+      // "other stored keys are kept" unconditionally, with the
+      // serialized-only limitation recorded nowhere a model or a human
+      // reads, and said nothing about a name that matches no field in the
+      // call -- which used to degrade into a destructive replace.
+      const [, updateTool] = createContextWriteTools(makeContext(), { create: true, update: true }, false);
+      const shape = (updateTool.inputSchema as z.ZodObject<any>).shape;
+      expect(shape.merge.description).toContain("refused, not ignored");
+      expect(shape.merge.description).toContain("Do not run two merges on the same item at once");
+    });
+
     it("the create tool never offers merge — there is nothing stored yet to merge into", () => {
       const [createTool] = createContextWriteTools(makeContext(), { create: true, update: false }, false);
       const shape = (createTool.inputSchema as z.ZodObject<any>).shape;

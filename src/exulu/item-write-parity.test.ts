@@ -457,7 +457,14 @@ describe("item-write parity: the tool path and the GraphQL path agree", () => {
   //
   // Wording corrected (Task 4 fix round 2, Important 5): what these two
   // tests actually prove is that two merges, run one after the other (fully
-  // awaited, no overlap), both land. That is weaker than "concurrent-safe"
+  // awaited, no overlap), both land.
+  //
+  // Final review, Important 7: this note used to be the ONLY place the
+  // limitation was written down, while the SDL description and the
+  // model-facing `merge` description both still promised "other stored keys
+  // are kept" unconditionally. Both now carry it, as does item-write.ts's
+  // module doc -- asserted by the three source-level tests above, because a
+  // documentation surface regresses silently otherwise. That is weaker than "concurrent-safe"
   // and this file no longer claims the stronger thing. Fetch-then-write is
   // two separate statements here, with no transaction, no row lock, and no
   // SQL-side `jsonb_set` -- two GENUINELY concurrent merges (both reading
@@ -800,6 +807,55 @@ describe("item-write parity: the tool path and the GraphQL path agree", () => {
     const match = source.match(/\$\{tableNamePlural\}UpdateOne\([^)]*\)/);
     expect(match).not.toBeNull();
     expect(match![0]).toContain("merge: [String]");
+  });
+
+  // --- Final review, Important 7: the claim is corrected where it is read --
+  //
+  // The serialized-only limitation used to be documented ONLY inside this
+  // file (see the describe block below), while both places a human and a
+  // model actually read the promise still stated it unconditionally. Same
+  // style of source-level check as the two SDL tests above, for the same
+  // reason: these are documentation surfaces, and the thing that regresses
+  // is the text.
+  it("every SDL merge description says merge is not concurrency-safe, and that an unmatched name is refused", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const source = fs.readFileSync(path.join(__dirname, "../graphql/schemas/index.ts"), "utf8");
+
+    const descriptions = source.match(/merge: names of json fields[\s\S]*?"""/g);
+    expect(descriptions).not.toBeNull();
+    // Both UpdateOne and UpdateOneById carry one.
+    expect(descriptions!.length).toBe(2);
+    for (const description of descriptions as string[]) {
+      expect(description).toContain("NOT concurrency-safe");
+      expect(description).toContain("refused, not ignored");
+    }
+  });
+
+  it("the model-facing merge description says the same two things", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const source = fs.readFileSync(
+      path.join(__dirname, "../templates/tools/context-write-tools.ts"),
+      "utf8",
+    );
+    const start = source.indexOf("Names of json fields in THIS call");
+    expect(start).toBeGreaterThan(-1);
+    // The description is one multi-line concatenation; slice forward from
+    // its first line rather than trying to match its closing paren, which
+    // appears inside the template expressions it interpolates.
+    const description = source.slice(start, start + 1500);
+    expect(description).toContain("refused, not ignored");
+    // Phrase chosen to sit inside one source line: the description is a
+    // multi-line concatenation, so a longer phrase would straddle a break.
+    expect(description).toContain("Do not run two merges on the same item");
+  });
+
+  it("item-write.ts's own module doc states the concurrency limitation too", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const source = fs.readFileSync(path.join(__dirname, "item-write.ts"), "utf8");
+    expect(source).toContain("Merge is not concurrency-safe");
   });
 
   // --- Concern 1 (coordinator ruling): UpdateOne is a third live door ------
@@ -1278,6 +1334,236 @@ describe("item-write parity: the tool path and the GraphQL path agree", () => {
       await updateOneById(null, { id: "r1", input: { felder: null } }, graphqlContext(), {});
 
       expect(row(TABLE_NAME, "r1")!.felder).toBeNull();
+    });
+  });
+  // --- Final review, Important 1: an unmatched `merge` entry, through both
+  // --- real write paths ---------------------------------------------------
+  //
+  // The reported repro, run through the two implementations that actually
+  // ship it: `merge: ["Felder"]` (capital F) matched no field name, so the
+  // value fell through to the REPLACE branch and the write succeeded having
+  // deleted every stored key the patch did not mention. Each half of this
+  // was confirmed by reverting the chokepoint's new check and watching the
+  // stored row lose `zielgruppe` with `ok: true`.
+  describe("a merge entry naming no json field in this write is refused on both paths (final review, Important 1)", () => {
+    const existingFelder = {
+      budget_gesamt: { wert: "OLD", konfidenz: "low" },
+      zielgruppe: { wert: "UNTOUCHED", konfidenz: "medium" },
+    };
+
+    it("context.updateItem (the tool path) refuses it, and the other stored key survives", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { r1: { name: "A", felder: existingFelder } } });
+      sharedDb = db;
+      const ctx = makeContext();
+
+      await expect(
+        ctx.updateItem(
+          { id: "r1", felder: { budget_gesamt: { wert: "NEW", konfidenz: "high" } } } as any,
+          {} as any,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          ["Felder"],
+        ),
+      ).rejects.toThrow(/merge/i);
+
+      expect(row(TABLE_NAME, "r1")!.felder).toEqual(existingFelder);
+    });
+
+    it("the GraphQL UpdateOneById resolver refuses it identically, and the other stored key survives", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { r1: { name: "A", felder: existingFelder } } });
+      sharedDb = db;
+
+      const updateOneById = makeGraphqlMutations()[`${TABLE_NAME}UpdateOneById`];
+      await expect(
+        updateOneById(
+          null,
+          {
+            id: "r1",
+            input: { felder: { budget_gesamt: { wert: "NEW", konfidenz: "high" } } },
+            merge: ["Felder"],
+          },
+          graphqlContext(),
+          {},
+        ),
+      ).rejects.toThrow(/merge/i);
+
+      expect(row(TABLE_NAME, "r1")!.felder).toEqual(existingFelder);
+    });
+
+    it("the GraphQL UpdateOne resolver (the `where`-based sibling) refuses it too", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { r1: { name: "A", felder: existingFelder } } });
+      sharedDb = db;
+
+      const updateOne = makeGraphqlMutations()[`${TABLE_NAME}UpdateOne`];
+      await expect(
+        updateOne(
+          null,
+          {
+            where: [{ id: { eq: "r1" } }],
+            input: { felder: { budget_gesamt: { wert: "NEW", konfidenz: "high" } } },
+            merge: ["Felder"],
+          },
+          graphqlContext(),
+          {},
+        ),
+      ).rejects.toThrow(/merge/i);
+
+      expect(row(TABLE_NAME, "r1")!.felder).toEqual(existingFelder);
+    });
+
+    it("the correctly-spelled entry still merges on both paths -- the check refuses typos, not merge", async () => {
+      const { db, row } = makeFakeDb({
+        [TABLE_NAME]: {
+          "row-tool": { name: "A", felder: existingFelder },
+          "row-gql": { name: "A", felder: existingFelder },
+        },
+      });
+      sharedDb = db;
+
+      const ctx = makeContext();
+      await ctx.updateItem(
+        { id: "row-tool", felder: { budget_gesamt: { wert: "NEW", konfidenz: "high" } } } as any,
+        {} as any,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        ["felder"],
+      );
+
+      const updateOneById = makeGraphqlMutations()[`${TABLE_NAME}UpdateOneById`];
+      await updateOneById(
+        null,
+        { id: "row-gql", input: { felder: { budget_gesamt: { wert: "NEW", konfidenz: "high" } } }, merge: ["felder"] },
+        graphqlContext(),
+        {},
+      );
+
+      const expected = {
+        budget_gesamt: { wert: "NEW", konfidenz: "high" },
+        zielgruppe: { wert: "UNTOUCHED", konfidenz: "medium" },
+      };
+      expect(row(TABLE_NAME, "row-tool")!.felder).toEqual(expected);
+      expect(row(TABLE_NAME, "row-gql")!.felder).toEqual(expected);
+    });
+  });
+
+  // --- Final review, Important 2: the no-schema path is absolutely
+  // --- unchanged, through the door that actually regressed ----------------
+  //
+  // Fix round 5 scoped its `required` rule to json and not to
+  // schema-carrying json, so a `required: true` json column with NO
+  // declared schema -- twelve of them across eleven live tables -- started
+  // throwing on a write that clears it. GraphQL is the door those clients
+  // use.
+  describe("a required json field with NO schema still accepts null on both paths (final review, Important 2)", () => {
+    const requiredNoSchemaFields: ExuluContextFieldDefinition[] = [
+      { name: "name", type: "text" },
+      { name: "notes", type: "json", required: true }, // no schema -- as every live required json column is today
+    ];
+    const makeNoSchemaCtx = () =>
+      new ExuluContext({
+        id: CONTEXT_ID,
+        name: "Docs",
+        description: "",
+        fields: requiredNoSchemaFields,
+        active: true,
+        sources: [],
+        configuration: { calculateVectors: "manual" },
+      } as any);
+
+    it("the GraphQL UpdateOneById resolver clears it, exactly as it did before this feature", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { r1: { name: "A", notes: { a: 1 } } } });
+      sharedDb = db;
+
+      const updateOneById = makeGraphqlMutations(makeNoSchemaCtx())[`${TABLE_NAME}UpdateOneById`];
+      await updateOneById(null, { id: "r1", input: { notes: null } }, graphqlContext(), {});
+
+      expect(row(TABLE_NAME, "r1")!.notes).toBeNull();
+    });
+
+    it("context.updateItem (the tool path) clears it too", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { r1: { name: "A", notes: { a: 1 } } } });
+      sharedDb = db;
+
+      await makeNoSchemaCtx().updateItem({ id: "r1", notes: null } as any, {} as any);
+
+      expect(row(TABLE_NAME, "r1")!.notes).toBeNull();
+    });
+  });
+
+  // --- Final review, Important 6: required top-level keys on a replace,
+  // --- through both real write paths --------------------------------------
+  describe("an object-rooted schema's required top-level keys are enforced on a replace (final review, Important 6)", () => {
+    const objectSchema = z.object({ a: z.string(), b: z.string() });
+    const objectFields: ExuluContextFieldDefinition[] = [
+      { name: "name", type: "text" },
+      { name: "felder", type: "json", schema: objectSchema },
+    ];
+    const makeObjectCtx = () =>
+      new ExuluContext({
+        id: CONTEXT_ID,
+        name: "Docs",
+        description: "",
+        fields: objectFields,
+        active: true,
+        sources: [],
+        configuration: { calculateVectors: "manual" },
+      } as any);
+
+    it("the GraphQL CreateOne resolver refuses an incomplete value before any insert happens", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: {} });
+      sharedDb = db;
+
+      const createOne = makeGraphqlMutations(makeObjectCtx())[`${TABLE_NAME}CreateOne`];
+      await expect(
+        createOne(null, { input: { id: "c1", name: "A", felder: { a: "x" } } }, graphqlContext(), {}),
+      ).rejects.toThrow(/"b"/);
+
+      expect(row(TABLE_NAME, "c1")).toBeUndefined();
+    });
+
+    it("context.createItem (the tool path) refuses the same incomplete value", async () => {
+      const { db } = makeFakeDb({ [TABLE_NAME]: {} });
+      sharedDb = db;
+
+      await expect(
+        makeObjectCtx().createItem({ id: "c2", name: "A", felder: { a: "x" } } as any, {} as any),
+      ).rejects.toThrow(/"b"/);
+    });
+
+    it("a non-merge UPDATE is held to the same completeness, and the stored value is untouched", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { r1: { name: "A", felder: { a: "old", b: "old" } } } });
+      sharedDb = db;
+
+      const updateOneById = makeGraphqlMutations(makeObjectCtx())[`${TABLE_NAME}UpdateOneById`];
+      await expect(
+        updateOneById(null, { id: "r1", input: { felder: { a: "x" } } }, graphqlContext(), {}),
+      ).rejects.toThrow(/"b"/);
+
+      expect(row(TABLE_NAME, "r1")!.felder).toEqual({ a: "old", b: "old" });
+    });
+
+    it("the SAME partial value under merge is accepted and keeps the key it omits", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { r1: { name: "A", felder: { a: "old", b: "keep" } } } });
+      sharedDb = db;
+
+      const updateOneById = makeGraphqlMutations(makeObjectCtx())[`${TABLE_NAME}UpdateOneById`];
+      await updateOneById(null, { id: "r1", input: { felder: { a: "x" } }, merge: ["felder"] }, graphqlContext(), {});
+
+      expect(row(TABLE_NAME, "r1")!.felder).toEqual({ a: "x", b: "keep" });
+    });
+
+    it("{} still clears the field -- the documented escape stays open through the real path", async () => {
+      const { db, row } = makeFakeDb({ [TABLE_NAME]: { r1: { name: "A", felder: { a: "old", b: "old" } } } });
+      sharedDb = db;
+
+      const updateOneById = makeGraphqlMutations(makeObjectCtx())[`${TABLE_NAME}UpdateOneById`];
+      await updateOneById(null, { id: "r1", input: { felder: {} } }, graphqlContext(), {});
+
+      expect(row(TABLE_NAME, "r1")!.felder).toEqual({});
     });
   });
 });

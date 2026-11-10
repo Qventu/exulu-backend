@@ -2,18 +2,33 @@ import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import { schemaPaths, unknownPaths } from "@SRC/exulu/json-field-schema";
 
 /**
- * Raised by the `contains` branch below when a `json` field declares a
- * schema (Task 2) and the filter's containment value names a path that
- * schema does not accept. Carries the structured pieces (field, the
- * specific offending paths, the full list of paths the schema DOES define)
- * rather than a bare string, because `applyFilters` is the one chokepoint
- * for every filter surface (generated pagination resolvers, mutation
- * `where` lookups, agentic retrieval's `itemFilters`) — a discriminated
- * return value here would ripple through all of them for no gain, so this
- * is a typed throw instead. `.message` alone is already the complete
- * four-part refusal (what was rejected, why, what was expected, what is
- * available instead), so whatever boundary ends up catching it needs
- * nothing more than that to hand the model something it can act on.
+ * Raised by the path check below when a `json` field declares a schema
+ * (Task 2) and a filter value on it names a path that schema does not
+ * accept. Carries the structured pieces (field, the specific offending
+ * paths, the full list of paths the schema DOES define) rather than a bare
+ * string, because `applyFilters` is the one chokepoint for every filter
+ * surface (generated pagination resolvers, mutation `where` lookups,
+ * agentic retrieval's `itemFilters`) — a discriminated return value here
+ * would ripple through all of them for no gain, so this is a typed throw
+ * instead. `.message` alone is already the complete four-part refusal
+ * (what was rejected, why, what was expected, what is available instead),
+ * so a boundary catching it needs nothing more than that to hand the model
+ * something it can act on.
+ *
+ * The throw is the mechanism; mapping it to a model-visible RESULT at each
+ * boundary is the other half, and the spec is explicit that a refused
+ * filter must come back as a normal tool result rather than a thrown error
+ * (a bad filter is a typo the model fixes next call, not a turn-ending
+ * condition). Through the generated pagination resolvers a throw already
+ * surfaces as a GraphQL error, which is right. Through agentic retrieval it
+ * was being swallowed into "Retrieval degraded due to an internal error —
+ * returning partial results", i.e. partial results and no path list: Part
+ * C's exact target failure in new wording. `ee/agentic-retrieval/pipeline/
+ * index.ts` now surfaces `err.message` as the step text instead, and the
+ * two intermediate catch-alls between the query and that boundary
+ * (`pipeline/multi-query.ts`'s `singleSearch`, `pipeline/search.ts`'s
+ * per-context catch) re-throw this error specifically so it can reach it
+ * (final review, Important 4).
  *
  * This is the spec's own motivating case: a `contains` filter silently
  * compiles to `?? @> ?::jsonb` via `JSON.stringify`, which never throws —
@@ -63,6 +78,42 @@ export const convertGraphqlOperatorToPostgresQuery = (
 
   console.log("[EXULU] operators", operators);
 
+  // Final review, Important 5: hoisted out of the `contains` branch so the
+  // other operators that compile a json value into SQL get it too. `eq`
+  // becomes `?? = ?::jsonb` and `in` an OR of the same; `ne` becomes `??
+  // IS DISTINCT FROM ?::jsonb`. `JSON.stringify` never throws and the cast
+  // never fails, so an undeclared path on any of them matches zero rows
+  // (or, for `ne`, every row) with no error at all — the identical silence
+  // Part C exists to end, which "an empty result means there are none"
+  // then reports as fact. The spec's non-goals close the door on new
+  // json OPERATORS; validating the paths of the ones that already exist is
+  // Part C and explicitly in scope.
+  //
+  // `lte`/`gte` are deliberately not checked: they compile to a plain
+  // scalar comparison on the column, not to a path lookup, so there is no
+  // path in them to be wrong. Only ever runs when the field actually
+  // DECLARES a schema (Task 2) — a json field with none filters exactly as
+  // before, on every surface, which is still every real query today since
+  // nothing in the repo declares a schema yet. `field.name` (never the
+  // reassigned, possibly prefixed `fieldName`) is what the message names.
+  if (isJsonField && field?.schema) {
+    const filterValues: unknown[] = [];
+    if (operators.eq !== undefined) filterValues.push(operators.eq);
+    if (operators.ne !== undefined) filterValues.push(operators.ne);
+    if (Array.isArray(operators.in)) filterValues.push(...operators.in);
+    if (operators.contains !== undefined) filterValues.push(operators.contains);
+
+    // De-duplicated across operators: the same bad path supplied to both
+    // `eq` and `contains` is one mistake, and the message reads as one.
+    const badPaths = new Set<string>();
+    for (const value of filterValues) {
+      for (const path of unknownPaths(field.schema, value)) badPaths.add(path);
+    }
+    if (badPaths.size > 0) {
+      throw new UnknownFilterPathError(field.name, [...badPaths], schemaPaths(field.schema));
+    }
+  }
+
   if (operators.eq !== undefined) {
     if (isJsonField) {
       // For JSON fields, use JSON equality operator
@@ -93,18 +144,10 @@ export const convertGraphqlOperatorToPostgresQuery = (
   }
   if (operators.contains !== undefined) {
     if (isJsonField) {
-      // Only when the field actually declares a schema (Task 2) -- a json
-      // field with none filters exactly as before, on every surface, which
-      // is almost every real query today since nothing in the repo
-      // declares a schema yet. `field` is already resolved once above;
-      // reusing it here (rather than a second `table?.fields.find(...)`)
-      // is deliberate, not an oversight.
-      if (field?.schema) {
-        const badPaths = unknownPaths(field.schema, operators.contains);
-        if (badPaths.length > 0) {
-          throw new UnknownFilterPathError(field.name, badPaths, schemaPaths(field.schema));
-        }
-      }
+      // The schema path check this branch used to own moved above every
+      // operator branch (final review, Important 5) -- `eq`/`ne`/`in`
+      // were silent on an undeclared path for exactly the same reason
+      // `contains` was.
       // For JSON fields, use PostgreSQL's @> containment operator
       // This checks if the JSON field contains the provided value
       query = query.whereRaw(`?? @> ?::jsonb`, [fieldName, JSON.stringify(operators.contains)]);
