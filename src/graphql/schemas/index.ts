@@ -773,8 +773,34 @@ export function createSDL(
       ${tableNamePlural}CreateOne(input: ${tableNameSingular}Input!, upsert: Boolean, generateEmbeddings: Boolean): ${tableNameSingular}MutationPayload
       ${tableNamePlural}CopyOneById(id: ID!): ${tableNameSingular}MutationPayload
 
-      ${tableNamePlural}UpdateOne(where: [Filter${tableNameSingularUpperCaseFirst}], input: ${tableNameSingular}Input!, generateEmbeddings: Boolean): ${tableNameSingular}MutationPayload
-      ${tableNamePlural}UpdateOneById(id: ID!, input: ${tableNameSingular}Input!, generateEmbeddings: Boolean): ${tableNameSingular}MutationPayload
+      """
+      merge: names of json fields in \`input\` whose value is a merge patch
+      (only the keys given are changed, other stored keys are kept, and an
+      explicit null deletes a key) rather than a full replacement. Omit to
+      replace the whole field, as normal (spec 2026-11-09-typed-json-fields).
+      Every name given must be a json field this same call sends a value for;
+      one that is not is refused, not ignored. NOT concurrency-safe: a merge
+      reads the stored value and writes the combined result as two separate
+      statements, with no transaction or row lock, so two merges that OVERLAP
+      in time can still lose one of them. Merges that are serialized (each
+      awaited before the next) both land; overlapping edits to one item need
+      to be serialized by the caller.
+      """
+      ${tableNamePlural}UpdateOne(where: [Filter${tableNameSingularUpperCaseFirst}], input: ${tableNameSingular}Input!, generateEmbeddings: Boolean, merge: [String]): ${tableNameSingular}MutationPayload
+      """
+      merge: names of json fields in \`input\` whose value is a merge patch
+      (only the keys given are changed, other stored keys are kept, and an
+      explicit null deletes a key) rather than a full replacement. Omit to
+      replace the whole field, as normal (spec 2026-11-09-typed-json-fields).
+      Every name given must be a json field this same call sends a value for;
+      one that is not is refused, not ignored. NOT concurrency-safe: a merge
+      reads the stored value and writes the combined result as two separate
+      statements, with no transaction or row lock, so two merges that OVERLAP
+      in time can still lose one of them. Merges that are serialized (each
+      awaited before the next) both land; overlapping edits to one item need
+      to be serialized by the caller.
+      """
+      ${tableNamePlural}UpdateOneById(id: ID!, input: ${tableNameSingular}Input!, generateEmbeddings: Boolean, merge: [String]): ${tableNameSingular}MutationPayload
       ${tableNamePlural}RemoveOneById(id: ID!): ${tableNameSingular}
       ${tableNamePlural}RemoveOne(where: JSON!): ${tableNameSingular}
     `;

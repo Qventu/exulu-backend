@@ -1,4 +1,5 @@
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types";
+import type { z } from "zod";
 import type { allFileTypes } from "@EXULU_TYPES/file-types";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import { ExuluStorage } from "@SRC/exulu/storage.ts";
@@ -11,6 +12,7 @@ import type { Item } from "@EXULU_TYPES/models/item";
 import type { ExuluContextProcessor } from "@EXULU_TYPES/context-processor";
 import type { ChunkerOperation } from "./chunker";
 import { defaultChunker } from "./chunker";
+import { prepareItemWrite } from "./item-write";
 import { resolveEmbedder } from "./resolve-embedder";
 import { chunkCoordinates } from "./projection/store";
 import { getEmbeddingModelInfo } from "./litellm/parse-embedding-models";
@@ -73,6 +75,15 @@ export type ExuluContextFieldDefinition = {
    * excluded by name in the input generator.
    */
   hidden?: boolean;
+  /**
+   * Declares the shape of a `json` field. When present, the generated agent
+   * tools expose this schema to the model instead of the opaque "valid JSON
+   * string" instruction, so the model can see (and be validated against) the
+   * field's actual structure instead of guessing it. Undeclared `json` fields
+   * are unaffected — see json-field-schema.ts for the path/merge logic that
+   * reads this property in later tasks.
+   */
+  schema?: z.ZodTypeAny;
 };
 
 
@@ -681,6 +692,23 @@ export class ExuluContext {
 
     const { db } = await postgresClient();
 
+    // Validation only, no merge (Task 4 fix round 2, Important 1): there is
+    // no existing row to merge into on a create, so this call never passes
+    // `merge` and `existing` is always `null` -- `prepareItemWrite` then
+    // never applies its merge branch (every key is a plain replace) and
+    // `prepared.values` is content-identical to `item`, so the result is
+    // deliberately discarded and `item` keeps flowing downstream exactly as
+    // before -- the ONLY effect of this call is the throw on a schema
+    // violation. Without it, create exposed the SAME schema the model is
+    // shown (Part A) and then refused nothing a bad value violated, while
+    // the identical shape sent to `updateItem` was refused -- and
+    // `upsert: true` (`onConflict().merge()`, right below) is an update in
+    // disguise that bulk import uses, so this also closes that door.
+    const createValidation = prepareItemWrite({ fields: this.fields, existing: null, input: item });
+    if (!createValidation.ok) {
+      throw new Error(createValidation.message);
+    }
+
     // Check for each field if it is a json field, and if
     // so, check if it is an object or array and convert
     // it to a string.
@@ -803,6 +831,8 @@ export class ExuluContext {
     role?: string,
     generateEmbeddingsOverwrite?: boolean,
     runProcessorOverwrite?: boolean,
+    /** Names of `json` fields in `item` whose value is a merge patch rather than a full replacement (spec Part B). */
+    merge?: string[],
   ): Promise<{ item: Item; job?: string }> => {
     console.log("[EXULU] updating item", item);
     const { db } = await postgresClient();
@@ -817,13 +847,37 @@ export class ExuluContext {
       throw new Error("Item not found.");
     }
 
+    // The shared chokepoint (src/exulu/item-write.ts) both write paths route
+    // through: validates any declared json schema against the incoming
+    // value and, for a merge-listed field, combines it with the stored
+    // value instead of replacing it. `record` (the row as it exists before
+    // this write) is the ONLY source of "existing" — never the caller's own
+    // `item`, which may be a partial patch. A refusal throws here, same as
+    // every other "bad input" failure this method already throws (e.g.
+    // "Item not found.").
+    const prepared = prepareItemWrite({
+      fields: this.fields,
+      existing: record,
+      input: item,
+      merge,
+    });
+    if (!prepared.ok) {
+      throw new Error(prepared.message);
+    }
+    // `values` carries the SAME keys `item` did -- unchanged values pass
+    // through by reference, merge-listed ones are now the full merged
+    // object -- so every downstream use of `item` below is replaced with
+    // `values`, except the embeddings call, which deliberately keeps using
+    // `record` (the pre-update row) per the existing comment there.
+    const values = prepared.values as Item;
+
     // Check for each field if it is a json field, and if
     // so, check if it is an object or array and convert
     // it to a string.
-    Object.keys(item).forEach((key) => {
+    Object.keys(values).forEach((key) => {
       if (this.fields.find((field) => field.name === key)?.type === "json") {
-        if (typeof item[key] === "object" || Array.isArray(item[key])) {
-          item[key] = JSON.stringify(item[key]);
+        if (typeof values[key] === "object" || Array.isArray(values[key])) {
+          values[key] = JSON.stringify(values[key]);
         }
       }
     });
@@ -832,8 +886,8 @@ export class ExuluContext {
       .from(getTableName(this.id))
       .where({ id: record.id })
       .update({
-        ...item,
-        tags: item.tags ? (Array.isArray(item.tags) ? item.tags.join(",") : item.tags) : undefined,
+        ...values,
+        tags: values.tags ? (Array.isArray(values.tags) ? values.tags.join(",") : values.tags) : undefined,
       })
       .returning("id");
 
@@ -865,7 +919,17 @@ export class ExuluContext {
         const { job: processorJob, result: processorResult } = await this.processField(
           "api",
           {
-            ...item,
+            // `values`, not `item` (coordinator ruling, Task 4 fix round 1):
+            // the fence on "don't change processor behaviour" is about WHEN
+            // a processor fires, not WHAT it sees once it does. Before
+            // merge existed, the patch WAS the result, so this was never a
+            // live distinction; `mv_pitches`'s processor (trigger: "always")
+            // is the first real consumer of a merge-listed json field, so a
+            // processor seeing a bare patch instead of the full merged
+            // object is live, not latent. `values` carries the SAME keys
+            // `item` did -- unchanged values pass through by reference --
+            // so this is a no-op for every call that doesn't use `merge`.
+            ...values,
             id: record.id,
           },
           config,
