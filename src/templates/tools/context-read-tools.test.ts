@@ -330,3 +330,153 @@ describe("checkItemReadAccess", () => {
     expect(rbacWhere).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fix round 1. F2: a field's model-facing NAME and its physical COLUMN are
+// only the same when sanitizeName() leaves the name alone — `Kunden Name`
+// lives in `kunden_name`. Everything that reaches SQL must use the column
+// (`where` keys, the select list), everything the model reads must use the
+// name. F3/F4/F5/F6 ride along below.
+// ---------------------------------------------------------------------------
+const UMLAUT_FIELDS = [
+  { name: "Preis", type: "number" },
+  { name: "Kunden Name", type: "text" },
+  { name: "Spezifikation", type: "json" },
+  { name: "Handbuch", type: "file" },
+];
+
+const umlautContext = (overrides: Record<string, unknown> = {}) =>
+  makeContext({ id: "angebote", name: "Angebote", fields: UMLAUT_FIELDS, ...overrides });
+
+describe("physical column vs model-facing name (F2)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("maps every where key onto its column before getItems sees it", async () => {
+    const context = umlautContext();
+    await run(findTool(context), { where: { "Kunden Name": { contains: "Acme" }, Preis: { gte: 10 } } });
+    const { filters } = (context.getItems as jest.Mock).mock.calls[0][0];
+    expect(filters).toEqual([{ kunden_name: { contains: "Acme" }, preis: { gte: 10 } }]);
+  });
+
+  it("maps a json field's key too, so applyFilters recognises it as json", async () => {
+    const context = umlautContext();
+    await run(findTool(context), { where: { Spezifikation: { contains: { wert: "x" } } } });
+    const { filters } = (context.getItems as jest.Mock).mock.calls[0][0];
+    // The table definition names this column `spezifikation`; passing
+    // "Spezifikation" would miss isJsonField and compile @> to ILIKE.
+    expect(filters).toEqual([{ spezifikation: { contains: { wert: "x" } } }]);
+  });
+
+  it("aliases the select whenever the column differs from the name, not only for files", async () => {
+    const context = umlautContext();
+    await run(findTool(context), { fields: ["Kunden Name", "Handbuch", "name"] });
+    const { fields } = (context.getItems as jest.Mock).mock.calls[0][0];
+    expect(fields).toEqual([
+      "id",
+      "kunden_name as Kunden Name",
+      "handbuch_s3key as Handbuch",
+      "name",
+    ]);
+  });
+
+  it("defaults alias the same way, so find rows come back keyed like get's output", async () => {
+    const context = umlautContext();
+    await run(findTool(context), {});
+    const { fields } = (context.getItems as jest.Mock).mock.calls[0][0];
+    expect(fields).toEqual(
+      expect.arrayContaining(["preis as Preis", "kunden_name as Kunden Name", "spezifikation as Spezifikation"]),
+    );
+    const result = await run(getTool(umlautContext({
+      getItem: jest.fn(async () => ({ id: "item-1", kunden_name: "Acme", preis: 10 })),
+    })), { id: "item-1" });
+    const item = JSON.parse(result.result.slice("Item: ".length));
+    expect(item["Kunden Name"]).toBe("Acme");
+    expect(item.Preis).toBe(10);
+  });
+});
+
+describe("find hands getItems a usable role (F3)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("passes a bare string role straight through instead of dropping it", async () => {
+    const context = makeContext();
+    await (findTool(context).tool.execute as any)(
+      { user: { id: 7, role: "role-1" }, exuluConfig },
+      { toolCallId: "t", messages: [] },
+    );
+    expect((context.getItems as jest.Mock).mock.calls[0][0].role).toBe("role-1");
+  });
+});
+
+describe("contains is only offered where it compiles (F4)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("refuses contains on a number, a boolean and a date field with the valid operator list", async () => {
+    const context = makeContext();
+    for (const where of [
+      { price: { contains: 5 } },
+      { archived: { contains: true } },
+      { released_at: { contains: "2026" } },
+    ]) {
+      const result = await run(findTool(context), { where });
+      expect(result.result).toContain("contains");
+      expect(result.result).toContain("eq, ne, in, gte, lte");
+      expect(context.getItems).not.toHaveBeenCalled();
+    }
+  });
+
+  it("keeps contains on text, enum and json fields", async () => {
+    const context = makeContext();
+    await run(findTool(context), { where: { name: { contains: "wid" } } });
+    await run(findTool(context), { where: { category: { contains: "Hard" } } });
+    await run(findTool(context), { where: { specs: { contains: { wert: "x" } } } });
+    expect(context.getItems).toHaveBeenCalledTimes(3);
+  });
+
+  it("accepts an array as a json filter value", () => {
+    const find = findTool(makeContext());
+    const parsed = (find.inputSchema as z.ZodObject<any>).safeParse({
+      where: { specs: { contains: [{ wert: "x" }] } },
+    });
+    expect(parsed.success).toBe(true);
+  });
+});
+
+describe("the default read gate is wired (F5)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("uses checkItemReadAccess when no gate is injected: a private row of another user is not found", async () => {
+    recordGate.mockResolvedValue(false);
+    const context = makeContext({
+      getItem: jest.fn(async () => ({ ...ROW, rights_mode: "private", created_by: "8" })),
+    });
+    const [get] = createContextReadTools(context);
+    const result = (await (get!.tool.execute as any)(
+      { user, exuluConfig, id: "item-1" },
+      { toolCallId: "t", messages: [] },
+    )) as { result: string };
+    expect(result.result).toBe(itemNotFoundMessage(context, "read"));
+    expect(recordGate).toHaveBeenCalledTimes(1);
+    // private never reaches the rbac table — there is nothing shared to look up.
+    expect(rbacWhere).not.toHaveBeenCalled();
+    expect(result.result).not.toContain("TOPSECRET");
+  });
+});
+
+describe("an explicitly requested field is answered even when it is null (F6)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("states null for a requested empty field, and still omits empty fields from the defaults", async () => {
+    const context = makeContext({
+      getItem: jest.fn(async () => ({ ...ROW, price: null, audit_note: null })),
+    });
+    const asked = await run(getTool(context), { id: "item-1", fields: ["price", "audit_note"] });
+    const item = JSON.parse(asked.result.slice("Item: ".length));
+    expect(item).toEqual({ id: "item-1", price: null, audit_note: null });
+
+    const defaulted = await run(getTool(context), { id: "item-1" });
+    const full = JSON.parse(defaulted.result.slice("Item: ".length));
+    expect("price" in full).toBe(false);
+    expect(full.name).toBe("Widget");
+  });
+});

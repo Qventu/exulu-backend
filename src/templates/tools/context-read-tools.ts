@@ -46,9 +46,26 @@ export const FIND_MAX_LIMIT = 50;
 const SUPPORTED_OPERATORS = ["eq", "ne", "in", "contains", "gte", "lte"] as const;
 
 /**
+ * `contains` compiles to ILIKE on a non-json column — which Postgres refuses
+ * outright on a numeric, boolean or timestamp column (42883). Offering it
+ * there would trade a usable filter for a SQL error the model cannot read, so
+ * those types get the other five operators and `contains` is refused by name
+ * (fix round 1, F4).
+ */
+const CONTAINS_UNSUPPORTED_TYPES = new Set(["number", "boolean", "date"]);
+
+const operatorsForField = (field: ReadableField): string[] =>
+  CONTAINS_UNSUPPORTED_TYPES.has(field.type)
+    ? SUPPORTED_OPERATORS.filter((operator) => operator !== "contains")
+    : [...SUPPORTED_OPERATORS];
+
+/**
  * A column a read tool may expose, with the name the model uses for it.
- * `name` and `column` differ only for `file` fields, which live in a
- * `<name>_s3key` column but keep the logical name the write tools use.
+ * `name` and `column` differ for a `file` field (stored in `<name>_s3key`,
+ * exposed under the logical name the write tools use) and for any field whose
+ * name `sanitizeName` rewrites — `Kunden Name` lives in `kunden_name`. The
+ * rule: `column` is the only thing that may reach SQL, `name` the only thing
+ * the model ever sees.
  */
 type ReadableField = {
   name: string;
@@ -166,16 +183,55 @@ const resolveFields = (
   return { fields: picked };
 };
 
-/** The `select` list for getItems — a file field is aliased onto its name. */
+/**
+ * The `select` list for getItems. Aliased whenever the physical column differs
+ * from the model-facing name — a `file` field (`manual` → `manual_s3key`) AND
+ * any field whose name sanitizeName() rewrites (`Kunden Name` →
+ * `kunden_name`). Without the alias, `find` would hand back rows keyed by
+ * column while `get` keys them by name (fix round 1, F2).
+ */
 const selectList = (fields: ReadableField[]): string[] =>
-  fields.map((field) => (field.isFile ? `${field.column} as ${field.name}` : field.column));
+  fields.map((field) => (field.column === field.name ? field.column : `${field.column} as ${field.name}`));
 
-/** Projects a fetched row onto the fields the caller may see. */
-const projectRow = (record: Item, fields: ReadableField[]): Record<string, unknown> => {
+/**
+ * Maps a validated `where` onto the physical columns applyFilters compiles
+ * against. The table definition names every field `sanitizeName(field.name)`,
+ * so a model-facing name reaching SQL unmapped is either a Postgres 42703 or
+ * — for a json field — a missed `isJsonField`, which turns `@>` into an ILIKE
+ * on jsonb (fix round 1, F2).
+ */
+const whereByColumn = (
+  filterable: ReadableField[],
+  where: Record<string, any>,
+): Record<string, any> => {
+  const byName = new Map(filterable.map((f) => [f.name, f]));
+  const mapped: Record<string, any> = {};
+  for (const [name, operators] of Object.entries(where)) {
+    mapped[byName.get(name)?.column ?? name] = operators;
+  }
+  return mapped;
+};
+
+/**
+ * Projects a fetched row onto the fields the caller may see.
+ *
+ * `explicit` = the caller named the fields. Then an empty value is ANSWERED as
+ * `null` rather than omitted: an absent key reads to a model as "I don't know"
+ * and invites a second call, while the row genuinely says "nothing stored"
+ * (fix round 1, F6). The default selection stays compact.
+ */
+const projectRow = (
+  record: Item,
+  fields: ReadableField[],
+  explicit: boolean,
+): Record<string, unknown> => {
   const out: Record<string, unknown> = {};
   for (const field of fields) {
     const value = record[field.column];
-    if (value === undefined || value === null) continue;
+    if (value === undefined || value === null) {
+      if (explicit) out[field.name] = null;
+      continue;
+    }
     out[field.name] = value;
   }
   return out;
@@ -208,19 +264,19 @@ const validateWhere = (
       `for "${contextName}". Valid filter fields: ${nameList(filterable)}.`
     );
   }
-  for (const [field, operators] of Object.entries(where)) {
+  const byName = new Map(filterable.map((f) => [f.name, f]));
+  for (const [name, operators] of Object.entries(where)) {
     if (!operators || typeof operators !== "object" || Array.isArray(operators)) {
-      return `The filter on "${field}" must be an object of operators, e.g. { "${field}": { "eq": … } }.`;
+      return `The filter on "${name}" must be an object of operators, e.g. { "${name}": { "eq": … } }.`;
     }
+    const allowed = operatorsForField(byName.get(name)!);
     const keys = Object.keys(operators as Record<string, unknown>);
-    const badOperators = keys.filter(
-      (key) => !(SUPPORTED_OPERATORS as readonly string[]).includes(key),
-    );
+    const badOperators = keys.filter((key) => !allowed.includes(key));
     if (keys.length === 0 || badOperators.length > 0) {
       return (
-        `The filter on "${field}" uses ${
+        `The filter on "${name}" uses ${
           keys.length === 0 ? "no operator" : `unsupported operator(s) ${badOperators.map((k) => `"${k}"`).join(", ")}`
-        }. Supported operators: ${SUPPORTED_OPERATORS.join(", ")}.`
+        }. Supported operators for "${name}": ${allowed.join(", ")}.`
       );
     }
   }
@@ -228,15 +284,17 @@ const validateWhere = (
 };
 
 // A json filter value is matched with Postgres' containment operator, so it is
-// an object as often as a scalar. Record-typed on purpose: a declared json
-// schema's own shape is NOT used here (a `contains` filter is a fragment, not
-// a whole value), and a record never strips the key the path check downstream
-// is there to judge.
+// an object or an array as often as a scalar (a json column legally holds any
+// of them, and `@>` on an array element is a normal filter). Record/array
+// typed on purpose: a declared json schema's own shape is NOT used here (a
+// `contains` filter is a fragment, not a whole value), and neither a record
+// nor an array strips the key the path check downstream is there to judge.
 const JSON_FILTER_VALUE = z.union([
   z.string(),
   z.number(),
   z.boolean(),
   z.record(z.string(), z.any()),
+  z.array(z.any()),
 ]);
 
 const filterValueSchema = (type: string): ZodSchema => {
@@ -256,21 +314,28 @@ const filterValueSchema = (type: string): ZodSchema => {
 
 const operatorsSchema = (field: ReadableField): ZodSchema => {
   const value = filterValueSchema(field.type);
+  const allowed = operatorsForField(field);
+  const shape: Record<string, ZodSchema> = {
+    eq: value.optional(),
+    ne: value.optional(),
+    in: z.array(value).optional(),
+    gte: value.optional(),
+    lte: value.optional(),
+  };
+  if (allowed.includes("contains")) {
+    shape["contains"] = value.optional();
+  }
   // Loose on purpose: a strict object would STRIP an operator the model
   // invented (`gt`) before validateWhere could name it, turning the typo into
   // an unfiltered query.
   return z
-    .looseObject({
-      eq: value.optional(),
-      ne: value.optional(),
-      in: z.array(value).optional(),
-      contains: value.optional(),
-      gte: value.optional(),
-      lte: value.optional(),
-    })
+    .looseObject(shape)
     .optional()
     .describe(
-      `Filter on ${field.name}${field.type === "json" ? " (json: eq/ne/in/contains match the stored value, contains does containment)" : ""}.`,
+      `Filter on ${field.name} (${allowed.join(", ")})` +
+        (field.type === "json"
+          ? ": eq/ne/in match the whole stored value, contains does json containment."
+          : "."),
     );
 };
 
@@ -286,7 +351,8 @@ const whereSchema = (filterable: ReadableField[]): ZodSchema => {
     .optional()
     .describe(
       `Filter: an object of field name to operators, e.g. { "name": { "contains": "widget" } }. ` +
-        `Several fields are combined with AND. Supported operators: ${SUPPORTED_OPERATORS.join(", ")}.`,
+        `Several fields are combined with AND. Operators: ${SUPPORTED_OPERATORS.join(", ")} — ` +
+        `"contains" only on text, enum and json fields (each field's own list is on its filter).`,
     );
 };
 
@@ -404,7 +470,10 @@ export const createContextReadTools = (
         if (!(await checkAccess(context, record, user))) {
           return { result: NOT_FOUND };
         }
-        return { result: `Item: ${JSON.stringify(projectRow(record, selection.fields))}` };
+        const explicit = Array.isArray(params.fields) && params.fields.length > 0;
+        return {
+          result: `Item: ${JSON.stringify(projectRow(record, selection.fields, explicit))}`,
+        };
       } catch (error) {
         console.error(`[EXULU] Error reading item in context ${context.id}`, error);
         return {
@@ -464,12 +533,17 @@ export const createContextReadTools = (
       try {
         // One filter chokepoint: the `where` goes into getItems as a single
         // filter object and applyFilters compiles it. This tool never builds
-        // SQL of its own.
+        // SQL of its own — it only translates the model-facing field names
+        // into the columns applyFilters expects.
         const items = await context.getItems({
-          filters: where && Object.keys(where).length > 0 ? [where] : [],
+          filters:
+            where && Object.keys(where).length > 0 ? [whereByColumn(filterable, where)] : [],
           fields: selectList(selection.fields),
           user,
-          role: user?.role?.id,
+          // A user's role can be the bare id string as well as an object;
+          // `user.role?.id` on a string silently yields undefined, which knex
+          // then refuses as an undefined binding (fix round 1, F3).
+          role: typeof user.role === "string" ? user.role : user.role?.id,
           limit,
         });
         return { result: `Found ${items.length} item(s): ${JSON.stringify(items)}` };
