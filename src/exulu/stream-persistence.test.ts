@@ -83,9 +83,17 @@ describe("persistThroughDisconnect", () => {
     expect(answerTextOf(saved[0]!.at(-1))).toBe(FULL_ANSWER);
   });
 
-  it("without it, a disappearing client loses the whole turn (the bug)", async () => {
+  // Up to ai 6.0.49 this test demonstrated the bug as a LOST turn: without
+  // our drain, a disappearing client left `saved` empty. From ai 6.0.x
+  // (verified 2026-11-12 against 6.0.330, the version consumers resolve) the
+  // SDK persists a turn — but an EMPTY one: onFinish fires before the answer
+  // text exists. Same defect, different shape; the drain stays necessary (the
+  // COMPLETE-answer test above is the guarantee that matters). This test pins
+  // the shape so a future SDK change is noticed either way.
+  it("without it, a disappearing client gets an empty turn persisted (the bug, in its ai ≥ 6.0.x shape)", async () => {
     const saved = await serveOneTurn({ keepAlive: false });
 
-    expect(saved).toEqual([]);
+    expect(saved).toHaveLength(1);
+    expect(answerTextOf(saved[0]!.at(-1))).toBe("");
   });
 });
