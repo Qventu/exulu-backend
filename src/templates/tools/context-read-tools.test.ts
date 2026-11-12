@@ -480,3 +480,30 @@ describe("an explicitly requested field is answered even when it is null (F6)", 
     expect(full.name).toBe("Widget");
   });
 });
+
+// Fix round 2, F4 residual: a `uuid` column is a Postgres uuid, not text —
+// ILIKE on it is a 42883 exactly like a numeric column, so `contains` must be
+// refused there too.
+describe("contains on a uuid field (fix round 2)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const operatorKeys = (tool: any, field: string): string[] => {
+    const whereSchema = (tool.inputSchema as z.ZodObject<any>).shape.where as any;
+    const fieldSchema = (whereSchema.unwrap() as z.ZodObject<any>).shape[field] as any;
+    return Object.keys((fieldSchema.unwrap() as z.ZodObject<any>).shape);
+  };
+
+  it("is not offered on a uuid field, but still is on a text field", () => {
+    const find = findTool(makeContext());
+    expect(operatorKeys(find, "legacy_ref")).not.toContain("contains");
+    expect(operatorKeys(find, "audit_note")).toContain("contains");
+  });
+
+  it("is refused by name with the field's own operator list", async () => {
+    const context = makeContext();
+    const result = await run(findTool(context), { where: { legacy_ref: { contains: "1111" } } });
+    expect(result.result).toContain('"contains"');
+    expect(result.result).toContain('Supported operators for "legacy_ref": eq, ne, in, gte, lte');
+    expect(context.getItems).not.toHaveBeenCalled();
+  });
+});

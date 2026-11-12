@@ -47,12 +47,13 @@ const SUPPORTED_OPERATORS = ["eq", "ne", "in", "contains", "gte", "lte"] as cons
 
 /**
  * `contains` compiles to ILIKE on a non-json column — which Postgres refuses
- * outright on a numeric, boolean or timestamp column (42883). Offering it
- * there would trade a usable filter for a SQL error the model cannot read, so
- * those types get the other five operators and `contains` is refused by name
- * (fix round 1, F4).
+ * outright on a numeric, boolean, timestamp or uuid column (42883). Offering
+ * it there would trade a usable filter for a SQL error the model cannot read,
+ * so those types get the other five operators and `contains` is refused by
+ * name (fix round 1, F4; `uuid` added in round 2 — a uuid column is a real
+ * uuid type, not text).
  */
-const CONTAINS_UNSUPPORTED_TYPES = new Set(["number", "boolean", "date"]);
+const CONTAINS_UNSUPPORTED_TYPES = new Set(["number", "boolean", "date", "uuid"]);
 
 const operatorsForField = (field: ReadableField): string[] =>
   CONTAINS_UNSUPPORTED_TYPES.has(field.type)
