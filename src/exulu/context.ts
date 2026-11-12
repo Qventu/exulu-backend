@@ -28,7 +28,7 @@ import type { User } from "@EXULU_TYPES/models/user";
 import type { VectorMethod } from "@EXULU_TYPES/models/vector-methods";
 import { vectorSearch, type VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
-import { applyFilters } from "@SRC/graphql/resolvers/apply-filters";
+import { applyFiltersGrouped } from "@SRC/graphql/resolvers/apply-filters";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
 import { mapType } from "@SRC/utils/map-types";
 import { bullmqDecorator } from "@EE/queues/decorator";
@@ -1076,18 +1076,12 @@ export class ExuluContext {
     const { db } = await postgresClient();
     const tableDefinition = convertContextToTableDefinition(this);
     let query = db.from(getTableName(this.id)).select(fields || "*");
-    // The filters go into their OWN where-group so no filter can ever OR past
-    // the access predicate applied below. `lte: 0` compiles to
-    // `col IS NULL OR col = 0`, which ungrouped binds as
-    // `col IS NULL OR (col = 0 AND <access control>)` — i.e. every NULL-valued
-    // row of every other user. The operator itself is grouped at the source
-    // now (convert-graphql-filter-operator-to-pg-query.ts); this group is the
-    // structural guarantee that the next OR-compiling operator cannot
-    // reintroduce the bypass here (fix round 1, F1). An empty group emits no
-    // SQL at all, so a filter-less call is unchanged.
-    query = query.where(function (this: any) {
-      applyFilters(this, filters || [], tableDefinition);
-    });
+    // applyFiltersGrouped, never bare applyFilters: the filters go into their
+    // own where-group so no filter can ever OR past the access predicate
+    // applied below (see the helper's own doc for the bypass it closes —
+    // fix round 1, F1). An empty group emits no SQL, so a filter-less call is
+    // unchanged.
+    query = applyFiltersGrouped(query, filters || [], tableDefinition);
     if (user) {
       // Fold a bare role id into user.role.id so the "roles" rights_mode branch works.
       const acUser: User =

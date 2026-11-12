@@ -37,6 +37,8 @@ jest.mock("@SRC/graphql/utilities/convert-context-to-table-definition", () => ({
 }));
 jest.mock("@SRC/graphql/resolvers/apply-filters", () => ({
   applyFilters: (_q: any, _f: any) => builder,
+  // getItems uses the grouped form (fix round 2): same stub, one callback deep.
+  applyFiltersGrouped: (_q: any, _f: any) => builder,
 }));
 jest.mock("@SRC/exulu/storage.ts", () => ({ ExuluStorage: jest.fn() }));
 jest.mock("@SRC/exulu/resolve-embedder", () => ({ resolveEmbedder: jest.fn() }));

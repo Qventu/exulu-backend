@@ -19,6 +19,7 @@ jest.mock("@SRC/graphql/utilities/convert-context-to-table-definition", () => ({
 }));
 jest.mock("@SRC/graphql/resolvers/apply-filters", () => ({
   applyFilters: (q: any) => q,
+  applyFiltersGrouped: (q: any) => q,
 }));
 jest.mock("@SRC/exulu/storage.ts", () => ({ ExuluStorage: jest.fn() }));
 jest.mock("@SRC/exulu/resolve-embedder", () => ({ resolveEmbedder: jest.fn() }));
