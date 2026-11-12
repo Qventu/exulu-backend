@@ -56,10 +56,20 @@ const SUPPORTED_OPERATORS = ["eq", "ne", "in", "contains", "gte", "lte"] as cons
  */
 const CONTAINS_UNSUPPORTED_TYPES = new Set(["number", "boolean", "date", "uuid"]);
 
+/**
+ * `gte`/`lte` compile to a plain scalar comparison on the column. On a `json`
+ * column that is a jsonb-vs-number comparison Postgres refuses, and on a uuid
+ * column an ordering nobody means — both are offers that can only produce an
+ * error or a surprise, so those two types get neither (final wave, Minor 5).
+ */
+const RANGE_UNSUPPORTED_TYPES = new Set(["json", "uuid"]);
+
 const operatorsForField = (field: ReadableField): string[] =>
-  CONTAINS_UNSUPPORTED_TYPES.has(field.type)
-    ? SUPPORTED_OPERATORS.filter((operator) => operator !== "contains")
-    : [...SUPPORTED_OPERATORS];
+  SUPPORTED_OPERATORS.filter((operator) => {
+    if (operator === "contains") return !CONTAINS_UNSUPPORTED_TYPES.has(field.type);
+    if (operator === "gte" || operator === "lte") return !RANGE_UNSUPPORTED_TYPES.has(field.type);
+    return true;
+  });
 
 /**
  * A column a read tool may expose, with the name the model uses for it.
@@ -82,7 +92,9 @@ type ReadableField = {
 // NOTE the timestamps are camelCase in the items tables — `created_at` /
 // `updated_at` do not exist there.
 const SYSTEM_FIELDS: { name: string; type: string; findDefault: boolean }[] = [
-  { name: "id", type: "text", findDefault: true },
+  // `id` is a uuid column, not text: `contains` would compile to
+  // `"id" ilike $1` and Postgres refuses that outright (42883).
+  { name: "id", type: "uuid", findDefault: true },
   { name: "createdAt", type: "date", findDefault: false },
   { name: "updatedAt", type: "date", findDefault: true },
   { name: "rights_mode", type: "text", findDefault: false },
@@ -240,7 +252,14 @@ const projectRow = (
 };
 
 const clampLimit = (raw: unknown): number => {
-  const asNumber = typeof raw === "number" ? Math.floor(raw) : Number.NaN;
+  // A numeric STRING is accepted here as well as by the schema's coercion: a
+  // model that sends "10" means 10, and silently reading that as "no limit
+  // given" is the kind of quiet disagreement this module refuses elsewhere
+  // (final wave, Minor 11).
+  const asNumber =
+    typeof raw === "number" || (typeof raw === "string" && raw.trim() !== "")
+      ? Math.floor(Number(raw))
+      : Number.NaN;
   if (!Number.isFinite(asNumber) || asNumber <= 0) return FIND_DEFAULT_LIMIT;
   return Math.min(asNumber, FIND_MAX_LIMIT);
 };
@@ -273,6 +292,10 @@ const validateWhere = (
     }
     const allowed = operatorsForField(byName.get(name)!);
     const keys = Object.keys(operators as Record<string, unknown>);
+    const inValue = (operators as Record<string, unknown>)["in"];
+    if (Array.isArray(inValue) && inValue.length === 0) {
+      return `The "in" filter on "${name}" is an empty list, which matches nothing. Give at least one value, or drop the filter.`;
+    }
     const badOperators = keys.filter((key) => !allowed.includes(key));
     if (keys.length === 0 || badOperators.length > 0) {
       return (
@@ -320,12 +343,16 @@ const operatorsSchema = (field: ReadableField): ZodSchema => {
   const shape: Record<string, ZodSchema> = {
     eq: value.optional(),
     ne: value.optional(),
-    in: z.array(value).optional(),
-    gte: value.optional(),
-    lte: value.optional(),
+    // An empty list is not a filter: `whereIn(col, [])` matches no row at all,
+    // which the model reads as "there are none" (final wave, Minor 6).
+    in: z.array(value).min(1).optional(),
   };
   if (allowed.includes("contains")) {
     shape["contains"] = value.optional();
+  }
+  if (allowed.includes("gte")) {
+    shape["gte"] = value.optional();
+    shape["lte"] = value.optional();
   }
   // Loose on purpose: a strict object would STRIP an operator the model
   // invented (`gt`) before validateWhere could name it, turning the typo into
@@ -337,7 +364,10 @@ const operatorsSchema = (field: ReadableField): ZodSchema => {
       `Filter on ${field.name} (${allowed.join(", ")})` +
         (field.type === "json"
           ? ": eq/ne/in match the whole stored value, contains does json containment."
-          : "."),
+          : ".") +
+        // The platform's own semantics, disclosed because nothing else does:
+        // `lte: 0` deliberately matches NULL as well (final wave, Minor 4).
+        (allowed.includes("lte") ? " `lte` with `0` also matches items where the field is empty." : ""),
     );
 };
 
@@ -423,12 +453,14 @@ export const createContextReadTools = (
   const NOT_FOUND = itemNotFoundMessage(context, "read");
   const checkAccess = deps.checkAccess ?? checkItemReadAccess;
 
-  const fieldsInput = z
-    .array(z.string())
-    .optional()
-    .describe(
-      `Which fields to return. Omit for the defaults. Available: ${nameList(readable)}.`,
-    );
+  const fieldsInput = (defaults: string) =>
+    z
+      .array(z.string())
+      .optional()
+      .describe(
+        `Which fields to return — "id" is always returned whether you name it or not. ` +
+          `Omitted, ${defaults}. Available: ${nameList(readable)}.`,
+      );
 
   const getTool = new ExuluTool({
     id: `get_${segment}_item`,
@@ -444,7 +476,7 @@ export const createContextReadTools = (
         .string()
         .optional()
         .describe("The external_id of the item to read, if the id is unknown."),
-      fields: fieldsInput,
+      fields: fieldsInput("every readable field of the item is returned"),
     }),
     config: [],
     needsApproval: false,
@@ -501,13 +533,15 @@ export const createContextReadTools = (
     type: "function",
     inputSchema: z.object({
       where: whereSchema(filterable),
-      limit: z
+      limit: z.coerce
         .number()
         .optional()
         .describe(
           `How many items to return at most. Default ${FIND_DEFAULT_LIMIT}, maximum ${FIND_MAX_LIMIT} (a larger number is clamped).`,
         ),
-      fields: fieldsInput,
+      fields: fieldsInput(
+        `${findDefaults.map((f) => f.name).join(", ")} are returned`,
+      ),
     }),
     config: [],
     needsApproval: false,
@@ -559,7 +593,18 @@ export const createContextReadTools = (
         // the turn.
         if (error instanceof UnknownFilterPathError) {
           console.warn(`[EXULU] ${findTool.id} refused an unknown json filter path:`, error.message);
-          return { result: error.message };
+          // The error names the COLUMN it rejected (applyFilters only ever saw
+          // columns). The model only knows the field by its own name, so the
+          // message is rebuilt in that name — otherwise the one message whose
+          // whole job is "fix your filter" names something the model never
+          // wrote (final wave, Minor 7).
+          const field = filterable.find((candidate) => candidate.column === error.field);
+          return {
+            result:
+              field && field.name !== error.field
+                ? new UnknownFilterPathError(field.name, error.offendingPaths, error.validPaths).message
+                : error.message,
+          };
         }
         console.error(`[EXULU] Error finding items in context ${context.id}`, error);
         return {

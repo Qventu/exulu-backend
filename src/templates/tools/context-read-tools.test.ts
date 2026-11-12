@@ -503,13 +503,16 @@ describe("contains on a uuid field (fix round 2)", () => {
     const context = makeContext();
     const result = await run(findTool(context), { where: { legacy_ref: { contains: "1111" } } });
     expect(result.result).toContain('"contains"');
-    expect(result.result).toContain('Supported operators for "legacy_ref": eq, ne, in, gte, lte');
+    // gte/lte left the uuid list in the final wave (Minor 5) — an ordering on
+    // a uuid is an offer nobody means.
+    expect(result.result).toContain('Supported operators for "legacy_ref": eq, ne, in');
     expect(context.getItems).not.toHaveBeenCalled();
   });
 });
 
-// Final fix wave, Important 3: the public agent surface is a GUEST surface
-// even for a signed-in visitor (src/exulu/public-surface.ts).
+// ---------------------------------------------------------------------------
+// Final fix wave.
+// ---------------------------------------------------------------------------
 describe("the public agent surface gets guest treatment (Important 3)", () => {
   const publicReq = { headers: { "x-public-surface": "1" } } as any;
 
@@ -527,5 +530,111 @@ describe("the public agent surface gets guest treatment (Important 3)", () => {
     const result = await run(findTool(context), { req: publicReq });
     expect(result.result).toContain("Found 0 item(s)");
     expect(context.getItems).not.toHaveBeenCalled();
+  });
+});
+
+describe("id is a uuid column (Important 1)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("offers no contains on id, and refuses one", async () => {
+    const context = makeContext();
+    const find = findTool(context);
+    const whereShape = ((find.inputSchema as z.ZodObject<any>).shape.where as any).unwrap() as z.ZodObject<any>;
+    const idOperators = Object.keys(((whereShape.shape.id as any).unwrap() as z.ZodObject<any>).shape);
+    expect(idOperators).not.toContain("contains");
+    const result = await run(find, { where: { id: { contains: "abc" } } });
+    expect(result.result).toContain('Supported operators for "id"');
+    expect(context.getItems).not.toHaveBeenCalled();
+  });
+
+  it("still filters id by eq and in", async () => {
+    const context = makeContext();
+    await run(findTool(context), { where: { id: { in: ["a", "b"] } } });
+    expect((context.getItems as jest.Mock).mock.calls[0][0].filters).toEqual([{ id: { in: ["a", "b"] } }]);
+  });
+});
+
+describe("operator surface details (Minors 4, 5, 6, 8)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const operatorDescription = (tool: any, field: string): string => {
+    const whereShape = ((tool.inputSchema as z.ZodObject<any>).shape.where as any).unwrap() as z.ZodObject<any>;
+    return (whereShape.shape[field] as any).description ?? "";
+  };
+
+  it("discloses that lte: 0 also matches empty fields, on number and date filters", () => {
+    const find = findTool(makeContext());
+    for (const field of ["price", "released_at"]) {
+      expect(operatorDescription(find, field)).toContain("also matches items where the field is empty");
+    }
+  });
+
+  it("offers no gte/lte on json and uuid fields, but keeps them on text, number and date", () => {
+    const find = findTool(makeContext());
+    const operators = (field: string): string[] => {
+      const whereShape = ((find.inputSchema as z.ZodObject<any>).shape.where as any).unwrap() as z.ZodObject<any>;
+      return Object.keys(((whereShape.shape[field] as any).unwrap() as z.ZodObject<any>).shape);
+    };
+    for (const field of ["specs", "legacy_ref"]) {
+      expect(operators(field)).not.toContain("gte");
+      expect(operators(field)).not.toContain("lte");
+    }
+    for (const field of ["price", "released_at", "audit_note"]) {
+      expect(operators(field)).toEqual(expect.arrayContaining(["gte", "lte"]));
+    }
+  });
+
+  it("refuses gte on a json field by name instead of compiling it", async () => {
+    const context = makeContext();
+    const result = await run(findTool(context), { where: { specs: { gte: 5 } } });
+    expect(result.result).toContain('"gte"');
+    expect(result.result).toContain('Supported operators for "specs"');
+    expect(context.getItems).not.toHaveBeenCalled();
+  });
+
+  it("refuses an empty in list instead of querying with it", async () => {
+    const context = makeContext();
+    const parsed = (findTool(context).inputSchema as z.ZodObject<any>).safeParse({
+      where: { category: { in: [] } },
+    });
+    expect(parsed.success).toBe(false);
+    const result = await run(findTool(context), { where: { category: { in: [] } } });
+    expect(result.result).toContain("category");
+    expect(context.getItems).not.toHaveBeenCalled();
+  });
+
+  it("names the refused json path in model-facing names, not in column names", async () => {
+    const error = new UnknownFilterPathError("spezifikation", ["konfidenz"], ["wert"]);
+    const context = umlautContext({
+      getItems: jest.fn(async () => {
+        throw error;
+      }),
+    });
+    const result = await run(findTool(context), {
+      where: { Spezifikation: { contains: { konfidenz: "x" } } },
+    });
+    expect(result.result).toContain('"Spezifikation"');
+    expect(result.result).not.toContain("spezifikation");
+    expect(result.result).toContain("wert");
+  });
+
+  it("clamps a numeric string limit instead of rejecting it", async () => {
+    const context = makeContext();
+    const parsed = (findTool(context).inputSchema as z.ZodObject<any>).safeParse({ limit: "10" });
+    expect(parsed.success).toBe(true);
+    await run(findTool(context), { limit: "10" });
+    await run(findTool(context), { limit: "500" });
+    const limits = (context.getItems as jest.Mock).mock.calls.map((c: any[]) => c[0].limit);
+    expect(limits).toEqual([10, FIND_MAX_LIMIT]);
+  });
+
+  it("tells the model what the fields default to (Minor 7)", () => {
+    const find = findTool(makeContext());
+    const get = getTool(makeContext());
+    const describeOf = (tool: any) => (tool.inputSchema as z.ZodObject<any>).shape.fields.description ?? "";
+    for (const tool of [find, get]) {
+      expect(describeOf(tool)).toContain("id");
+      expect(describeOf(tool)).toContain("always");
+    }
   });
 });
