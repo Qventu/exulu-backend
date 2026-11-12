@@ -396,6 +396,29 @@ describe("collectKbWriteTools", () => {
     expect(tools.map((t) => t.id).sort()).toEqual([
       "create_faq_item",
       "create_products_item",
+      "find_faq_items",
+      "find_products_items",
+      "get_faq_item",
+      "get_products_item",
+      "update_products_item",
+    ]);
+  });
+
+  // Write implies read: every configured context also gets the two read
+  // tools, so an agent that may edit a knowledge base never has to abuse a
+  // no-op update to see what it is editing.
+  it("gives a create+update context four tools and an update-only context three", () => {
+    const both = collectKbWriteTools(agentWith({ products: { create: true, update: true } }), [makeContext()]);
+    expect(both.map((t) => t.id).sort()).toEqual([
+      "create_products_item",
+      "find_products_items",
+      "get_products_item",
+      "update_products_item",
+    ]);
+    const updateOnly = collectKbWriteTools(agentWith({ products: { create: false, update: true } }), [makeContext()]);
+    expect(updateOnly.map((t) => t.id).sort()).toEqual([
+      "find_products_items",
+      "get_products_item",
       "update_products_item",
     ]);
   });
@@ -407,8 +430,19 @@ describe("collectKbWriteTools", () => {
   });
 
   it("propagates skip_approval to the generated tools", () => {
-    const [tool] = collectKbWriteTools(agentWith({ products: { create: true, update: false } }, true), [makeContext()]);
-    expect(tool.needsApproval).toBe(false);
+    const tools = collectKbWriteTools(agentWith({ products: { create: true, update: false } }, true), [makeContext()]);
+    expect(tools.find((t) => t.id === "create_products_item")?.needsApproval).toBe(false);
+  });
+
+  it("never asks approval for the read tools, even when the writes do", () => {
+    const tools = collectKbWriteTools(agentWith({ products: { create: true, update: true } }, false), [makeContext()]);
+    const approval = Object.fromEntries(tools.map((t) => [t.id, t.needsApproval]));
+    expect(approval).toEqual({
+      create_products_item: true,
+      update_products_item: true,
+      get_products_item: false,
+      find_products_items: false,
+    });
   });
 });
 
@@ -420,6 +454,10 @@ describe("createKbEditorPickerTool", () => {
     expect(picker.type).toBe("function");
     expect(picker.config.map((c) => c.name)).toEqual(["knowledge_bases", "skip_approval"]);
     expect(picker.config.map((c) => c.type)).toEqual(["json", "boolean"]);
+  });
+
+  it("tells the editor that the entry expands into create, update, get and find tools", () => {
+    expect(createKbEditorPickerTool().description).toContain("create, update, get and find");
   });
 });
 

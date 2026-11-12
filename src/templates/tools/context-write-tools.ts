@@ -11,6 +11,10 @@ import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { checkItemWriteAccess } from "@SRC/utils/check-item-write-access";
 import { KB_EDITOR_TOOL_ID, parseKbEditorConfig, type KbWritePermissions } from "./kb-editor-config";
 import { loosenForTransport } from "@SRC/exulu/json-field-schema";
+// Cyclic by design (context-read-tools imports the segment / not-found /
+// hidden-field rules from here). Safe because every binding on both sides is
+// only dereferenced inside a function body, never while the modules evaluate.
+import { createContextReadTools } from "./context-read-tools";
 
 // Tool ids must match ^[a-z_][a-z0-9_]{4,79}: "create_" (7) + segment + "_item" (5)
 // caps the sanitized context-id segment at 68 chars.
@@ -472,12 +476,10 @@ export const createContextWriteTools = (
   return tools;
 };
 
-// Expands an agent's knowledge_base_editor entry into concrete per-context
-// write tools. Contexts that no longer exist in code are skipped silently —
-// they can disappear between deploys.
 // Display-only entry for the agent editor's tool picker (Query.tools). Never
 // executable in a chat: getEnabledTools skips this id, and the runtime expands
-// the stored entry into per-context write tools instead.
+// the stored entry into per-context create, update, get and find tools
+// instead.
 export const createKbEditorPickerTool = (): ExuluTool =>
   new ExuluTool({
     id: KB_EDITOR_TOOL_ID,
@@ -485,7 +487,9 @@ export const createKbEditorPickerTool = (): ExuluTool =>
     category: "default",
     description:
       "Let this agent create or update items in selected knowledge bases during chat, including attaching " +
-      "files from the session's files to file fields. Configure per knowledge base whether the agent may create and/or update items.",
+      "files from the session's files to file fields. Configure per knowledge base whether the agent may create and/or update items. " +
+      "Per selected knowledge base the entry expands into create, update, get and find tools — writing implies reading, and the " +
+      "read tools never ask for approval.",
     type: "function",
     inputSchema: z.object({}),
     config: [
@@ -504,10 +508,18 @@ export const createKbEditorPickerTool = (): ExuluTool =>
     ],
     execute: async () => ({
       result:
-        "This entry is configuration-only; Exulu expands it into per-context create/update tools at runtime.",
+        "This entry is configuration-only; Exulu expands it into per-context create, update, get and find tools at runtime.",
     }),
   });
 
+/**
+ * Expands an agent's knowledge_base_editor entry into the concrete per-context
+ * tools: the granted write tools PLUS both read tools for the same context —
+ * write implies read (an agent allowed to change a knowledge base is allowed
+ * to look at it; before this it had to call update with a no-op patch and ask
+ * the user to approve a write that changed nothing). Contexts that no longer
+ * exist in code are skipped silently — they can disappear between deploys.
+ */
 export const collectKbWriteTools = (
   agent: ExuluAgent | undefined,
   contexts: ExuluContext[] | undefined,
@@ -527,6 +539,11 @@ export const collectKbWriteTools = (
       continue;
     }
     tools.push(...createContextWriteTools(context, perms, config.skipApproval, deps));
+    // Every entry parseKbEditorConfig keeps grants create or update (it drops
+    // the rest), so reaching this line IS the "may write" test — the read
+    // tools need no config of their own, and skipApproval does not reach
+    // them: reads are always approval-free.
+    tools.push(...createContextReadTools(context));
   }
   return tools;
 };
