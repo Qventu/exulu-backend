@@ -10,6 +10,7 @@ import type { ExuluConfig } from "@SRC/exulu/app";
 import type { LanguageModel, Tool } from "ai";
 import type { allFileTypes, ExuluAgent } from "@EXULU_TYPES/models/agent";
 import { createSessionItemsRetrievalTool } from "./session-items-retrieval-tool";
+import { needsApprovalForCall } from "@SRC/exulu/approval-revalidation";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
 import {
   buildProjectKbProfileDefaults,
@@ -494,11 +495,12 @@ export const convertExuluToolsToAiSdkTools = async (
       const description =
         userDefinedConfigDescription || defaultConfigDescription || toolDescription;
 
+      const approvedForSession = approvedTools?.includes("tool-" + cur.name) ?? false;
       console.log(
         "[EXULU] Tool",
         cur.name,
         "needs approval",
-        approvedTools?.includes(cur.name) ? false : true,
+        cur.needsApprovalFn ? "per call" : isMemoryToolId(cur.id) ? true : approvedForSession ? "only answered calls" : !!cur.needsApproval,
       );
       return {
         ...prev,
@@ -507,11 +509,20 @@ export const convertExuluToolsToAiSdkTools = async (
           description,
           // The approvedTools array uses the tool.name lookup as the frontend
           // Vercel AI SDK uses the sanitized tool name as the key, so this matches.
+          // Never a plain `false` for a tool the user allowed for this chat: the
+          // SDK re-validates an ANSWERED approval by calling needsApproval again
+          // and reads `false` as "deny" — see approval-revalidation.ts.
           needsApproval: cur.needsApprovalFn
             ? (input: unknown, opts: { toolCallId: string; messages: unknown[] }) => cur.needsApprovalFn!(input, opts)
             : isMemoryToolId(cur.id)
               ? true
-              : (approvedTools?.includes("tool-" + cur.name) || !cur.needsApproval) ? false : true, // todo make configurable
+              : (_input: unknown, opts: { toolCallId: string; messages: unknown[] }) =>
+                  needsApprovalForCall({
+                    toolCallId: opts.toolCallId,
+                    messages: opts.messages,
+                    approvedForSession,
+                    requiresApproval: !!cur.needsApproval, // todo make configurable
+                  }),
           // Auth-wrapped tools: the model sees scrub text instead of the
           // credentialRequest/oauth payload; the UI stream keeps the raw
           // output (spec 2026-07-22 §1.2).
