@@ -5,6 +5,7 @@ import { getTableName } from "@SRC/exulu/table-names";
 import { ExuluTool } from "@SRC/exulu/tool";
 import { UnknownFilterPathError } from "@SRC/graphql/utilities/convert-graphql-filter-operator-to-pg-query";
 import { postgresClient } from "@SRC/postgres/client";
+import { treatAsGuest } from "@SRC/exulu/public-surface";
 import { checkRecordAccess } from "@SRC/utils/check-record-access";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { z, type ZodSchema } from "zod";
@@ -449,9 +450,11 @@ export const createContextReadTools = (
     needsApproval: false,
     execute: async (params: any) => {
       const { user } = params;
-      // No user: the same sentence as a missing row. A guest learns nothing
-      // about what exists.
-      if (!user?.id) {
+      // Guest, or the public agent surface — which is a guest surface even for
+      // a signed-in visitor (see public-surface.ts; the page renders without
+      // any knowledge affordances, and the backend must agree). Same sentence
+      // as a missing row: a guest learns nothing about what exists.
+      if (treatAsGuest(params.req, user)) {
         return { result: NOT_FOUND };
       }
       if (!params.id && !params.external_id) {
@@ -511,9 +514,10 @@ export const createContextReadTools = (
     execute: async (params: any) => {
       const { user } = params;
       const limit = clampLimit(params.limit);
-      // No user: nothing is readable, and saying so as an empty result keeps
-      // the tool from reporting on what exists.
-      if (!user?.id) {
+      // Guest, or the public agent surface (see the get tool above): nothing
+      // is readable, and saying so as an empty result keeps the tool from
+      // reporting on what exists.
+      if (treatAsGuest(params.req, user)) {
         return { result: "Found 0 item(s): []" };
       }
       const requested = Array.isArray(params.fields) && params.fields.length > 0 ? params.fields : undefined;

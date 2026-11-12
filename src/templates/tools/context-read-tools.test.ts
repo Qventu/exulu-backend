@@ -507,3 +507,25 @@ describe("contains on a uuid field (fix round 2)", () => {
     expect(context.getItems).not.toHaveBeenCalled();
   });
 });
+
+// Final fix wave, Important 3: the public agent surface is a GUEST surface
+// even for a signed-in visitor (src/exulu/public-surface.ts).
+describe("the public agent surface gets guest treatment (Important 3)", () => {
+  const publicReq = { headers: { "x-public-surface": "1" } } as any;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it("refuses get on the public surface even for a signed-in visitor, without a lookup", async () => {
+    const context = makeContext();
+    const result = await run(getTool(context), { id: "item-1", req: publicReq });
+    expect(result.result).toBe(itemNotFoundMessage(context, "read"));
+    expect(context.getItem).not.toHaveBeenCalled();
+  });
+
+  it("refuses find on the public surface even for a signed-in visitor, without a query", async () => {
+    const context = makeContext();
+    const result = await run(findTool(context), { req: publicReq });
+    expect(result.result).toContain("Found 0 item(s)");
+    expect(context.getItems).not.toHaveBeenCalled();
+  });
+});

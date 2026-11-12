@@ -9,6 +9,7 @@ import { sessionFilePrefix } from "@SRC/exulu/session-files";
 import { copyS3Object } from "@SRC/uppy/index";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { checkItemWriteAccess } from "@SRC/utils/check-item-write-access";
+import { treatAsGuest } from "@SRC/exulu/public-surface";
 import { KB_EDITOR_TOOL_ID, parseKbEditorConfig, type KbWritePermissions } from "./kb-editor-config";
 import { loosenForTransport } from "@SRC/exulu/json-field-schema";
 // Cyclic by design (context-read-tools imports the segment / not-found /
@@ -344,7 +345,11 @@ export const createContextWriteTools = (
         needsApproval: !skipApproval,
         execute: async (params: any) => {
           const { user, exuluConfig } = params;
-          if (!user?.id) {
+          // Guest, or the public agent surface — which is a guest surface even
+          // for a signed-in visitor (src/exulu/public-surface.ts): the page
+          // renders without any write affordances, and the backend has to
+          // agree rather than keying "guest" off `!user?.id` alone.
+          if (treatAsGuest(params.req, user)) {
             return { result: "Knowledge base writes require an authenticated user." };
           }
           try {
@@ -407,7 +412,11 @@ export const createContextWriteTools = (
         needsApproval: !skipApproval,
         execute: async (params: any) => {
           const { user, exuluConfig } = params;
-          if (!user?.id) {
+          // Guest, or the public agent surface — which is a guest surface even
+          // for a signed-in visitor (src/exulu/public-surface.ts): the page
+          // renders without any write affordances, and the backend has to
+          // agree rather than keying "guest" off `!user?.id` alone.
+          if (treatAsGuest(params.req, user)) {
             return { result: "Knowledge base writes require an authenticated user." };
           }
           try {

@@ -532,3 +532,38 @@ describe("file fields (session files)", () => {
     expect(patch).toEqual({ price: 2, id: "item-1" });
   });
 });
+
+// Final fix wave, Important 3: the public agent surface is a GUEST surface
+// even for a signed-in visitor (src/exulu/public-surface.ts). The write tools
+// keyed "guest" off `!user?.id` alone, so a signed-in person opening a
+// guest-published agent's public link could write to the agent's knowledge
+// bases from a page that renders without any of the write affordances.
+describe("the public agent surface gets guest treatment", () => {
+  const publicReq = { headers: { "x-public-surface": "1" } } as any;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it("refuses a create from the public surface, without touching the context", async () => {
+    const context = makeContext();
+    const [tool] = createContextWriteTools(context, { create: true, update: false }, false);
+    const result = await (tool!.tool.execute as any)(
+      { user, exuluConfig, req: publicReq, name: "Widget", price: 1 },
+      { toolCallId: "t", messages: [] },
+    );
+    expect(context.createItem).not.toHaveBeenCalled();
+    expect(result.result).toContain("authenticat");
+  });
+
+  it("refuses an update from the public surface, without looking the item up", async () => {
+    writeGate.mockResolvedValue(true);
+    const context = makeContext({ getItem: jest.fn(async () => ({ id: "item-1", rights_mode: "public" })) });
+    const [tool] = createContextWriteTools(context, { create: false, update: true }, false);
+    const result = await (tool!.tool.execute as any)(
+      { user, exuluConfig, req: publicReq, id: "item-1", name: "New" },
+      { toolCallId: "t", messages: [] },
+    );
+    expect(context.getItem).not.toHaveBeenCalled();
+    expect(context.updateItem).not.toHaveBeenCalled();
+    expect(result.result).toContain("authenticat");
+  });
+});
