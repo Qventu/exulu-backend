@@ -1037,11 +1037,20 @@ export class ExuluContext {
       .first();
 
     if (result) {
-      const chunksCount = await db
-        .from(getChunksTableName(this.id))
-        .where({ source: result.id })
-        .count("id");
-      result.chunksCount = Number(chunksCount[0].count) || 0;
+      // A context without an embedder never gets a chunks table, so counting
+      // chunks on every read used to fail the whole read with `relation
+      // "<context>_chunks" does not exist` (M&V, 2026-11-12 — it took an
+      // agent's item read-back with it). No embedder → no chunks → 0, without
+      // asking the database.
+      if (this.embedder) {
+        const chunksCount = await db
+          .from(getChunksTableName(this.id))
+          .where({ source: result.id })
+          .count("id");
+        result.chunksCount = Number(chunksCount[0].count) || 0;
+      } else {
+        result.chunksCount = 0;
+      }
     }
 
     return result;
