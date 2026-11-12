@@ -1076,7 +1076,18 @@ export class ExuluContext {
     const { db } = await postgresClient();
     const tableDefinition = convertContextToTableDefinition(this);
     let query = db.from(getTableName(this.id)).select(fields || "*");
-    query = applyFilters(query, filters || [], tableDefinition);
+    // The filters go into their OWN where-group so no filter can ever OR past
+    // the access predicate applied below. `lte: 0` compiles to
+    // `col IS NULL OR col = 0`, which ungrouped binds as
+    // `col IS NULL OR (col = 0 AND <access control>)` — i.e. every NULL-valued
+    // row of every other user. The operator itself is grouped at the source
+    // now (convert-graphql-filter-operator-to-pg-query.ts); this group is the
+    // structural guarantee that the next OR-compiling operator cannot
+    // reintroduce the bypass here (fix round 1, F1). An empty group emits no
+    // SQL at all, so a filter-less call is unchanged.
+    query = query.where(function (this: any) {
+      applyFilters(this, filters || [], tableDefinition);
+    });
     if (user) {
       // Fold a bare role id into user.role.id so the "roles" rights_mode branch works.
       const acUser: User =

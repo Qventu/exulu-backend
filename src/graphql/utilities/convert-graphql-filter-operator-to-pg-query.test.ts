@@ -235,3 +235,40 @@ describe("convertGraphqlOperatorToPostgresQuery — eq / ne / in on a schema-car
     ).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// The `lte: 0` branch is the only operator that compiles to an OR. Ungrouped,
+// that OR escapes its own filter: every caller applies filters BEFORE access
+// control (ExuluContext.getItems, the generated list resolvers), so
+// `col IS NULL OR col = 0 AND <access control>` binds as
+// `col IS NULL OR (col = 0 AND <access control>)` — i.e. every row with NULL
+// in that column comes back with no access control at all. Found reviewing
+// the generated `find_<ctx>_items` tool, which hands a model the operator
+// directly (fix round 1, F1).
+// ---------------------------------------------------------------------------
+describe("convertGraphqlOperatorToPostgresQuery — the OR branch cannot escape its own filter", () => {
+  test("{ lte: 0 } compiles to a PARENTHESISED null-or-zero group", () => {
+    const query = convertGraphqlOperatorToPostgresQuery(knex("items"), "chunks_count", { lte: 0 });
+    expect(query.toString().toLowerCase()).toContain(
+      'where ("chunks_count" is null or "chunks_count" = 0)',
+    );
+  });
+
+  test("a predicate added after it stays AND-ed to the whole group, not to the zero branch", () => {
+    let query = convertGraphqlOperatorToPostgresQuery(knex("items"), "chunks_count", { lte: 0 });
+    query = query.where("rights_mode", "public");
+    const sql = query.toString().toLowerCase();
+    expect(sql).toBe(
+      'select * from "items" where ("chunks_count" is null or "chunks_count" = 0) and "rights_mode" = \'public\'',
+    );
+    // The bypass shape: the access predicate must never sit inside the OR.
+    expect(sql).not.toContain('"chunks_count" is null or "chunks_count" = 0 and');
+  });
+
+  test('{ lte: "0" } (the string form) is grouped too', () => {
+    const query = convertGraphqlOperatorToPostgresQuery(knex("items"), "chunks_count", { lte: "0" });
+    expect(query.toString().toLowerCase()).toContain(
+      'where ("chunks_count" is null or "chunks_count" = 0)',
+    );
+  });
+});

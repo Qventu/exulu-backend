@@ -160,8 +160,19 @@ export const convertGraphqlOperatorToPostgresQuery = (
     console.log("[EXULU] operators.lte", operators.lte);
     console.log("[EXULU] fieldName", fieldName);
     if (operators.lte === 0 || operators.lte === "0") {
-      // Also include empty / null values as well as 0 values
-      query = query.whereNull(fieldName).orWhere(fieldName, "=", 0);
+      // Also include empty / null values as well as 0 values.
+      //
+      // GROUPED, and that is load-bearing: this is the only operator in this
+      // file that compiles to an OR, and every caller applies filters BEFORE
+      // access control (ExuluContext.getItems, the generated list resolvers).
+      // Ungrouped, `col IS NULL OR col = 0 AND <access control>` binds as
+      // `col IS NULL OR (col = 0 AND <access control>)` — every row with NULL
+      // in that column came back with no access control at all. The generated
+      // `find_<ctx>_items` tool hands this operator straight to a model,
+      // which is how it was found (fix round 1, F1).
+      query = query.where(function (this: any) {
+        this.whereNull(fieldName).orWhere(fieldName, "=", 0);
+      });
     } else {
       query = query.where(fieldName, "<=", operators.lte);
     }
