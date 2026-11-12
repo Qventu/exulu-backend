@@ -71,7 +71,7 @@ Reading is part of the same grant — a context the agent may write is a context
 
 - **Row-level read access** — every item a read tool returns is checked against the active user's read rights for that specific item (its `rights_mode` — public, private, users, roles, or teams). An item the user may not read is reported as not found, in the same words as an item that does not exist, and nothing of it is shown: no field value, no name, not even the fact that the id exists. `find` lists only the items the user may read.
 - **Guest refusal** — the read tools need an authenticated user session too. An anonymous guest session gets the not-found answer, and an empty list from `find`, before any database call is made.
-- **Hidden fields stay hidden** — a field marked `hidden` is a write-only secret: it appears in no read output, cannot be requested by name, and cannot be filtered on.
+- **Hidden fields stay hidden from the agent's tools** — no agent tool, read or write, exposes a field marked `hidden`: it appears in no read output, cannot be requested by name, and cannot be filtered on. (That is a guarantee of the generated tools, not a platform-wide one — see the field's own documentation for where it does and does not apply.)
 - **No approval, because nothing changes** — the read tools never prompt for confirmation. That is a deliberate asymmetry with the write tools, and it costs nothing in safety: the gates above decide what the user may see, and reading leaves no trace in the knowledge base.
 
 ## Next steps

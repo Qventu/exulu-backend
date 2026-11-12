@@ -92,7 +92,7 @@ At runtime the entry expands into concrete tools per selected knowledge base, na
 
 A knowledge base the agent may write is a knowledge base it may read: the two read tools arrive with the first write switch, have no configuration of their own, and — unlike the write tools — **never ask for approval**, because they change nothing. Skip approval does not apply to them. Before they existed, an agent could only read an item back by calling update with a patch that changed nothing, which asked the user to approve a write for a read.
 
-Both read tools take an optional **`fields`** array that narrows the output to the fields it names; omitted, `get` returns everything readable on the item and `find` returns `id`, `updatedAt` and the item's non-file fields. `find` also takes **`limit`**: 20 by default, 50 at most — a larger number is clamped, not refused. Neither tool ever exposes a `hidden` field: not in the output, not in `fields`, not as a filter.
+Both read tools take an optional **`fields`** array that narrows the output to the fields it names — `id` always comes back, whether you name it or not. Omitted, `get` returns everything readable on the item, and `find` returns `id`, `updatedAt`, `name`, `description`, `tags`, `external_id` and the context's own non-file fields; `createdAt`, `rights_mode` and `archived` come back from `find` only when asked for by name. `find` also takes **`limit`**: 20 by default, 50 at most — a larger number is clamped, not refused. Neither tool ever exposes a `hidden` field: not in the output, not in `fields`, not as a filter.
 
 #### Filtering with `find`
 
