@@ -1061,11 +1061,14 @@ export class ExuluContext {
     fields,
     user,
     role,
+    limit,
   }: {
     filters?: any[];
     fields?: string[];
     user?: User;
     role?: string;
+    /** Caps the number of rows returned. Omitted or <= 0 → no cap (unchanged). */
+    limit?: number;
   }): Promise<Item[]> => {
     // When no `user` is passed, behavior is unchanged (no access control applied).
     // When a `user` is passed, applyAccessControl is applied so callers only get
@@ -1083,6 +1086,9 @@ export class ExuluContext {
       // No field_prefix: items-only query → rights_mode/created_by resolve on the single table,
       // and target_resource_id uses tableDefinition.name.plural (== the items table name).
       query = applyAccessControl(tableDefinition, query, acUser);
+    }
+    if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
+      query = query.limit(Math.floor(limit));
     }
     const items = await query;
     return items;

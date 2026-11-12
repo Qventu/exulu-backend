@@ -6,10 +6,15 @@ jest.mock("@SRC/graphql/utilities/access-control", () => ({
   applyAccessControl: (...a: any[]) => acSpy(...a),
 }));
 
+const limitSpy = jest.fn();
 const builder: any = {
   from: () => builder,
   select: () => builder,
   where: () => builder,
+  limit: (n: number) => {
+    limitSpy(n);
+    return builder;
+  },
   then: (r: (x: any[]) => void) => r([{ id: "i1" }]),
 };
 const dbMock: any = { from: jest.fn(() => builder) };
@@ -77,11 +82,22 @@ describe("ExuluContext.getItems RBAC", () => {
   beforeEach(() => {
     acSpy.mockClear();
     dbMock.from.mockClear();
+    limitSpy.mockClear();
   });
 
   it("does NOT apply access control when no user is passed (backward-compatible)", async () => {
     await ctx.getItems({ filters: [], fields: ["id"] });
     expect(acSpy).not.toHaveBeenCalled();
+  });
+
+  it("caps the query only when a positive limit is passed", async () => {
+    await ctx.getItems({ filters: [], fields: ["id"] });
+    expect(limitSpy).not.toHaveBeenCalled();
+    await ctx.getItems({ filters: [], fields: ["id"], limit: 0 });
+    await ctx.getItems({ filters: [], fields: ["id"], limit: -3 });
+    expect(limitSpy).not.toHaveBeenCalled();
+    await ctx.getItems({ filters: [], fields: ["id"], limit: 20 });
+    expect(limitSpy).toHaveBeenCalledWith(20);
   });
 
   it("applies access control when a user is passed", async () => {

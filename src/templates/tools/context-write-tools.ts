@@ -14,7 +14,40 @@ import { loosenForTransport } from "@SRC/exulu/json-field-schema";
 
 // Tool ids must match ^[a-z_][a-z0-9_]{4,79}: "create_" (7) + segment + "_item" (5)
 // caps the sanitized context-id segment at 68 chars.
-const MAX_CONTEXT_SEGMENT = 68;
+export const MAX_CONTEXT_SEGMENT = 68;
+
+/**
+ * The id segment every generated per-context tool is built from — exported so
+ * the read tools (context-read-tools.ts) produce ids for the SAME context that
+ * match the write tools' ids character for character, including the 68-char
+ * cap. A second copy of this rule would drift the moment the cap moves.
+ */
+export const contextToolSegment = (context: { id: string }): string =>
+  sanitizeName(context.id).slice(0, MAX_CONTEXT_SEGMENT);
+
+/**
+ * The one message every generated per-context tool uses for "that item isn't
+ * there" AND for "you may not touch it" — deliberately indistinguishable, so
+ * no tool can be used to probe for rows the caller cannot see. `access` names
+ * the right the caller was missing ("write" for the write tools, "read" for
+ * the read tools); within one tool the two cases stay identical, which is
+ * what the anti-probing guarantee actually needs.
+ */
+export const itemNotFoundMessage = (
+  context: { name: string },
+  access: "read" | "write",
+): string => `Item not found in "${context.name}" or you don't have ${access} access to it.`;
+
+/**
+ * This repo's write-only-secret contract: a context field marked `hidden` is
+ * never exposed to a model — not as a tool input, not in a tool's output, not
+ * as a filterable or selectable name. Exported so every generated tool asks
+ * the same question in the same place. Note it has to be asked of the
+ * CONTEXT's own field definition: convertContextToTableDefinition drops the
+ * `hidden` flag (documented there), so a table-definition-derived allow-list
+ * such as groupableFields() cannot answer it.
+ */
+export const isHiddenField = (field: { hidden?: boolean }): boolean => field.hidden === true;
 
 type WriteMode = "create" | "update";
 
@@ -81,7 +114,7 @@ const buildWriteSchema = (
   for (const field of context.fields ?? []) {
     if (field.type === "uuid") continue;
     if (field.calculated === true || field.editable === false) continue;
-    if (field.hidden === true) continue;
+    if (isHiddenField(field)) continue;
     if (RESERVED_INPUT_KEYS.has(field.name)) continue;
 
     if (field.type === "file") {
@@ -289,7 +322,7 @@ export const createContextWriteTools = (
   deps: WriteToolDeps = {},
 ): ExuluTool[] => {
   const tools: ExuluTool[] = [];
-  const segment = sanitizeName(context.id).slice(0, MAX_CONTEXT_SEGMENT);
+  const segment = contextToolSegment(context);
   const contextLabel = context.description ? ` ${context.description}` : "";
 
   if (perms.create) {
@@ -355,7 +388,7 @@ export const createContextWriteTools = (
     const fileNote = fileFields.length ? " File fields take the name of a file from this session's files; omit them to keep the current file." : "";
     // Same message for "row missing" and "no write access" so the tool can't
     // be used to probe for rows the user can't see.
-    const NOT_FOUND = `Item not found in "${context.name}" or you don't have write access to it.`;
+    const NOT_FOUND = itemNotFoundMessage(context, "write");
     tools.push(
       new ExuluTool({
         id: `update_${segment}_item`,
