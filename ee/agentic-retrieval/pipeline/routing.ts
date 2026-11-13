@@ -203,6 +203,15 @@ export async function runRoutingPhase(opts: {
           }),
         });
       } catch (err) {
+        // The step text tells the user the hints are gone; only the log can
+        // tell anyone WHY (a cooled-down deployment, a tag refusal, empty
+        // output from thinking starvation). Without it the degradation is
+        // permanent and undiagnosable from the outside — M&V saw this line on
+        // every question with nothing to go on.
+        console.warn(
+          "[EXULU pipeline] doc/page detection failed — skipping filename and page hints.",
+          err,
+        );
         steps.push({ text: "Doc/page detection failed — skipping filename and page hints." });
         return {
           output: {
@@ -227,6 +236,14 @@ export async function runRoutingPhase(opts: {
           messages: [{ role: "user", content: question }],
         });
       } catch (err) {
+        // Silent in the chat on purpose (an empty list is the normal answer
+        // for most questions, so a degradation step here would be noise), and
+        // therefore the log is the ONLY trace: a failure makes every "search
+        // in the tickets" look like it never named a knowledge base.
+        console.warn(
+          "[EXULU pipeline] explicit knowledge base detection failed — treating the question as naming none.",
+          err,
+        );
         return { output: { explicitlyRequestedKnowledgeBases: [] as string[] } };
       }
     })(),
@@ -374,7 +391,13 @@ export async function runRoutingPhase(opts: {
         });
       }
     } catch (err) {
-      // Classification failed → implicit all-main (degraded)
+      // Classification failed → implicit all-main (degraded). Same reason as
+      // the two detection catches above: the step says the routing degraded,
+      // the log is the only place that can say why.
+      console.warn(
+        "[EXULU pipeline] classification failed — using the implicit all-main rule.",
+        err,
+      );
       mainContexts = enabledContexts.map((c) => c.id);
       fallbackContexts = [];
       steps.push({

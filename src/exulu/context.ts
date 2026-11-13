@@ -28,7 +28,7 @@ import type { User } from "@EXULU_TYPES/models/user";
 import type { VectorMethod } from "@EXULU_TYPES/models/vector-methods";
 import { vectorSearch, type VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
-import { applyFilters } from "@SRC/graphql/resolvers/apply-filters";
+import { applyFiltersGrouped } from "@SRC/graphql/resolvers/apply-filters";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
 import { mapType } from "@SRC/utils/map-types";
 import { bullmqDecorator } from "@EE/queues/decorator";
@@ -1037,11 +1037,20 @@ export class ExuluContext {
       .first();
 
     if (result) {
-      const chunksCount = await db
-        .from(getChunksTableName(this.id))
-        .where({ source: result.id })
-        .count("id");
-      result.chunksCount = Number(chunksCount[0].count) || 0;
+      // A context without an embedder never gets a chunks table, so counting
+      // chunks on every read used to fail the whole read with `relation
+      // "<context>_chunks" does not exist` (M&V, 2026-11-12 — it took an
+      // agent's item read-back with it). No embedder → no chunks → 0, without
+      // asking the database.
+      if (this.embedder) {
+        const chunksCount = await db
+          .from(getChunksTableName(this.id))
+          .where({ source: result.id })
+          .count("id");
+        result.chunksCount = Number(chunksCount[0].count) || 0;
+      } else {
+        result.chunksCount = 0;
+      }
     }
 
     return result;
@@ -1052,11 +1061,14 @@ export class ExuluContext {
     fields,
     user,
     role,
+    limit,
   }: {
     filters?: any[];
     fields?: string[];
     user?: User;
     role?: string;
+    /** Caps the number of rows returned. Omitted or <= 0 → no cap (unchanged). */
+    limit?: number;
   }): Promise<Item[]> => {
     // When no `user` is passed, behavior is unchanged (no access control applied).
     // When a `user` is passed, applyAccessControl is applied so callers only get
@@ -1064,7 +1076,12 @@ export class ExuluContext {
     const { db } = await postgresClient();
     const tableDefinition = convertContextToTableDefinition(this);
     let query = db.from(getTableName(this.id)).select(fields || "*");
-    query = applyFilters(query, filters || [], tableDefinition);
+    // applyFiltersGrouped, never bare applyFilters: the filters go into their
+    // own where-group so no filter can ever OR past the access predicate
+    // applied below (see the helper's own doc for the bypass it closes —
+    // fix round 1, F1). An empty group emits no SQL, so a filter-less call is
+    // unchanged.
+    query = applyFiltersGrouped(query, filters || [], tableDefinition);
     if (user) {
       // Fold a bare role id into user.role.id so the "roles" rights_mode branch works.
       const acUser: User =
@@ -1074,6 +1091,9 @@ export class ExuluContext {
       // No field_prefix: items-only query → rights_mode/created_by resolve on the single table,
       // and target_resource_id uses tableDefinition.name.plural (== the items table name).
       query = applyAccessControl(tableDefinition, query, acUser);
+    }
+    if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
+      query = query.limit(Math.floor(limit));
     }
     const items = await query;
     return items;

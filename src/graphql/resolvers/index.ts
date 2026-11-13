@@ -13,7 +13,7 @@ import { Knex as KnexType } from "knex";
 import type { User } from "@EXULU_TYPES/models/user";
 import { applySorting } from "./apply-sorting";
 import { assertAllowedField } from "./field-allow-list";
-import { applyFilters } from "./apply-filters";
+import { applyFiltersGrouped } from "./apply-filters";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import { checkRecordAccess } from "@SRC/utils/check-record-access";
@@ -56,7 +56,7 @@ export const itemsPaginationRequest = async ({
   // Create count query
   const tableName = table.name.plural.toLowerCase();
   let countQuery = db(tableName);
-  countQuery = applyFilters(countQuery, filters, table);
+  countQuery = applyFiltersGrouped(countQuery, filters, table);
   countQuery = applyAccessControl(table, countQuery, user);
 
   // Get total count
@@ -70,7 +70,7 @@ export const itemsPaginationRequest = async ({
 
   // Create separate data query
   let dataQuery = db(tableName);
-  dataQuery = applyFilters(dataQuery, filters, table);
+  dataQuery = applyFiltersGrouped(dataQuery, filters, table);
   dataQuery = applyAccessControl(table, dataQuery, user);
 
   dataQuery = applySorting(dataQuery, sort, undefined, table);
@@ -281,7 +281,7 @@ export function createQueries(
       const requestedFields = getRequestedFields(info);
       const sanitizedFields = sanitizeRequestedFields(table, requestedFields);
       let query = db.from(tableNamePlural).select(sanitizedFields);
-      query = applyFilters(query, filters, table);
+      query = applyFiltersGrouped(query, filters, table);
       query = applyAccessControl(table, query, context.user);
       query = applySorting(query, sort, undefined, table);
       let result = await query.first();
@@ -331,7 +331,7 @@ export function createQueries(
       const { db } = context;
 
       let query = db(tableNamePlural);
-      query = applyFilters(query, filters, table);
+      query = applyFiltersGrouped(query, filters, table);
       query = applyAccessControl(table, query, context.user);
 
       query = query.limit(limit);

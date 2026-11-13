@@ -37,8 +37,9 @@ export const getEnabledTools = async (
           return null;
         }
         if (id === KB_EDITOR_TOOL_ID) {
-          // Config-only entry: it is expanded into per-context write tools in
-          // convertExuluToolsToAiSdkTools (which has the agent/context closures).
+          // Config-only entry: it is expanded into per-context read and write
+          // tools in convertExuluToolsToAiSdkTools (which has the
+          // agent/context closures).
           // Without this skip it would fall through to the registry lookup below.
           return null;
         }

@@ -299,9 +299,11 @@ export const convertExuluToolsToAiSdkTools = async (
     }
   }
 
-  // Per-context knowledge-base write tools (create_<ctx>_item / update_<ctx>_item),
-  // expanded from the agent's knowledge_base_editor config entry. Explicit
-  // opt-in per context; vanished contexts are skipped inside the collector.
+  // Per-context knowledge-base read and write tools (create_<ctx>_item /
+  // update_<ctx>_item / get_<ctx>_item / find_<ctx>_items), expanded from the
+  // agent's knowledge_base_editor config entry — write access implies read, so
+  // the two read tools come with the first write switch. Explicit opt-in per
+  // context; vanished contexts are skipped inside the collector.
   for (const kbWriteTool of collectKbWriteTools(agent, contexts, { sessionOwnerId })) {
     if (!disabled.has(kbWriteTool.id)) {
       currentTools.push(kbWriteTool);
