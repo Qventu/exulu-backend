@@ -7,6 +7,8 @@ import { serializeError } from "@SRC/utils/serialize-error.ts";
 import { jsonbSafeStringify } from "@SRC/utils/jsonb-safe.ts";
 import { finishTurnMetadata } from "@SRC/exulu/turn-metadata.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
+import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
+import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { ExuluStorage } from "@SRC/exulu/storage.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config.ts";
@@ -1759,6 +1761,18 @@ export const processUiMessagesFlow = async ({
     enabledTools?.map((x) => x.name + " (" + x.id + ")"),
   );
 
+  // The agent's skills, resolved like the chat route does (routes.ts): the
+  // list goes into the system prompt and createSessionSandbox downloads the
+  // SKILL.md folders into the session sandbox. Without it a routine's
+  // sandbox has no skills/ folder at all, so the readFile the step text asks
+  // for ("Nutze den Skill …") fails with "No such file", which fails the whole
+  // step (ALGI routine runs 2026-11-02 … 11-13; chat turns were unaffected).
+  const enabledSkills: ExuluSkill[] = await getEnabledSkills(agent, []);
+  console.log(
+    "[EXULU] enabled skills",
+    enabledSkills.map((x) => `${x.name} v${x.current_version ?? "?"}`),
+  );
+
   if (!agent.model) {
     throw new Error(
       `Agent ${agent.name} (${agent.id}) has no model configured.`,
@@ -1893,6 +1907,7 @@ export const processUiMessagesFlow = async ({
               previousMessages: messageHistory.messages,
               message: currentMessage,
               currentTools: enabledTools,
+              currentSkills: enabledSkills,
               allExuluTools: tools,
               languageModel: resolvedLanguageModel,
               toolConfigs: agent.tools,
