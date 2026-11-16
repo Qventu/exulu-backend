@@ -41,7 +41,7 @@ import { exuluApp } from "@SRC/exulu/app/singleton";
 import { handleEmailIntake } from "@SRC/exulu/email-inbound/intake";
 import { markStreamActive, clearStreamActive } from "@SRC/exulu/active-streams.ts";
 import { messageHasPendingApproval, substituteVariablesInMessage } from "@SRC/exulu/routines/flow-steps.ts";
-import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
+import { createRunSession, verifyRunSessionOwnership } from "@SRC/exulu/routines/run-session.ts";
 import { casJobResultState, parseRunMetadata, upsertWorkflowRunStart } from "@SRC/exulu/routines/run-state.ts";
 import { findLiteLLMModel } from "@SRC/exulu/litellm/catalog.ts";
 import { computeRunCostUsd } from "@SRC/exulu/routines/run-cost.ts";
@@ -562,6 +562,27 @@ export const createWorkers = async (
               // BullMQ attempt), otherwise create one with the routine's rbac
               // snapshot under the run identity.
               let sessionId = started.session ?? undefined;
+              if (started.session) {
+                // The session comes from the job payload: never write into one that
+                // is not this routine's run session. Failing here fails the run like
+                // any other payload validation error, before anything is generated.
+                try {
+                  await verifyRunSessionOwnership(db, {
+                    sessionId: started.session,
+                    workflowId: workflow.id,
+                    runUser: user,
+                  });
+                } catch (error) {
+                  // upsertWorkflowRunStart already linked the row to that session;
+                  // undo it so the failed run does not point at a foreign transcript.
+                  await db
+                    .from("job_results")
+                    .where({ id: jobResultId, session: started.session })
+                    .update({ session: null })
+                    .catch(() => {});
+                  throw error;
+                }
+              }
               if (!sessionId) {
                 sessionId = await createRunSession({
                   db,
