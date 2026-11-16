@@ -2,7 +2,7 @@ import {
     SandboxManager,
     type SandboxRuntimeConfig,
 } from '@anthropic-ai/sandbox-runtime'
-import { mkdir, rm, writeFile, readFile as fsReadFile, readdir, stat } from 'node:fs/promises'
+import { mkdir, rm, writeFile, readdir, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, dirname, resolve, relative, posix } from 'node:path'
 import { exec, spawn } from 'node:child_process'
@@ -26,6 +26,7 @@ import { postgresClient } from "@SRC/postgres/client";
 import { PROJECT_DIR } from "@SRC/exulu/project-files.ts";
 import { ORIGIN_METADATA_KEY } from "@SRC/exulu/file-origin.ts";
 import { syncProjectDir, clearProjectSyncMarker } from "./project-sync";
+import { readRegularFileInside } from "./safe-fs";
 
 /**
  * Load the variables an administrator has explicitly granted to the skill
@@ -1180,7 +1181,11 @@ export async function createSessionSandbox(
                 }
                 for (const path of changedPaths) {
                     try {
-                        const content = await fsReadFile(path)
+                        // Never fsReadFile here: the agent may have swapped the file (or a
+                        // parent directory) for a link to something the sandbox denies,
+                        // and this read runs with the backend's rights.
+                        const content = await readRegularFileInside(sessionDir, path)
+                        if (content === null) continue
                         const persisted = await persistArtifactToS3(path, content, skipProject)
                         artifacts.push({
                             path,
