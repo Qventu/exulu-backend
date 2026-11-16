@@ -16,6 +16,7 @@ import {
   ListObjectsV2Command,
   HeadObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   type ListObjectsV2CommandOutput,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -682,6 +683,52 @@ export const deleteS3Object = async (
   const bucket = config.fileUploads.s3Bucket;
   const command = new DeleteObjectCommand({ Bucket: bucket, Key: key });
   await client.send(command);
+};
+
+/**
+ * One ListObjectsV2 page for exactly `prefix` (no user or general prefix is added).
+ * `next` is the continuation token while more pages remain.
+ */
+export const listS3ObjectsExact = async (
+  prefix: string,
+  token: string | undefined,
+  config: ExuluConfig,
+): Promise<{ items: { key: string; lastModified: Date }[]; next?: string }> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const response = await client.send(
+    new ListObjectsV2Command({
+      Bucket: config.fileUploads.s3Bucket,
+      Prefix: prefix,
+      ...(token && { ContinuationToken: token }),
+    }),
+  );
+  const items: { key: string; lastModified: Date }[] = [];
+  for (const obj of response.Contents ?? []) {
+    if (obj.Key && obj.LastModified) items.push({ key: obj.Key, lastModified: obj.LastModified });
+  }
+  return { items, next: response.IsTruncated ? response.NextContinuationToken : undefined };
+};
+
+/** Delete exact keys (no prefix added), at most 1000 per request. Missing keys are not an error. */
+export const deleteS3ObjectsExact = async (keys: string[], config: ExuluConfig): Promise<void> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  for (let i = 0; i < keys.length; i += 1000) {
+    const response = await client.send(
+      new DeleteObjectsCommand({
+        Bucket: config.fileUploads.s3Bucket,
+        Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true },
+      }),
+    );
+    if (response?.Errors?.length) {
+      throw new Error(`S3 refused to delete ${response.Errors.length} object(s): ${response.Errors[0]?.Message}`);
+    }
+  }
 };
 
 /**

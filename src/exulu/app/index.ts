@@ -43,6 +43,7 @@ import { transcriptionClient } from "@SRC/exulu/transcription/client.ts";
 import { startTranscriptionPollingLoop } from "@SRC/exulu/transcription/polling-loop.ts";
 import { liveRecordingEnabled } from "@SRC/exulu/transcription/live-recording";
 import { logRecallStartup, recallEnabled } from "@SRC/exulu/recall/env.ts";
+import { startDerivedSweep } from "@SRC/exulu/document-cache/sweep.ts";
 import { startRecallReconcileLoop } from "@SRC/exulu/recall/reconcile-loop.ts";
 import type { AuditConfig } from "../audit/config";
 import { initAudit, getAuditLogger, type AuditLogger } from "../audit/logger";
@@ -501,6 +502,14 @@ export class ExuluApp {
         // Webhook delivery is ACK-first, so lost events must be reconciled
         // from Recall's own state or jobs strand in queued/transcribing.
         startRecallReconcileLoop();
+      }
+
+      // Expired stored document text (derived/ in the file bucket). Only the HTTP
+      // server process gets here (workers boot elsewhere); replicas may all sweep.
+      if (this._config?.fileUploads?.s3Bucket) {
+        const stopDerivedSweep = startDerivedSweep(this._config);
+        process.on("SIGINT", stopDerivedSweep);
+        process.on("SIGTERM", stopDerivedSweep);
       }
 
       return this._expressApp;

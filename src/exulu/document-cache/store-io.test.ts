@@ -22,6 +22,7 @@ jest.mock("@aws-sdk/client-s3", () => {
     UploadPartCommand: cls("F"),
     ListObjectsV2Command: cls("G"),
     DeleteObjectCommand: cls("H"),
+    DeleteObjectsCommand: cls("I"),
   };
 });
 jest.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: jest.fn() }));
@@ -72,5 +73,33 @@ describe.each([[undefined], ["pre"]])("createStoreIo with s3prefix %p", (prefix)
     send.mockRejectedValue({ name: "NoSuchKey", $metadata: { httpStatusCode: 404 } });
     await expect(io.getText("derived/x")).resolves.toBeNull();
     await expect(io.head("derived/x")).resolves.toBeNull();
+  });
+});
+
+describe("exact list and delete helpers", () => {
+  it("list uses the prefix verbatim and maps the page", async () => {
+    const { listS3ObjectsExact } = require("../../uppy/index");
+    const d = new Date();
+    send.mockResolvedValueOnce({
+      Contents: [{ Key: "p/derived/a", LastModified: d }, { Key: "nolm" }],
+      IsTruncated: true,
+      NextContinuationToken: "t",
+    });
+    const res = await listS3ObjectsExact("p/derived/", "tok", config("p"));
+    const input = send.mock.calls[0][0].input;
+    expect(input).toEqual({ Bucket: "bkt", Prefix: "p/derived/", ContinuationToken: "tok" });
+    expect(res).toEqual({ items: [{ key: "p/derived/a", lastModified: d }], next: "t" });
+  });
+
+  it("delete sends exact keys and throws on per-key errors", async () => {
+    const { deleteS3ObjectsExact } = require("../../uppy/index");
+    send.mockResolvedValueOnce({});
+    await deleteS3ObjectsExact(["derived/a"], config());
+    expect(send.mock.calls[0][0].input).toEqual({
+      Bucket: "bkt",
+      Delete: { Objects: [{ Key: "derived/a" }], Quiet: true },
+    });
+    send.mockResolvedValueOnce({ Errors: [{ Key: "derived/a", Message: "denied" }] });
+    await expect(deleteS3ObjectsExact(["derived/a"], config())).rejects.toThrow("denied");
   });
 });
