@@ -474,4 +474,23 @@ describe("reading progress", () => {
     expect(finished).toBe(true);
     expect(uppy.putS3ObjectTextExact).toHaveBeenCalled();
   });
+
+  it("stops queueing progress once the consumer has left", async () => {
+    let emit!: (p: unknown) => void;
+    let release!: () => void;
+    extractDocument.mockImplementation(async (input: { onProgress: (p: unknown) => void }) => {
+      emit = input.onProgress;
+      input.onProgress({ phase: "ocr", pagesDone: 1, pagesTotal: 3 });
+      await new Promise<void>((r) => { release = r; });
+      return processorPages;
+    });
+    const g = gen({ filename: "report.pdf" });
+    await g.next();
+    await g.return(undefined);
+    // Must not throw or retain events; extraction still completes.
+    emit({ phase: "ocr", pagesDone: 3, pagesTotal: 3 });
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(uppy.putS3ObjectTextExact).toHaveBeenCalled();
+  });
 });

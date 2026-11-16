@@ -352,7 +352,9 @@ export const createParseDocumentTool = ({
     const queue: ReadingStatus[] = [];
     let wake: (() => void) | undefined;
     let finished = false;
+    let closed = false;
     const onProgress = throttleProgress((p) => {
+      if (closed) return;
       queue.push({ status: "reading", filename, ...p });
       wake?.();
     });
@@ -362,15 +364,21 @@ export const createParseDocumentTool = ({
     });
     // Consumed below; this keeps a rejection from going unhandled if the consumer left first.
     run.catch(() => undefined);
-    while (true) {
-      while (queue.length > 0) yield queue.shift()!;
-      if (finished) break;
-      await new Promise<void>((resolve) => {
-        wake = resolve;
-      });
-      wake = undefined;
+    try {
+      while (true) {
+        while (queue.length > 0) yield queue.shift()!;
+        if (finished) break;
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+        wake = undefined;
+      }
+      yield await run;
+    } finally {
+      // The consumer is gone (or done): stop queueing; the extraction keeps running.
+      closed = true;
+      queue.length = 0;
     }
-    yield await run;
   }
 
   return ExuluTool.internal({

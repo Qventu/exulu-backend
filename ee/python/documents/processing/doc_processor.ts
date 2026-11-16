@@ -548,6 +548,15 @@ export function reconstructTableHeaders(
 /**
  * Identifies pages that need VLM validation and validates them in parallel
  */
+/** Progress is advisory: a throwing callback must never touch processing. */
+function safeProgress(onProgress: ProgressFn | undefined, p: Parameters<ProgressFn>[0]): void {
+  try {
+    onProgress?.(p);
+  } catch (error) {
+    console.warn('[EXULU] onProgress callback threw; ignored:', error instanceof Error ? error.message : String(error));
+  }
+}
+
 /** Whether a page gets a vision pass: it has an image and either no text yet or an image/table in its text. */
 function needsVisionPass(page: ProcessedPage): boolean {
   if (!page.image) return false;
@@ -579,7 +588,7 @@ async function validateWithVLM(
   let visionDone = 0;
   const reportVisionPage = () => {
     visionDone++;
-    onProgress?.({ phase: "vision", pagesDone: visionDone, pagesTotal: visionTotal });
+    safeProgress(onProgress, { phase: "vision", pagesDone: visionDone, pagesTotal: visionTotal });
   };
 
   // Track metrics
@@ -886,7 +895,7 @@ async function processPdf(
 
             // Chunks finish out of order; the shared counter keeps the reported count monotonic.
             ocrDone += chunk.end_page - chunk.start_page;
-            onProgress?.({ phase: "ocr", pagesDone: ocrDone, pagesTotal: ocrTotal });
+            safeProgress(onProgress, { phase: "ocr", pagesDone: ocrDone, pagesTotal: ocrTotal });
 
             return { pages: chunkResponse.pages, offset: chunk.start_page };
           })

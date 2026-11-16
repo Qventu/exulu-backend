@@ -672,6 +672,7 @@ export const generateSync = async ({
             // tools: applies each tool's toModelOutput to historical tool results;
             // sanitize: guarantees auth payloads never reach the model regardless
             // of part encoding (spec 2026-07-22 §1.2).
+            // ignoreIncompleteToolCalls keeps persisted preliminary tool parts (e.g. a read aborted mid-way) out of model messages.
             messages: await convertToModelMessages(sanitizeAuthPayloadsInUiMessages(messages), {
                 ignoreIncompleteToolCalls: true,
                 tools,
@@ -1151,6 +1152,7 @@ ${skillsList}
         // tools: applies each tool's toModelOutput to historical tool results;
         // sanitize: guarantees auth payloads never reach the model regardless
         // of part encoding (spec 2026-07-22 §1.2).
+        // ignoreIncompleteToolCalls keeps persisted preliminary tool parts (e.g. a read aborted mid-way) out of model messages.
         messages: await convertToModelMessages(sanitizeAuthPayloadsInUiMessages(messages), {
             ignoreIncompleteToolCalls: true,
             tools,

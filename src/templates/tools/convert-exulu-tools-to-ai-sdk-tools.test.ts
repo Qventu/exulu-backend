@@ -578,6 +578,16 @@ describe("interim reading status from a generator tool", () => {
     expect(guardMock.mock.calls[0][0]).toBe(finalResult);
   });
 
+  it("treats a real output that merely has status 'reading' as a normal result", async () => {
+    const real = { status: "reading" };
+    async function* g() { yield real; }
+    const out = await run(() => g());
+    expect(out).toEqual([real]);
+    expect(guardMock).toHaveBeenCalledTimes(1);
+    expect(guardMock.mock.calls[0][0]).toBe(real);
+    expect(auditMock.mock.calls[0][1].output).toBe(real);
+  });
+
   it("guards and audits only the final value, once", async () => {
     guardMock.mockImplementationOnce(async () => ({ offloaded: true }));
     const out = await run(() => streamed());

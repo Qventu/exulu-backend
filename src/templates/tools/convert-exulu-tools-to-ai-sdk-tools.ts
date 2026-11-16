@@ -45,6 +45,13 @@ import { deriveContextBudget } from "@SRC/exulu/context-budget";
 import { getAuditLogger } from "@SRC/exulu/audit/logger";
 import { emitToolCallAudit } from "@SRC/exulu/audit/emit-tool-call";
 import { isInterimToolStatus } from "@SRC/exulu/document-cache/progress";
+
+/** Full-shape check, so a real tool output that merely has `status: "reading"` is not mistaken for progress. */
+const isReadingProgress = (value: unknown): boolean => {
+  if (!isInterimToolStatus(value)) return false;
+  const v = value as unknown as Record<string, unknown>;
+  return typeof v.filename === "string" && typeof v.pagesDone === "number" && typeof v.pagesTotal === "number";
+};
 import { extractClientInfo } from "@SRC/exulu/audit/client-info";
 
 /**
@@ -757,7 +764,7 @@ export const convertExuluToolsToAiSdkTools = async (
                 yield value;
                 // Interim "reading" status is UI-only: it is never the result, so it is
                 // neither guarded nor audited.
-                lastYieldWasInterim = isInterimToolStatus(value);
+                lastYieldWasInterim = isReadingProgress(value);
                 if (!lastYieldWasInterim) lastValue = value;
               }
               if (offloadExempt) {

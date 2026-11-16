@@ -128,4 +128,24 @@ describe("document processor progress", () => {
     setupDocument(2);
     await expect(documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config: mistral() })).resolves.toHaveLength(2);
   });
+
+  it("a throwing callback changes nothing: same result, no page flagged", async () => {
+    const run = async (onProgress?: () => void) => {
+      setupDocument(3);
+      return documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config: mistral(), tolerateVisionFailures: true, ...(onProgress ? { onProgress } : {}) });
+    };
+    const plain = await run();
+    const throwing = await run(() => { throw new Error("callback broke"); });
+    // The shared OCR mock numbers its answers per call, so compare with that number removed.
+    const norm = (r: typeof plain) => r!.map((p) => ({ ...p, content: p.content.replace(/ocr text \d+/, "ocr text") }));
+    expect(norm(throwing)).toEqual(norm(plain));
+    expect(throwing!.some((p) => p.vlm_failed)).toBe(false);
+  });
+
+  it("a throwing callback does not fail the document without the tolerate flag", async () => {
+    setupDocument(2);
+    await expect(
+      documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config: mistral(), onProgress: () => { throw new Error("callback broke"); } }),
+    ).resolves.toHaveLength(2);
+  });
 });

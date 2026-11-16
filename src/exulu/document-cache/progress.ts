@@ -24,14 +24,19 @@ export function isInterimToolStatus(value: unknown): value is ReadingStatus {
   );
 }
 
-/** At most one call per `ms`; the first call and a final one (pagesDone === pagesTotal) always pass. */
+/**
+ * At most one call per `ms`; the first call of each phase and a final one
+ * (pagesDone === pagesTotal) always pass.
+ */
 export function throttleProgress(fn: ProgressFn, ms = 1000, now: () => number = Date.now): ProgressFn {
   let last: number | undefined;
+  let lastPhase: string | undefined;
   return (p) => {
     const isFinal = p.pagesTotal > 0 && p.pagesDone === p.pagesTotal;
     const t = now();
-    if (last !== undefined && !isFinal && t - last < ms) return;
+    if (last !== undefined && p.phase === lastPhase && !isFinal && t - last < ms) return;
     last = t;
+    lastPhase = p.phase;
     fn(p);
   };
 }

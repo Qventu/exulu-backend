@@ -26,6 +26,20 @@ describe("throttleProgress", () => {
   });
 });
 
+describe("throttleProgress across phases", () => {
+  it("lets the first event of a new phase through even inside the interval", () => {
+    let t = 0;
+    const seen: string[] = [];
+    const fn = throttleProgress((p) => seen.push(`${p.phase}:${p.pagesDone}`), 1000, () => t);
+    fn({ phase: "ocr", pagesDone: 10, pagesTotal: 10 });
+    t = 100;
+    fn({ phase: "vision", pagesDone: 1, pagesTotal: 10 });
+    t = 200;
+    fn({ phase: "vision", pagesDone: 2, pagesTotal: 10 });
+    expect(seen).toEqual(["ocr:10", "vision:1"]);
+  });
+});
+
 describe("isInterimToolStatus", () => {
   it("recognises only reading status objects", () => {
     expect(isInterimToolStatus({ status: "reading", filename: "a.pdf", phase: "ocr", pagesDone: 1, pagesTotal: 2 })).toBe(true);
