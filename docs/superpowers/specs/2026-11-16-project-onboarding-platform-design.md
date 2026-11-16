@@ -14,7 +14,7 @@ Guiding rule from the product owner: simplify, use the platform's standard build
 
 ## Goals
 
-- The result of reading a document is stored once, as Markdown, next to the source, and reused by every later read by anyone who may read the source.
+- The result of reading a document is stored once per instance, as Markdown, keyed by the document's content, and reused by every later read of the same content by anyone who holds a file with it. Entries expire after a configurable time (default 365 days).
 - The stored Markdown is not shown in any file list, cannot be edited by users, and is loaded in preference to re-processing whenever it matches the current version of the source.
 - When a document processor is configured, documents read through the tools get OCR and the vision pass, for session and project files alike (this is already the behaviour; it must hold for the cached path too).
 - Long PDFs are processed, in parallel chunks, instead of refused.
@@ -35,7 +35,7 @@ Guiding rule from the product owner: simplify, use the platform's standard build
 ## Anti-goals
 
 - A user must never receive document text they could not obtain from the source: the stored Markdown is reachable only through the read tools, which already check access to the source.
-- Stale text must never be served: a replaced source invalidates its Markdown.
+- Stale text must never be served: a replaced source has different content and therefore a different entry.
 - A failed or refused read (scanned PDF without OCR, garbled text layer) must never be stored as if it were the document's content.
 - The agent must not create a project silently, and must not leave the user with files that vanished: if moving fails halfway, every file is still in exactly one of the two places and the result says where.
 
@@ -44,7 +44,7 @@ Guiding rule from the product owner: simplify, use the platform's standard build
 Decided with the product owner: build these as platform features first, then move M&V onto them (rather than building M&V-specific tools first, or one combined change).
 
 For the cache, three shapes were considered:
-1. **Markdown next to the source in object storage (chosen).** Shared across users, sessions and pods; survives restarts; invalidated by the source's version.
+1. **Markdown in object storage, keyed by content hash (chosen).** Shared across users, sessions, projects and pods; survives restarts; a changed file is simply a different key.
 2. Local disk cache like `pdf-preview-cache.ts`. Simple, but per pod and lost on redeploy; with several backend replicas most reads would still miss.
 3. A database table with the text. Queryable, but large blobs in Postgres and a new schema for something that is a file.
 
@@ -68,23 +68,33 @@ For long documents:
 
 ### 1. Stored Markdown for read documents
 
-**Where.** One object per source file, named after the full source name plus `.md`:
-- project file `projects/<pid>/files/Briefing.pdf` → `projects/<pid>/derived/Briefing.pdf.md`
-- session file `user_<owner>/sessions/<sid>/Briefing.pdf` → `derived/sessions/<owner>/<sid>/Briefing.pdf.md`
+Decided by the product owner: the store is global per instance and keyed by content, so the same document uploaded by another user, under another name, in another session or project, is not processed again. Entries expire after a configurable time, default 365 days.
 
-The session location is deliberately outside `user_<owner>/`: the browser upload policy (`buildStsPolicy`) lets a user write anywhere under their own `user_<id>/` prefix and the generic `/s3/*` routes let them read it, so Markdown stored there could be overwritten with planted text. The top-level `derived/` prefix is refused by the generic `/s3/*` routes exactly like project keys (`mayUseGenericS3Route` is widened) and is not covered by the upload policy.
+**Where.** Two kinds of objects under one top-level prefix `[<s3prefix>/]derived/`:
+- the text: `derived/content/<sha256 of the source bytes>/<extractor fingerprint>.md`
+- a small pointer per source object, so a read does not have to download the source just to hash it: `derived/pointers/<sha256 of bucket + key>.json` holding `{ etag, sha256 }`
 
-Both locations are outside every listed, synced, counted and promotable prefix, so the Markdown never appears in the sidebar, the project page, the prompt listing or the sandbox, and a real `.md` file a user uploads can never collide with it.
+The prefix is outside `user_<id>/` and `projects/`: the browser upload policy (`buildStsPolicy`) cannot write there, and the generic `/s3/*` routes refuse it like project keys (`mayUseGenericS3Route` is widened). Nothing lists, syncs, counts or promotes it, so the Markdown never appears in the sidebar, the project page, the prompt listing or the sandbox, and users cannot edit it.
 
-**What.** Exactly the text `parse_document` slices today: the full extracted text with `--- page N ---` markers. Object metadata records `exulu-source-etag` (the source's ETag at extraction) and `exulu-extractor`, a short fingerprint computed from configuration alone, without running anything: which path would run (`pdftotext`, `officeparser`, or the document processor), and for the processor its engine, its OCR model name, whether the vision pass is on and with which model, plus a format version constant (e.g. `document-processor/mistral/mistral-ocr/vlm:<model>@1`, `pdftotext@1`). Concurrency and retry settings are not part of it. Consequence, intended: turning a processor on, or changing its engine or models, makes every stored Markdown stale and each document is re-read once on its next use.
+SHA-256 rather than the storage ETag identifies content: ETags are MD5-based, differ with multipart part sizes, and two different files with the same MD5 can be constructed on purpose, which would let one user plant text for a document another user reads.
 
-**Read-through in `parse_document`.** Resolve the key, HEAD the source for its ETag, look for the Markdown. If it exists and both metadata values match the current source ETag and the extractor that would run now, slice and return it — no download of the source, no extraction. Otherwise extract as today, store the Markdown, then slice. Two reads of the same file at the same moment in one process share one extraction (in-flight map keyed by source key + ETag); across pods a duplicate run is acceptable and the later write wins.
+**What.** Exactly the text `parse_document` slices today: the full extracted text with `--- page N ---` markers. The extractor fingerprint is computed from configuration alone, without running anything: which path would run (`pdftotext`, `officeparser`, or the document processor), and for the processor its engine, its OCR model name, whether the vision pass is on and with which model, plus a format version constant. It is part of the object name (as a short hash of that string, with the readable string in metadata `exulu-extractor`). Concurrency and retry settings are not part of it. Consequence, intended: turning a processor on, or changing its engine or models, means each document is read once more on its next use.
 
-**Never stored:** refusals and failures (too long, scanned without OCR, garbled layer, processor error with empty fallback), and degraded results (a processor run that fell back to `officeparser`, or one where a page's vision pass failed — see section 2). Those are returned to the caller but the next read tries again.
+**Read-through in `parse_document`.**
+1. Resolve the key and access-check as today. HEAD the source for its ETag.
+2. Read the pointer. If its `etag` matches, the content hash is known; otherwise download the source, hash it, write the pointer.
+3. Look for `derived/content/<sha256>/<fingerprint>.md`. If it exists and is not expired: slice and return it.
+4. Otherwise extract as today (the source is downloaded if step 2 did not already), store the Markdown, slice and return.
 
-**Invalidation.** Replacing the source changes its ETag, so the Markdown stops matching and is overwritten on the next read. Changing the processor configuration changes the fingerprint with the same effect. Deleting a source through the session or project DELETE route also deletes its Markdown (best effort). Promote copies the Markdown along with the source. The create-project move copies it and then deletes the session's copy together with the session original, in that order per file, so a file that stays in the session keeps its Markdown and nothing is orphaned or re-read.
+Two reads of the same content at the same moment in one process share one extraction (in-flight map keyed by hash + fingerprint); across pods a duplicate run is acceptable and the later write wins.
 
-**Access.** No route serves the Markdown. Only the read tools reach it, after resolving and access-checking the source exactly as today. Project Markdown is covered by the existing `/s3/*` refusal for project keys. Session Markdown is covered by the same refusal, widened to the `derived/` prefix.
+**Never stored:** refusals and failures (too long, scanned without OCR, garbled layer, processor error with empty fallback), and degraded results (a processor run that fell back to `officeparser`, or one where a page's vision pass failed, see section 2). Those are returned to the caller but the next read tries again.
+
+**Expiry.** `EXULU_DOCUMENT_CACHE_DAYS`, default `365`, validated at boot like the other limits; `0` turns the store off (nothing read from it, nothing written). An entry older than that, by its last-modified time, is treated as absent and overwritten by the next read. A sweep in the backend process (at start and once a day, one listing at a time, no parallel fan-out) deletes expired text and pointer objects, so text does not outlive the limit even if nobody reads the document again.
+
+**Deleting a file does not delete stored text**, because other files with the same content may use it. Text of a deleted document therefore stays until it expires. Replacing, renaming, promoting or moving a file needs no handling at all: same bytes, same entry; different bytes, different entry.
+
+**Access.** No route serves the store. Only the read tools reach it, and only after resolving and access-checking a source the caller holds; a user gets text only for bytes they can already read. What the store can reveal indirectly is that someone on the instance has read the same document before (a fast first read). The UI therefore says "bereits gelesen", not where the text came from.
 
 **Tool description.** `parse_document` no longer claims to be "free and fast (no OCR)"; it says results are reused and that the first read of a long document can take minutes.
 
@@ -111,7 +121,7 @@ Requested by the product owner: the user should see clearly what is happening du
 - A second read that joins a running extraction of the same file receives the same progress.
 - A cache hit yields nothing interim; it is immediate.
 
-**Frontend.** A dedicated renderer for `parse_document` calls in the tool trace, replacing the generic JSON card: file name and icon, a progress bar with "Seite X von Y", the current phase in plain words ("Text wird erkannt", "Abbildungen und Tabellen werden geprüft", "Ergebnis wird gespeichert"), and for long documents the hint that the result is kept so the next read is immediate. When done it collapses to one line: file name, page count, and "aus dem Zwischenspeicher" when the stored Markdown was used. Errors and refusals show their text. Labels go through the existing translations.
+**Frontend.** A dedicated renderer for `parse_document` calls in the tool trace, replacing the generic JSON card: file name and icon, a progress bar with "Seite X von Y", the current phase in plain words ("Text wird erkannt", "Abbildungen und Tabellen werden geprüft", "Ergebnis wird gespeichert"), and for long documents the hint that the result is kept so the next read is immediate. When done it collapses to one line: file name, page count, and "bereits gelesen" when stored Markdown was used. Errors and refusals show their text. Labels go through the existing translations.
 
 ### 3. Creating a project from a conversation
 
@@ -120,7 +130,7 @@ Requested by the product owner: the user should see clearly what is happening du
 **Tool `create_project`.** Input `{ name, description?, files?: string[] }`; `files` defaults to all of the session's files except ignored paths and tool-output offloads. Always requires approval (the approval card names the project and lists the files). It:
 1. creates the project;
 2. attaches the current session to it;
-3. moves the files: copy into the project folder in batches (respecting 20 keys / 50 MB per batch and the 200-file cap), copy each file's stored Markdown, then delete the session originals that were copied. A file that fails to copy stays in the session and is named in the result;
+3. moves the files: copy into the project folder in batches (respecting 20 keys / 50 MB per batch and the 200-file cap), then delete the session originals that were copied. Stored Markdown needs no handling; the moved files have the same content. A file that fails to copy stays in the session and is named in the result;
 4. returns: the project's name and id, how many files moved, which did not and why, the sentence "Only you can see this project. Invite colleagues on the project page.", and the link `/projects/<id>`.
 
 **Registration.** Offered only when: the agent has the tool enabled (opt-in per agent, off for every existing agent; how the switch is stored is left to the builder), the session exists and has no project, the speaker is the session's owner and not a guest, and file uploads are configured. The prompt mentions the tool only when it is registered (one shared predicate, as for `save_to_project`).
@@ -137,9 +147,11 @@ In a project session the scope sentence and the listing header read `project <na
 
 | Case | Behaviour |
 |---|---|
-| Source replaced while a read is running | The stored Markdown carries the ETag read at the start; the next read sees a mismatch and re-extracts |
+| Source replaced while a read is running | The text is stored under the hash of the bytes that were read; the next read sees a new ETag, re-hashes, and finds or creates the entry for the new content |
+| Same document uploaded by another user, another name | Same hash, immediate result |
+| Entry older than `EXULU_DOCUMENT_CACHE_DAYS` | Treated as absent, re-read, overwritten; the sweep deletes it if nobody reads it |
 | Two users read the same uncached 200-page file at once on different pods | Both extract; the later store wins; both get correct text |
-| Markdown object exists but metadata is missing or unreadable | Treated as no cache |
+| Pointer missing, unreadable or with another ETag | Source is downloaded and hashed again |
 | Storing the Markdown fails | The read still returns its result; a warning is logged |
 | `create_project` name already used by another project | Allowed (names are not unique); the id in the result disambiguates |
 | Session already has a project | Tool not offered |
@@ -150,8 +162,9 @@ In a project session the scope sentence and the listing header read `project <na
 
 ## Calls made (not decided by the product owner)
 
-- Markdown lives in protected prefixes (`projects/<pid>/derived/`, `derived/sessions/<owner>/<sid>/`) and is named `<full source name>.md`, rather than `<name without extension>.md` among the files (which would collide and show up in lists).
-- Version check by ETag plus an extractor fingerprint; changing the processor's engine or models re-reads every document once.
+- SHA-256 as the content key, a per-object pointer to avoid re-hashing, and a daily sweep that enforces the expiry.
+- The UI wording "bereits gelesen".
+- The extractor fingerprint is part of the key; changing the processor's engine or models re-reads every document once.
 - Degraded results are returned but not stored.
 - The process-wide limiter applies to all processor callers and queues.
 - Ceiling of 300 pages for tool reads; process-wide limits of 8.
@@ -166,8 +179,8 @@ In a project session the scope sentence and the listing header read `project <na
 
 ## Testing
 
-- Unit: derived-key mapping for both scopes; cache hit/miss/stale/fingerprint mismatch; refusals not stored; in-flight coalescing; delete-with-source; move planning (batches, cap, clash, partial failure); registration predicate; prompt text with and without a project (byte-identical without).
-- Integration: `parse_document` twice on the same file → one extraction; after replacing the file → a second extraction; a 120-page PDF with a mocked processor is processed, not refused; `create_project` end to end with mocked storage, then `parse_document("project/<name>")` in the same turn.
+- Unit: content and pointer keys; cache hit/miss/expired/fingerprint mismatch; pointer with a stale ETag; refusals and degraded results not stored; in-flight coalescing; expiry sweep; `EXULU_DOCUMENT_CACHE_DAYS` validation and `0`; move planning (batches, cap, clash, partial failure); registration predicate; prompt text with and without a project (byte-identical without).
+- Integration: `parse_document` twice on the same file → one extraction; the same bytes under another name in another session → no extraction; after replacing the file → a second extraction; a 120-page PDF with a mocked processor is processed, not refused; `create_project` end to end with mocked storage, then `parse_document("project/<name>")` in the same turn.
 - Unit: progress events (order, throttling, never part of the model output); frontend renderer states (running, cached, done, error).
 - Manual: a real long PDF with the processor configured, watching the progress display; two users reading the same project file; creating a project from a chat and from the artifact agent panel.
 
