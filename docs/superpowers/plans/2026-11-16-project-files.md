@@ -100,7 +100,7 @@
 **Interfaces:**
 - Consumes: Task 1 and 2 exports; `RBACResolver` (`ee/rbac-resolver.ts`), `listS3ObjectsByPrefix`, `getS3SignedUploadUrl`, `deleteS3Object`, `copyS3Object`, `getPdfPreviewBytes`.
 - Produces (HTTP):
-  - `GET /projects/:projectId/files` → `{ files: { key, name, size, lastModified, contentType, presignedUrl, origin }[] }` (read)
+  - `GET /projects/:projectId/files` → `{ canWrite: boolean, files: { key, name, size, lastModified, contentType, presignedUrl, origin }[] }` (read; `canWrite` = the caller's write right)
   - `POST /projects/:projectId/files/upload-sign` body `{ filename, contentType, overwrite? }` → `{ uploadUrl, key }` | 409 `{ error: "exists", lastModified }` | 413-style 400 `{ error: "project_full", max: 200 }` (write)
   - `DELETE /projects/:projectId/files?key=` (write) · `GET /projects/:projectId/file/preview-pdf?key=&auth=` (read)
   - `POST /projects/:projectId/files/promote` body `{ sessionId, keys, overwrite? }` → `{ promoted: { key, name }[], rejected, clashes }`; 409 when `clashes` is non-empty and nothing was copied (write on project and `loadAuthedSession(…, "write")` on the session)
@@ -198,7 +198,7 @@
 - Test: `app/(application)/chat/components/session-files/panel-content.test.tsx` (new)
 
 **Interfaces:**
-- Consumes: Task 7. The session's project id and name come from the session already loaded by the chat page; the write right from a `GET /projects/:id/files` 200 plus a `canWrite` flag — add `canWrite: boolean` to that route's response in the backend branch if Task 3 did not (one line, with a test).
+- Consumes: Task 7. The session's project id and name come from the session already loaded by the chat page; the write right is `canWrite` from `GET /projects/:id/files` (Task 3); a 403 or 404 there means the section is not shown.
 - [ ] **Step 1: Failing tests**: session without project renders exactly one list and the existing privacy note (snapshot of today's markup); with a project: two headed sections "Project · <name>" and "This session", two upload zones for a writer, one for a reader; "Add to project" on a session row calls `promote`; a clash opens a confirm and a second call carries `overwrite: true`; the "@" autocomplete lists project files labelled with the project name and inserts `project/<name>`.
 - [ ] **Step 2–4:** fail, implement, pass; full vitest; tsc == 8; eslint on changed files.
 - [ ] **Step 5: Commit** — `feat(chat): files sidebar shows project and session files side by side`
