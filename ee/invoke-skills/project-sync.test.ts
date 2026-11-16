@@ -372,7 +372,7 @@ describe("resolveSandboxProjectId", () => {
 
   it("matches a role grant when the owner's role is a hydrated role object", async () => {
     const d = deps({
-      getRbac: jest.fn(async () => ({ type: "private", users: [], roles: [{ id: "r1", rights: "read" }] })),
+      getRbac: jest.fn(async () => ({ type: "roles", users: [], roles: [{ id: "r1", rights: "read" }] })),
     });
     const owner = { id: 2, role: { id: "r1", name: "Team" } };
     expect(await resolveSandboxProjectId({ projectId: "p1", ownerId: 2, owner }, d)).toBe("p1");

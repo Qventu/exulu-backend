@@ -2,42 +2,62 @@ export type ProjectRight = "read" | "write";
 
 type Grant = { id: string | number; rights: string };
 
+/** A bare id (raw users row) or the hydrated row authentication puts there (src/auth/auth.ts). */
+type IdOrRow = string | number | { id?: string | number | null } | null;
+
+const idOf = (v: IdOrRow | undefined): string | number | null | undefined =>
+  typeof v === "object" && v ? v.id : v;
+
 /**
- * Access rule for a project and its files. Unlike checkRecordAccess, a `write`
- * grant also satisfies a `read` check: someone who may edit a project's files
- * must be able to list them. `rbac.type === "public"` is what RBACResolver
- * returns when the RBAC licence is absent, so it passes like a public project.
- * Ids are compared as strings (RBAC subject ids are strings, user.id a number).
+ * Access rule for a project and its files. Which grants count follows
+ * checkRecordAccess: user grants only in `users` mode, role grants only in
+ * `roles` mode, team grants only in `teams` mode, so a project switched back to
+ * `private` keeps no access through rbac rows left behind from an earlier mode.
+ * Unlike checkRecordAccess, a `write` grant also satisfies a `read` check:
+ * someone who may edit a project's files must be able to list them.
+ * `rbac.type === "public"` is what RBACResolver returns when the RBAC licence is
+ * absent, so it passes like a public project. Admin-mode API keys pass, as they
+ * do in checkRecordAccess; agents-scoped keys do not (their allowlist names
+ * agents, not projects). Ids are compared as strings (RBAC subject ids are
+ * strings, user.id a number).
  */
 export function hasProjectAccess(args: {
   project: { created_by?: number | string | null; rights_mode?: string | null };
-  rbac: { type: string; users?: Grant[]; roles?: Grant[] };
+  rbac: { type: string; users?: Grant[]; roles?: Grant[]; teams?: Grant[] };
   /**
-   * `role` is a bare id on rows read from the users table, but authentication
-   * (src/auth/auth.ts) replaces it with the hydrated role row; both are accepted.
+   * `role` and `team` are bare ids on rows read from the users table, but
+   * authentication (src/auth/auth.ts) replaces them with the hydrated rows;
+   * both are accepted.
    */
   user: {
     id: number | string;
-    role?: string | number | { id?: string | number | null } | null;
+    role?: IdOrRow;
+    team?: IdOrRow;
     super_admin?: boolean;
     type?: string;
+    scope_mode?: string | null;
   };
   want: ProjectRight;
 }): boolean {
   const { project, rbac, user, want } = args;
 
   if (user.super_admin) return true;
+  if (user.type === "api" && (!user.scope_mode || user.scope_mode === "admin")) return true;
   if (project.rights_mode === "public" || rbac.type === "public") return true;
   if (project.created_by != null && String(project.created_by) === String(user.id)) return true;
 
   const satisfies = (rights: string) => rights === "write" || (rights === "read" && want === "read");
+  const granted = (grants: Grant[] | undefined, subject: string | number | null | undefined) =>
+    subject != null && (grants ?? []).some((g) => String(g.id) === String(subject) && satisfies(g.rights));
 
-  const byUser = (rbac.users ?? []).some(
-    (g) => String(g.id) === String(user.id) && satisfies(g.rights),
-  );
-  if (byUser) return true;
-
-  const roleId = typeof user.role === "object" && user.role ? user.role.id : user.role;
-  if (roleId == null) return false;
-  return (rbac.roles ?? []).some((g) => String(g.id) === String(roleId) && satisfies(g.rights));
+  switch (rbac.type) {
+    case "users":
+      return granted(rbac.users, user.id);
+    case "roles":
+      return granted(rbac.roles, idOf(user.role));
+    case "teams":
+      return granted(rbac.teams, idOf(user.team));
+    default:
+      return false;
+  }
 }

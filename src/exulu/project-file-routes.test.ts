@@ -7,8 +7,8 @@ import { hasProjectAccess } from "./project-access";
 import { createOriginResolver } from "./file-origin";
 import { MAX_PROJECT_FILES } from "./project-files";
 
-const PROJECT = { id: "p1", created_by: 1, rights_mode: "private" };
-const RBAC = { type: "private", users: [{ id: "2", rights: "read" }], roles: [] };
+const PROJECT = { id: "p1", created_by: 1, rights_mode: "users" };
+const RBAC = { type: "users", users: [{ id: "2", rights: "read" }], roles: [] };
 const PP = "projects/p1/files/";
 const sessionPrefix = (owner: number, sid: string) => `user_${owner}/sessions/${sid}/`;
 

@@ -1,7 +1,7 @@
 import type { User } from "@EXULU_TYPES/models/user";
 import { classifyFilePart } from "./file-part";
 import { dropEmptyMessages } from "./stored-messages";
-import { resolveFreshFileUrl } from "./stored-file-url";
+import { mayResignStoredFileKey, resolveFreshFileUrl } from "./stored-file-url";
 import { canRegisterSaveToProject } from "@SRC/templates/tools/save-to-project-tool";
 import { loadSessionFileListing, sessionFilesScopeSentence } from "./session-file-listing";
 import { resolveSessionProject, type ResolvedSessionProject } from "./resolve-session-project";
@@ -64,7 +64,10 @@ const processFilePartsInMessages = async (
     offloadCtx: {
         contextWindow?: number;
         sessionID?: string;
+        /** The speaker of this turn. */
         user?: User;
+        /** The session's owner; differs from `user` in a shared session. */
+        sessionOwnerId?: number | string;
         exuluConfig?: ExuluConfig;
     },
 ): Promise<UIMessage[]> => {
@@ -86,12 +89,21 @@ const processFilePartsInMessages = async (
                     // Stored URLs are presigned and expire after a day; re-sign so a
                     // continued session (approval, follow-up, later routine step) can
                     // still fetch the file. The refreshed URL is what gets persisted.
+                    // The URL is user input, so only the session's own files (owner,
+                    // speaker, global/) are re-signed: a hand-made URL to a project file
+                    // or another user's file must not come back as a working capability.
                     const uploads = offloadCtx.exuluConfig?.fileUploads;
                     const url = uploads?.s3Bucket
                         ? await resolveFreshFileUrl(part.url, {
                               endpoint: uploads.s3endpoint,
                               bucket: uploads.s3Bucket,
                               sign: (bucket, key) => getPresignedUrl(bucket, key, offloadCtx.exuluConfig!),
+                              mayResign: (key) =>
+                                  mayResignStoredFileKey(key, {
+                                      s3prefix: uploads.s3prefix,
+                                      ownerId: offloadCtx.sessionOwnerId ?? offloadCtx.user?.id,
+                                      speaker: offloadCtx.user,
+                                  }),
                           })
                         : part.url;
 
@@ -874,6 +886,7 @@ export const generateStream = async ({
         contextWindow,
         sessionID: session,
         user,
+        sessionOwnerId,
         exuluConfig,
     });
 

@@ -33,10 +33,10 @@ it("returns null when the project is gone or not accessible", async () => {
 });
 
 describe("speakerCanWrite", () => {
-  const row = { id: "p1", name: "Alpha", created_by: 1, rights_mode: "private" };
+  const row = { id: "p1", name: "Alpha", created_by: 1, rights_mode: "users" };
   beforeEach(() => {
     postgresClient.mockResolvedValue(dbWith(row));
-    RBACResolver.mockResolvedValue({ type: "private", users: [{ id: "2", rights: "read" }, { id: "3", rights: "write" }], roles: [] });
+    RBACResolver.mockResolvedValue({ type: "users", users: [{ id: "2", rights: "read" }, { id: "3", rights: "write" }], roles: [] });
   });
   const run = (speaker: { id: number } | null | undefined) =>
     resolveSessionProject({ projectId: "p1", ownerId: 1, speaker });

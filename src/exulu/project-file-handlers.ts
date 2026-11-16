@@ -79,7 +79,7 @@ export type ProjectAuthDeps = {
     req: Request,
   ) => Promise<{ user?: any; code?: number; message?: string }>;
   getProject: (id: string) => Promise<any | undefined>;
-  getRbac: (project: any) => Promise<{ type: string; users?: any[]; roles?: any[] }>;
+  getRbac: (project: any) => Promise<{ type: string; users?: any[]; roles?: any[]; teams?: any[] }>;
 };
 
 /**

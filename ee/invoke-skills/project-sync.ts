@@ -274,7 +274,7 @@ export async function resolveSandboxProjectId(
     args: { projectId?: string | null; ownerId?: number | string | null; owner?: OwnerLike },
     deps: {
         getProject: (id: string) => Promise<ProjectRow | undefined | null>
-        getRbac: (project: ProjectRow) => Promise<{ type: string; users?: any[]; roles?: any[] }>
+        getRbac: (project: ProjectRow) => Promise<{ type: string; users?: any[]; roles?: any[]; teams?: any[] }>
         getUser: (id: number | string) => Promise<OwnerLike | undefined | null>
     },
 ): Promise<string | null> {
