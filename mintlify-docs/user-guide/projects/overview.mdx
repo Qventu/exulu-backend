@@ -28,7 +28,7 @@ Every project has one shared folder. Whatever is in it is available in every ses
 
 - **Who can read, who can write** — anyone with read access to the project sees the folder. Only people with write access can add or delete files or use **Add to project**; for everyone else the folder is read-only.
 - **Adding files** — upload on the project's **Files** tab or in a project session's sidebar, or click **Add to project** on a session file. If a file with that name already exists you are asked before it is replaced; nothing is overwritten silently.
-- **The agent** — an agent can read project files but not change them directly. When it should keep something it produced, it uses the `save_to_project` tool, which asks you to approve each save. The saved file is visible to the agent as `project/<name>` from the next message on.
+- **The agent** — an agent can read project files but not change them directly. When it should keep something it produced, it uses the `save_to_project` tool, which asks you to approve a save unless you allowed the tool for the chat, and always asks before replacing an existing project file. The saved file is visible to the agent as `project/<name>` from the next message on.
 - **Origin marker** — files the agent created carry a small agent icon ("Created by the agent") in the folder and in the sidebar.
 - **Limits** — up to 200 files per project, flat names (no subfolders), 50 MB per file.
 - **Files versus knowledge** — files are documents the agent opens and reads on demand, exactly as they are. Knowledge items are indexed for search and shared across sessions. Use files for a specific document you want read as a whole, knowledge for material to search across.
