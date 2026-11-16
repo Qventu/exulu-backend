@@ -8,7 +8,7 @@ import type { User } from "@EXULU_TYPES/models/user";
 import { convertLegacyOfficeToModern, isLegacyOfficeFormat, pdfToText } from "./document-render-helpers";
 import { resolveFileKey } from "./resolve-file-key";
 import { extractDocument } from "@SRC/exulu/attachment-text";
-import type { ProgressFn } from "@SRC/exulu/document-cache/progress";
+import { throttleProgress, type ProgressFn, type ReadingStatus } from "@SRC/exulu/document-cache/progress";
 import { createStoreIo, readThroughDocument, type Extracted, type StoreIo } from "@SRC/exulu/document-cache/store";
 import { documentCacheDays, documentMaxPages, extractorFingerprint } from "@SRC/exulu/document-cache/keys";
 
@@ -164,7 +164,7 @@ export const createParseDocumentTool = ({
     pages?: string;
     offset?: number;
     limit?: number;
-  }) => {
+  }, onProgress?: ProgressFn) => {
     const resolvedKey = resolveFileKey({
       filename,
       ownerId: ownerId ?? user?.id ?? "api",
@@ -289,6 +289,7 @@ export const createParseDocumentTool = ({
         fingerprint: extractorFingerprint({ filename: safeName, exuluConfig }),
         cacheDays: documentCacheDays(),
         extract: extractFull,
+        ...(onProgress ? { onProgress } : {}),
       });
 
       let fullText = stored.text;
@@ -334,6 +335,44 @@ export const createParseDocumentTool = ({
     }
   };
 
+  /**
+   * Generator facade over the promise-based body: progress callbacks arrive from
+   * concurrent work, so they are queued and yielded as interim `reading` objects;
+   * the body's result is yielded last (the AI SDK treats the last yield as the
+   * tool result). Leaving early never cancels the extraction, which other
+   * callers may be waiting on and which must still reach the store.
+   */
+  async function* parseDocumentStream(args: {
+    filename: string;
+    pages?: string;
+    offset?: number;
+    limit?: number;
+  }): AsyncGenerator<ReadingStatus | Awaited<ReturnType<typeof parseDocumentExecute>>> {
+    const filename = String(args.filename).trim();
+    const queue: ReadingStatus[] = [];
+    let wake: (() => void) | undefined;
+    let finished = false;
+    const onProgress = throttleProgress((p) => {
+      queue.push({ status: "reading", filename, ...p });
+      wake?.();
+    });
+    const run = parseDocumentExecute(args, onProgress).finally(() => {
+      finished = true;
+      wake?.();
+    });
+    // Consumed below; this keeps a rejection from going unhandled if the consumer left first.
+    run.catch(() => undefined);
+    while (true) {
+      while (queue.length > 0) yield queue.shift()!;
+      if (finished) break;
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+      wake = undefined;
+    }
+    yield await run;
+  }
+
   return ExuluTool.internal({
     id: "parse_document",
     name: PARSE_DOCUMENT_TOOL_NAME,
@@ -357,6 +396,6 @@ export const createParseDocumentTool = ({
     // Same shape mismatch as read_session_file / memory-tool: internal utility
     // tools return richer objects than ExuluTool's retrieval-flavored execute
     // type; the AI SDK passes the object through verbatim.
-    execute: parseDocumentExecute as never,
+    execute: parseDocumentStream as never,
   });
 };

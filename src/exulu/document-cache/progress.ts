@@ -4,3 +4,34 @@ export type ProgressFn = (p: {
   pagesDone: number;
   pagesTotal: number;
 }) => void;
+
+/**
+ * Interim tool result shown in the chat while a document is read. Never model-facing:
+ * the SDK marks every yielded value but the last as preliminary, and the convert
+ * wrapper passes these through untouched (no guard, no audit).
+ */
+export type ReadingStatus = {
+  status: "reading";
+  filename: string;
+  phase: "cached" | "text" | "ocr" | "vision" | "storing";
+  pagesDone: number;
+  pagesTotal: number;
+};
+
+export function isInterimToolStatus(value: unknown): value is ReadingStatus {
+  return (
+    typeof value === "object" && value !== null && (value as { status?: unknown }).status === "reading"
+  );
+}
+
+/** At most one call per `ms`; the first call and a final one (pagesDone === pagesTotal) always pass. */
+export function throttleProgress(fn: ProgressFn, ms = 1000, now: () => number = Date.now): ProgressFn {
+  let last: number | undefined;
+  return (p) => {
+    const isFinal = p.pagesTotal > 0 && p.pagesDone === p.pagesTotal;
+    const t = now();
+    if (last !== undefined && !isFinal && t - last < ms) return;
+    last = t;
+    fn(p);
+  };
+}

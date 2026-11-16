@@ -44,6 +44,7 @@ import { createViewDocumentPageTool } from "./view-document-page-tool";
 import { deriveContextBudget } from "@SRC/exulu/context-budget";
 import { getAuditLogger } from "@SRC/exulu/audit/logger";
 import { emitToolCallAudit } from "@SRC/exulu/audit/emit-tool-call";
+import { isInterimToolStatus } from "@SRC/exulu/document-cache/progress";
 import { extractClientInfo } from "@SRC/exulu/audit/client-info";
 
 /**
@@ -747,16 +748,28 @@ export const convertExuluToolsToAiSdkTools = async (
             // Check if response is an async generator
             if (response && typeof response === "object" && Symbol.asyncIterator in response) {
               let lastValue;
-              // Iterate through all yielded values from the generator
+              let lastYieldWasInterim = false;
+              // Iterate through all yielded values from the generator.
+              // AI SDK v6 (provider-utils executeTool) reports every yielded value as a
+              // preliminary result and the LAST one as the final result; only the final
+              // one is recorded for the model, so progress objects are safe to yield.
               for await (const value of response) {
                 yield value;
-                lastValue = value;
+                // Interim "reading" status is UI-only: it is never the result, so it is
+                // neither guarded nor audited.
+                lastYieldWasInterim = isInterimToolStatus(value);
+                if (!lastYieldWasInterim) lastValue = value;
               }
-              if (offloadExempt) { __auditOutput = lastValue; return lastValue; }
+              if (offloadExempt) {
+                __auditOutput = lastValue;
+                // A trailing interim would otherwise be taken as the result.
+                if (lastYieldWasInterim) yield lastValue;
+                return lastValue;
+              }
               // Cap + offload the FINAL value — that is what becomes the
               // persisted tool result and what every later turn re-sends.
               const guarded = await guardToolOutput(lastValue, guardCtx);
-              if (guarded !== lastValue) {
+              if (guarded !== lastValue || lastYieldWasInterim) {
                 yield guarded;
               }
               __auditOutput = guarded;

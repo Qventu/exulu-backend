@@ -207,6 +207,7 @@ async function processImage(
         verbose,
         config!.vlm!.concurrency,
         tolerateVisionFailures,
+        onProgress,
       );
 
       // Save the processed result
@@ -547,12 +548,22 @@ export function reconstructTableHeaders(
 /**
  * Identifies pages that need VLM validation and validates them in parallel
  */
+/** Whether a page gets a vision pass: it has an image and either no text yet or an image/table in its text. */
+function needsVisionPass(page: ProcessedPage): boolean {
+  if (!page.image) return false;
+  if (!page.content) return true;
+  const hasImage = page.content.match(/\.(jpeg|jpg|png|gif|webp)/i);
+  const hasTable = (page.content.match(/\|/g)?.length || 0) > 1;
+  return Boolean(hasImage || hasTable);
+}
+
 async function validateWithVLM(
   document: ProcessedDocument,
   model: LanguageModel,
   verbose: boolean = false,
   concurrency: number = 10,
   tolerateVisionFailures: boolean = false,
+  onProgress?: ProgressFn,
 ): Promise<ProcessedDocument> {
   console.log(`[EXULU] Starting VLM validation for processor output, ${document.length} pages...`);
   console.log(`[EXULU] Concurrency limit: ${concurrency}`);
@@ -562,6 +573,14 @@ async function validateWithVLM(
 
   // Store validation results for post-processing
   const validationResults = new Map<number, VLMValidationResult>();
+
+  // Progress counts the pages that actually get a vision pass.
+  const visionTotal = document.filter(needsVisionPass).length;
+  let visionDone = 0;
+  const reportVisionPage = () => {
+    visionDone++;
+    onProgress?.({ phase: "vision", pagesDone: visionDone, pagesTotal: visionTotal });
+  };
 
   // Track metrics
   let validatedCount = 0;
@@ -613,6 +632,7 @@ async function validateWithVLM(
 
         // Store validation result for post-processing
         validationResults.set(page.page, validation);
+        reportVisionPage();
 
         if (verbose && validation.current_page_table) {
           console.log(`[EXULU] Page ${page.page} table info:`, {
@@ -625,6 +645,7 @@ async function validateWithVLM(
         if (tolerateVisionFailures) {
           // The page keeps its OCR text; the caller reports it as unverified.
           page.vlm_failed = true;
+          reportVisionPage();
           return;
         }
         // Throw so the job fails
@@ -838,6 +859,8 @@ async function processPdf(
       // Process chunks in parallel with a concurrency cap to respect rate limits.
       // Each chunk gets a small random jitter to spread out requests.
       const chunkLimit = pLimit(ocrConcurrency(config));
+      const ocrTotal = pdfChunks.reduce((sum, c) => sum + (c.end_page - c.start_page), 0);
+      let ocrDone = 0;
 
       const chunkResults = await Promise.all(
         pdfChunks.map((chunk, i) =>
@@ -860,6 +883,10 @@ async function processPdf(
                 document_url: "data:application/pdf;base64," + chunkBase64,
               }, { includeImageBase64: false }));
             }, 10);
+
+            // Chunks finish out of order; the shared counter keeps the reported count monotonic.
+            ocrDone += chunk.end_page - chunk.start_page;
+            onProgress?.({ phase: "ocr", pagesDone: ocrDone, pagesTotal: ocrTotal });
 
             return { pages: chunkResponse.pages, offset: chunk.start_page };
           })
@@ -951,6 +978,7 @@ async function processPdf(
         verbose,
         config!.vlm!.concurrency,
         tolerateVisionFailures,
+        onProgress,
       );
 
       console.log('[EXULU] \n📊 Processing Summary:');
@@ -1091,7 +1119,7 @@ export async function documentProcessor({
   config?: DocumentProcessorConfig;
   /** A page whose vision pass failed keeps its OCR text and is flagged `vlm_failed` instead of failing the document. */
   tolerateVisionFailures?: boolean;
-  /** Accepted for the callers' benefit; progress is not emitted yet. */
+  /** Reports OCR progress per finished chunk and vision progress per finished page. */
   onProgress?: ProgressFn;
 }): Promise<ProcessedDocument | undefined> {
 

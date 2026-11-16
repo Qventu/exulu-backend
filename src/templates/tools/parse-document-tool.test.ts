@@ -55,9 +55,18 @@ type ParseResult = {
   linesReturned?: number;
   error?: string;
 };
+/** The tool's final result: the last value its generator yields (what the SDK sends the model). */
+const finalOf = async (r: unknown): Promise<ParseResult> => {
+  if (r && typeof r === "object" && Symbol.asyncIterator in r) {
+    let last: unknown;
+    for await (const v of r as AsyncGenerator<unknown>) last = v;
+    return last as ParseResult;
+  }
+  return (await r) as ParseResult;
+};
 const runTool = (input: Record<string, unknown>): Promise<ParseResult> => {
   const tool = createParseDocumentTool({ sessionID: "s1", user, exuluConfig })!;
-  return (tool.tool!.execute as (i: unknown) => Promise<ParseResult>)(input);
+  return finalOf((tool.tool!.execute as (i: unknown) => unknown)(input));
 };
 
 const PDF_BYTES = Buffer.from([37, 80, 68, 70]); // "%PDF"
@@ -276,7 +285,7 @@ describe("stored text", () => {
       attachments: { documentProcessor: { processor: { name: "mistral" } } },
     } as unknown as ExuluConfig;
     const run = (input: Record<string, unknown>) =>
-      (createParseDocumentTool({ sessionID: "s1", user, exuluConfig: withProcessor })!.tool!.execute as (i: unknown) => Promise<ParseResult>)(input);
+      finalOf((createParseDocumentTool({ sessionID: "s1", user, exuluConfig: withProcessor })!.tool!.execute as (i: unknown) => unknown)(input));
 
     it("stores processor output with page markers", async () => {
       extractDocument.mockResolvedValue({
@@ -366,14 +375,14 @@ describe("stored text", () => {
 it("addresses the session file under the session owner's prefix when an owner is given", async () => {
   pdfToText.mockResolvedValue("Some perfectly readable page content with enough characters.\f");
   const tool = createParseDocumentTool({ sessionID: "s1", user, exuluConfig, ownerId: 11 })!;
-  await (tool.tool!.execute as (i: unknown) => Promise<ParseResult>)({ filename: "Anfrage 04072.pdf" });
+  await finalOf((tool.tool!.execute as (i: unknown) => unknown)({ filename: "Anfrage 04072.pdf" }));
   expect(uppy.getS3ObjectBytes).toHaveBeenCalledWith("exulu/user_11/sessions/s1/Anfrage 04072.pdf", exuluConfig);
 });
 
 describe("project files", () => {
   const runWith = (projectId: string | null, input: Record<string, unknown>): Promise<ParseResult> => {
     const tool = createParseDocumentTool({ sessionID: "s1", user, exuluConfig, projectId })!;
-    return (tool.tool!.execute as (i: unknown) => Promise<ParseResult>)(input);
+    return finalOf((tool.tool!.execute as (i: unknown) => unknown)(input));
   };
   it("reads project/<name> from the project key", async () => {
     pdfToText.mockResolvedValue("a page body with plenty of extractable text for the detector");
@@ -389,5 +398,80 @@ describe("project files", () => {
   it("tells the model how project files are addressed", () => {
     const tool = createParseDocumentTool({ sessionID: "s1", user, exuluConfig })!;
     expect(tool.description).toMatch(/project\/<name>.*read-only/);
+  });
+});
+
+describe("reading progress", () => {
+  const withProcessor = {
+    fileUploads: exuluConfig.fileUploads,
+    attachments: { documentProcessor: { processor: { name: "mistral" } } },
+  } as unknown as ExuluConfig;
+  const gen = (input: Record<string, unknown>) =>
+    (createParseDocumentTool({ sessionID: "s1", user, exuluConfig: withProcessor })!.tool!.execute as (i: unknown) => AsyncGenerator<Record<string, unknown>>)(input);
+  const collect = async (g: AsyncGenerator<Record<string, unknown>>) => {
+    const out: Array<Record<string, unknown>> = [];
+    for await (const v of g) out.push(v);
+    return out;
+  };
+  const processorPages = { engine: "document-processor", text: "", pages: [{ page: 1, text: "alpha" }, { page: 2, text: "beta" }] };
+
+  it("yields interim reading objects first and exactly one final result last", async () => {
+    extractDocument.mockImplementation(async (input: { onProgress: (p: unknown) => void }) => {
+      input.onProgress({ phase: "ocr", pagesDone: 1, pagesTotal: 2 });
+      await new Promise((r) => setTimeout(r, 5));
+      input.onProgress({ phase: "ocr", pagesDone: 2, pagesTotal: 2 });
+      return processorPages;
+    });
+    const out = await collect(gen({ filename: "report.pdf" }));
+    const interim = out.filter((v) => v.status === "reading");
+    const finals = out.filter((v) => v.status !== "reading");
+    expect(finals).toHaveLength(1);
+    expect(out[out.length - 1]).toBe(finals[0]);
+    expect(finals[0]!.content).toBe("--- page 1 ---\nalpha\n--- page 2 ---\nbeta");
+    expect(interim[0]).toEqual({ status: "reading", filename: "report.pdf", phase: "ocr", pagesDone: 1, pagesTotal: 2 });
+    expect(interim.some((v) => v.phase === "ocr" && v.pagesDone === 2)).toBe(true);
+    expect(interim.some((v) => v.phase === "storing")).toBe(true);
+  });
+
+  it("throttles interim objects to one per second but always lets the final page count through", async () => {
+    extractDocument.mockImplementation(async (input: { onProgress: (p: unknown) => void }) => {
+      for (let i = 1; i <= 5; i++) input.onProgress({ phase: "vision", pagesDone: i, pagesTotal: 5 });
+      return processorPages;
+    });
+    const out = await collect(gen({ filename: "report.pdf" }));
+    const vision = out.filter((v) => v.phase === "vision").map((v) => v.pagesDone);
+    expect(vision).toEqual([1, 5]);
+  });
+
+  it("yields only the final result on a store hit", async () => {
+    extractDocument.mockResolvedValue(processorPages);
+    await collect(gen({ filename: "report.pdf" }));
+    const out = await collect(gen({ filename: "report.pdf" }));
+    expect(out).toHaveLength(1);
+    expect(out[0]!.content).toBeDefined();
+    expect(extractDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports an extraction failure as the final error result", async () => {
+    // Failures inside the tool body are reported as { error }, as before.
+    extractDocument.mockRejectedValue(new Error("boom"));
+    const out = await collect(gen({ filename: "report.pdf" }));
+    expect(out[out.length - 1]).toEqual({ error: 'Failed to parse "report.pdf": boom' });
+  });
+
+  it("does not cancel the extraction when the consumer stops early", async () => {
+    let finished = false;
+    extractDocument.mockImplementation(async (input: { onProgress: (p: unknown) => void }) => {
+      input.onProgress({ phase: "ocr", pagesDone: 1, pagesTotal: 2 });
+      await new Promise((r) => setTimeout(r, 20));
+      finished = true;
+      return processorPages;
+    });
+    const g = gen({ filename: "report.pdf" });
+    await g.next();
+    await g.return(undefined);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(finished).toBe(true);
+    expect(uppy.putS3ObjectTextExact).toHaveBeenCalled();
   });
 });

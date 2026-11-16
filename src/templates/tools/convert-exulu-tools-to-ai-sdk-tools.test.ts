@@ -30,6 +30,10 @@ jest.mock("@EE/invoke-skills/project-sync", () => ({ resolveSandboxProjectId: je
 jest.mock("@SRC/uppy", () => ({ getPresignedUrl: jest.fn() }));
 jest.mock("@SRC/exulu/tool-output-offload", () => ({ guardToolOutput: jest.fn(async (v: unknown) => v) }));
 jest.mock("@SRC/exulu/statistics", () => ({ updateStatistic: jest.fn() }));
+jest.mock("@SRC/exulu/audit/logger", () => ({
+  getAuditLogger: jest.fn(() => ({ shouldAuditTool: () => true, failClosed: false })),
+}));
+jest.mock("@SRC/exulu/audit/emit-tool-call", () => ({ emitToolCallAudit: jest.fn(async () => undefined) }));
 
 const factory = createAgenticRetrievalTool as jest.Mock;
 
@@ -531,5 +535,70 @@ describe("set_routine_status injection", () => {
     expect(hasStatusTool(await convert(undefined))).toBe(false);
     expect(hasStatusTool(await convert(() => handleWith([])))).toBe(false);
     expect(hasStatusTool(await convert(() => handleWith([{ key: "neu", label: "Neu" }]), ["set_routine_status"]))).toBe(false);
+  });
+});
+
+describe("interim reading status from a generator tool", () => {
+  const guardMock = jest.requireMock("@SRC/exulu/tool-output-offload").guardToolOutput as jest.Mock;
+  const auditMock = jest.requireMock("@SRC/exulu/audit/emit-tool-call").emitToolCallAudit as jest.Mock;
+  const reading = (n: number) => ({ status: "reading", filename: "a.pdf", phase: "ocr", pagesDone: n, pagesTotal: 2 });
+  const finalResult = { content: "text" };
+
+  const run = async (execute: () => unknown) => {
+    const entry = {
+      id: "streamer", name: "Streamer", description: "d", type: "utility", category: "utilities", config: [],
+      tool: { execute },
+    } as never;
+    const tools = (await call([entry])) as Record<string, { execute: (i: unknown, o: unknown) => AsyncGenerator<unknown> }>;
+    const out: unknown[] = [];
+    for await (const v of tools.Streamer.execute({}, { toolCallId: "c1" })) out.push(v);
+    return out;
+  };
+  async function* streamed() {
+    yield reading(1);
+    yield reading(2);
+    yield finalResult;
+  }
+
+  beforeEach(() => {
+    guardMock.mockClear();
+    auditMock.mockClear();
+  });
+
+  it("passes interim objects through untouched and yields the final value last", async () => {
+    const out = await run(() => streamed());
+    expect(out).toEqual([reading(1), reading(2), finalResult]);
+  });
+
+  it("keeps the final value as the last yield even if the tool ends on an interim object", async () => {
+    async function* trailing() { yield reading(1); yield finalResult; yield reading(2); }
+    const out = await run(() => trailing());
+    expect(out[out.length - 1]).toBe(finalResult);
+    expect(guardMock).toHaveBeenCalledTimes(1);
+    expect(guardMock.mock.calls[0][0]).toBe(finalResult);
+  });
+
+  it("guards and audits only the final value, once", async () => {
+    guardMock.mockImplementationOnce(async () => ({ offloaded: true }));
+    const out = await run(() => streamed());
+    expect(guardMock).toHaveBeenCalledTimes(1);
+    expect(guardMock.mock.calls[0][0]).toBe(finalResult);
+    // The guarded replacement is the last yield, so it is what the SDK takes as the result.
+    expect(out[out.length - 1]).toEqual({ offloaded: true });
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    expect(auditMock.mock.calls[0][1].output).toEqual({ offloaded: true });
+  });
+
+  it("leaves a tool that returns a promise exactly as before", async () => {
+    const out = await run(async () => finalResult);
+    expect(out).toEqual([finalResult]);
+    expect(guardMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a generator that yields once exactly as before", async () => {
+    async function* once() { yield finalResult; }
+    const out = await run(() => once());
+    expect(out).toEqual([finalResult]);
+    expect(guardMock).toHaveBeenCalledTimes(1);
   });
 });
