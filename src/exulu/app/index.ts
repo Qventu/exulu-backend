@@ -507,9 +507,9 @@ export class ExuluApp {
       // Expired stored document text (derived/ in the file bucket). Only the HTTP
       // server process gets here (workers boot elsewhere); replicas may all sweep.
       if (this._config?.fileUploads?.s3Bucket) {
-        const stopDerivedSweep = startDerivedSweep(this._config);
-        process.on("SIGINT", stopDerivedSweep);
-        process.on("SIGTERM", stopDerivedSweep);
+        // Timers are unref'd and no signal listener is added: a SIGINT/SIGTERM
+        // listener would stop Node's default exit on those signals.
+        startDerivedSweep(this._config);
       }
 
       return this._expressApp;

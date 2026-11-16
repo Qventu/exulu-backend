@@ -51,8 +51,15 @@ export async function sweepExpiredDerived(args: {
   return { deleted };
 }
 
-/** Daily sweep of expired stored document text. Returns a stop function. */
+let activeStop: (() => void) | null = null;
+
+/**
+ * Daily sweep of expired stored document text. Returns a stop function. Idempotent
+ * per process: while a sweep is active, a second call starts nothing and returns the
+ * same stop function; after stop, a later call starts again.
+ */
 export function startDerivedSweep(exuluConfig: ExuluConfig): () => void {
+  if (activeStop) return activeStop;
   let running = false;
   let stopped = false;
   const run = async () => {
@@ -76,9 +83,12 @@ export function startDerivedSweep(exuluConfig: ExuluConfig): () => void {
   const every = setInterval(run, INTERVAL_MS);
   first.unref();
   every.unref();
-  return () => {
+  const stop = () => {
     stopped = true;
     clearTimeout(first);
     clearInterval(every);
+    if (activeStop === stop) activeStop = null;
   };
+  activeStop = stop;
+  return stop;
 }

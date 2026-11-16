@@ -142,4 +142,21 @@ describe("startDerivedSweep", () => {
     stop();
     err.mockRestore();
   });
+
+  it("is idempotent while active and restartable after stop", async () => {
+    const u = uppy();
+    u.listS3ObjectsExact.mockReset();
+    u.listS3ObjectsExact.mockResolvedValue({ items: [] });
+    const stop1 = startDerivedSweep(cfg);
+    const stop2 = startDerivedSweep(cfg);
+    expect(stop2).toBe(stop1);
+    await jest.advanceTimersByTimeAsync(61_000);
+    expect(u.listS3ObjectsExact).toHaveBeenCalledTimes(1);
+    stop1();
+    const stop3 = startDerivedSweep(cfg);
+    expect(stop3).not.toBe(stop1);
+    await jest.advanceTimersByTimeAsync(61_000);
+    expect(u.listS3ObjectsExact).toHaveBeenCalledTimes(2);
+    stop3();
+  });
 });
