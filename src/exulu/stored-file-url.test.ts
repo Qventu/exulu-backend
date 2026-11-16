@@ -154,3 +154,26 @@ describe("parseStoredFileUrl — host and protocol are matched exactly", () => {
     expect(parseStoredFileUrl("https://filesxexample.s3.amazonaws.com/a.pdf", { bucket: "files.example" })).toBeUndefined();
   });
 });
+
+describe("parseStoredFileUrl — strict AWS region part", () => {
+  const aws = { bucket: "algi" };
+  it("refuses algi.s3.s3.amazonaws.com (that host is bucket algi.s3)", () => {
+    expect(parseStoredFileUrl("https://algi.s3.s3.amazonaws.com/user_1/a.pdf", aws)).toBeUndefined();
+    expect(parseStoredFileUrl("https://s3.s3.amazonaws.com/algi/user_1/a.pdf", aws)).toBeUndefined();
+  });
+  it.each([
+    "https://algi.s3.amazonaws.com/k.pdf",
+    "https://algi.s3.eu-central-1.amazonaws.com/k.pdf",
+    "https://algi.s3-eu-west-1.amazonaws.com/k.pdf",
+    "https://algi.s3.dualstack.us-east-1.amazonaws.com/k.pdf",
+    "https://algi.s3-accelerate.amazonaws.com/k.pdf",
+    "https://algi.s3.us-gov-west-1.amazonaws.com/k.pdf",
+    "https://algi.s3-external-1.amazonaws.com/k.pdf",
+    "https://s3.amazonaws.com/algi/k.pdf",
+    "https://s3.ap-southeast-2.amazonaws.com/algi/k.pdf",
+    "https://s3-eu-west-1.amazonaws.com/algi/k.pdf",
+    "https://s3.dualstack.eu-central-1.amazonaws.com/algi/k.pdf",
+  ])("accepts %s", (url) => {
+    expect(parseStoredFileUrl(url, aws)).toEqual({ bucket: "algi", key: "k.pdf" });
+  });
+});

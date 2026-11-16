@@ -86,8 +86,11 @@ export async function readRegularFileInside(sessionDir: string, path: string): P
         // Bounded read: the file may still grow after the fstat above.
         const chunks: Buffer[] = []
         let total = 0
+        // Sized from fstat (+1 to see EOF in one read), at least 64 KiB in case the
+        // file grows, at most 1 MiB per read.
+        const chunkSize = Math.min(Math.max(st.size + 1, 64 * 1024), 1024 * 1024)
         for (;;) {
-            const chunk = Buffer.allocUnsafe(1024 * 1024)
+            const chunk = Buffer.allocUnsafe(chunkSize)
             const { bytesRead } = await handle.read(chunk, 0, chunk.length, null)
             if (bytesRead === 0) break
             total += bytesRead

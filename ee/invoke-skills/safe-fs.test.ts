@@ -58,3 +58,12 @@ describe("readRegularFileInside: special files and size", () => {
     expect((await readRegularFileInside(dir, under))?.length).toBe(MAX_ADOPT_UPLOAD_BYTES - 1);
   }, 20000);
 });
+
+describe("readRegularFileInside: small and empty files", () => {
+  it("reads a small file exactly and an empty file as an empty buffer", async () => {
+    await writeFile(join(dir, "small.txt"), "hello");
+    await writeFile(join(dir, "empty.txt"), "");
+    expect(String(await readRegularFileInside(dir, join(dir, "small.txt")))).toBe("hello");
+    expect((await readRegularFileInside(dir, join(dir, "empty.txt")))?.length).toBe(0);
+  });
+});

@@ -60,7 +60,11 @@ export function parseStoredFileUrl(
   // AWS: https only, and the host anchored exactly (a bucket called "<bucket>.s3x"
   // or a look-alike domain must not match).
   if (parsed.protocol !== "https:") return undefined;
-  const region = "([.-][a-z0-9-]+)?";
+  // Strict: a loose "[.-][a-z0-9-]+" also matched ".s3", so algi.s3.s3.amazonaws.com
+  // (the host of a DIFFERENT bucket "algi.s3") parsed as bucket "algi". Allowed:
+  // optional dualstack, then a region (eu-central-1, us-gov-west-1), accelerate or
+  // the legacy external-1.
+  const region = "(?:\\.dualstack)?(?:[.-](?:[a-z]{2}(?:-gov)?-[a-z]+-\\d|accelerate|external-1))?";
   // Virtual-host style: <bucket>.s3[.<region>|-<region>].amazonaws.com/<key>
   if (new RegExp(`^${escapeRegExp(store.bucket)}\\.s3${region}\\.amazonaws\\.com$`).test(parsed.host)) {
     const key = decodeKey(parsed.pathname);
