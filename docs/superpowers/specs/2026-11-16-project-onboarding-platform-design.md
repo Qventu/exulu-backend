@@ -24,7 +24,7 @@ Guiding rule from the product owner: simplify, use the platform's standard build
 
 ## Non-goals
 
-- No processing on upload and no background job: reading stays on demand, and the first read of a long document blocks that tool call while it runs.
+- No processing on upload and no background job: reading stays on demand. The first read of a long document occupies that tool call while it runs, and shows its progress (section 2a).
 - No cache for inline chat attachments (file parts in a message): they are extracted once when sent and stored with the message already.
 - No per-page or partial cache: a document is cached whole.
 - No UI to view, download, edit or invalidate the stored Markdown.
@@ -98,6 +98,21 @@ Both locations are outside every listed, synced, counted and promotable prefix, 
 - An extraction that has started runs to completion and stores its result even when the client disconnects or the turn is aborted; the in-flight entry is removed when it settles. There is no tool-level timeout today and none is added; the per-step timeouts of the processor stay.
 - `pages` on a document that is not cached yet still processes the whole document once (so the result can be stored), then returns the requested pages. On a cached document it costs nothing.
 
+### 2a. Progress while a document is read
+
+Requested by the product owner: the user should see clearly what is happening during a long first read.
+
+**Backend.** Tool `execute` functions are already async generators whose yielded values are streamed to the chat as interim results (`convert-exulu-tools-to-ai-sdk-tools.ts`). `parse_document` yields status objects while it works and its normal result last:
+
+`{ status: "reading", filename, phase: "cached" | "text" | "ocr" | "vision" | "storing", pagesDone, pagesTotal }`
+
+- `documentProcessor` gets an optional `onProgress` callback. OCR reports when a chunk finishes (so in steps of up to 25 pages), the vision pass reports per page.
+- Updates are throttled to at most one per second, and only the final result reaches the model; interim objects are never offloaded or counted against the output cap.
+- A second read that joins a running extraction of the same file receives the same progress.
+- A cache hit yields nothing interim; it is immediate.
+
+**Frontend.** A dedicated renderer for `parse_document` calls in the tool trace, replacing the generic JSON card: file name and icon, a progress bar with "Seite X von Y", the current phase in plain words ("Text wird erkannt", "Abbildungen und Tabellen werden geprüft", "Ergebnis wird gespeichert"), and for long documents the hint that the result is kept so the next read is immediate. When done it collapses to one line: file name, page count, and "aus dem Zwischenspeicher" when the stored Markdown was used. Errors and refusals show their text. Labels go through the existing translations.
+
 ### 3. Creating a project from a conversation
 
 **Server helpers** (new module, no GraphQL dependency): `createProjectForUser(db, user, { name, description? })` mirroring `projectsCreateOne` (`rights_mode: "private"`, `created_by` = user), and `attachSessionToProject(db, { sessionId, projectId, user })`, which verifies that the user may write the session and read the project before setting the column (the GraphQL path's missing check is not copied).
@@ -153,7 +168,8 @@ In a project session the scope sentence and the listing header read `project <na
 
 - Unit: derived-key mapping for both scopes; cache hit/miss/stale/fingerprint mismatch; refusals not stored; in-flight coalescing; delete-with-source; move planning (batches, cap, clash, partial failure); registration predicate; prompt text with and without a project (byte-identical without).
 - Integration: `parse_document` twice on the same file → one extraction; after replacing the file → a second extraction; a 120-page PDF with a mocked processor is processed, not refused; `create_project` end to end with mocked storage, then `parse_document("project/<name>")` in the same turn.
-- Manual: a real long PDF with the processor configured; two users reading the same project file; creating a project from a chat and from the artifact agent panel.
+- Unit: progress events (order, throttling, never part of the model output); frontend renderer states (running, cached, done, error).
+- Manual: a real long PDF with the processor configured, watching the progress display; two users reading the same project file; creating a project from a chat and from the artifact agent panel.
 
 ## Follow-ups (not part of this)
 
