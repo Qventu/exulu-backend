@@ -443,6 +443,29 @@ export function mayUseGenericS3Route(
 }
 
 /**
+ * Whether a multipart key (as `POST /s3/multipart` returned it: general prefix +
+ * `user_<id>/` or `global/` + name) belongs to the caller. The follow-up multipart
+ * routes take the key from the query string, so without this any caller could sign
+ * parts for, complete or abort uploads at arbitrary keys. `user_api/` is the shared
+ * prefix of API users (see addUserPrefixToKey's call sites).
+ */
+export function multipartKeyBelongsTo(
+  key: string,
+  user: { id?: number | string; type?: string },
+  s3prefix?: string | null,
+): boolean {
+  if (!key || key.split("/").includes("..")) return false;
+  let rest = key;
+  const general = (s3prefix ?? "").replace(/\/+$/, "");
+  if (general) {
+    if (!rest.startsWith(`${general}/`)) return false;
+    rest = rest.slice(general.length + 1);
+  }
+  const own = user.type === "api" ? "user_api/" : `user_${user.id}/`;
+  return rest.startsWith(own) || rest.startsWith("global/");
+}
+
+/**
  * STS policy for browser uploads: the caller may only write under their own
  * prefix (matches addUserPrefixToKey), never another user's, global/ or projects/.
  */
@@ -1126,18 +1149,51 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     });
   });
 
+  /**
+   * Authentication (same as `POST /s3/multipart`) plus "the query key is one the
+   * create route could have minted for this caller". Answers the request itself and
+   * returns null on failure; otherwise the validated key.
+   */
+  const authorizeMultipartKey = async (req: any, res: any): Promise<string | null> => {
+    const apikey: any = req.headers["exulu-api-key"] || null;
+    const { db } = await postgresClient();
+    let authtoken: any = null;
+    if (typeof apikey !== "string") {
+      authtoken = await getToken(req.headers.authorization ?? "");
+    }
+    const authenticationResult = await authentication({ authtoken, apikey, db });
+    if (!authenticationResult.user?.id) {
+      res
+        .status(authenticationResult.code || 500)
+        .json({ detail: `${authenticationResult.message}` });
+      return null;
+    }
+    const { key } = req.query;
+    if (typeof key !== "string") {
+      res.status(400).json({
+        error:
+          's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
+      });
+      return null;
+    }
+    if (!multipartKeyBelongsTo(key, authenticationResult.user, config.fileUploads?.s3prefix)) {
+      res.status(403).json({ error: "s3: this upload does not belong to the authenticated user." });
+      return null;
+    }
+    return key;
+  };
+
   function validatePartNumber(partNumber) {
     // eslint-disable-next-line no-param-reassign
     partNumber = Number(partNumber);
     return Number.isInteger(partNumber) && partNumber >= 1 && partNumber <= 10_000;
   }
 
-  app.get("/s3/multipart/:uploadId/:partNumber", (req, res, next) => {
+  app.get("/s3/multipart/:uploadId/:partNumber", async (req, res, next) => {
     if (!config.fileUploads) {
       throw new Error("File uploads are not configured");
     }
     const { uploadId, partNumber } = req.params;
-    const { key } = req.query;
 
     if (!validatePartNumber(partNumber)) {
       return res
@@ -1145,12 +1201,8 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
         .json({ error: "s3: the part number must be an integer between 1 and 10000." });
     }
 
-    if (typeof key !== "string") {
-      return res.status(400).json({
-        error:
-          's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
-      });
-    }
+    const key = await authorizeMultipartKey(req, res);
+    if (key === null) return;
 
     return getSignedUrl(
       getS3Client(config),
@@ -1168,18 +1220,11 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     }, next);
   });
 
-  app.get("/s3/multipart/:uploadId", (req, res, next) => {
+  app.get("/s3/multipart/:uploadId", async (req, res, next) => {
+    const key = await authorizeMultipartKey(req, res);
+    if (key === null) return;
     const client = getS3Client(config);
     const { uploadId } = req.params;
-    const { key } = req.query;
-
-    if (typeof key !== "string") {
-      res.status(400).json({
-        error:
-          's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
-      });
-      return;
-    }
 
     const parts: any[] = [];
 
@@ -1190,7 +1235,7 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
       client.send(
         new ListPartsCommand({
           Bucket: config.fileUploads.s3Bucket,
-          Key: key as string,
+          Key: key,
           UploadId: uploadId,
           PartNumberMarker: startAt,
         }),
@@ -1220,21 +1265,15 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     );
   }
 
-  app.post("/s3/multipart/:uploadId/complete", (req, res, next) => {
+  app.post("/s3/multipart/:uploadId/complete", async (req, res, next) => {
     if (!config.fileUploads) {
       throw new Error("File uploads are not configured");
     }
+    const key = await authorizeMultipartKey(req, res);
+    if (key === null) return;
     const client = getS3Client(config);
     const { uploadId } = req.params;
-    const { key } = req.query;
     const { parts } = req.body;
-
-    if (typeof key !== "string") {
-      return res.status(400).json({
-        error:
-          's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
-      });
-    }
 
     if (!Array.isArray(parts) || !parts.every(isValidPart)) {
       return res
@@ -1265,21 +1304,15 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     );
   });
 
-  app.delete("/s3/multipart/:uploadId", (req, res, next) => {
+  app.delete("/s3/multipart/:uploadId", async (req, res, next) => {
     if (!config.fileUploads) {
       throw new Error("File uploads are not configured");
     }
+    const key = await authorizeMultipartKey(req, res);
+    if (key === null) return;
 
     const client = getS3Client(config);
     const { uploadId } = req.params;
-    const { key } = req.query;
-
-    if (typeof key !== "string") {
-      return res.status(400).json({
-        error:
-          's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
-      });
-    }
 
     return client.send(
       new AbortMultipartUploadCommand({

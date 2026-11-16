@@ -16,7 +16,7 @@ jest.mock("@aws-sdk/s3-request-presigner", () => ({
 
 import { authentication } from "../auth/auth";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { createUppyRoutes, getS3SignedUploadUrl } from "./index";
+import { createUppyRoutes, getS3SignedUploadUrl, multipartKeyBelongsTo } from "./index";
 
 const config: any = {
   fileUploads: {
@@ -103,5 +103,86 @@ describe("getS3SignedUploadUrl", () => {
     expect((getSignedUrl as jest.Mock).mock.calls[0][2]).toEqual({ expiresIn: 86400 });
     await getS3SignedUploadUrl("projects/p/files/a.pdf", "application/pdf", config, { expiresIn: 300 });
     expect((getSignedUrl as jest.Mock).mock.calls[1][2]).toEqual({ expiresIn: 300 });
+  });
+});
+
+describe("/s3/multipart/:uploadId sub-routes are authenticated and bound to the caller's own keys", () => {
+  // The multipart routes use the callback form of client.send.
+  const callbackSend = (data: any = {}) =>
+    send.mockImplementation((_cmd: any, cb?: any) => {
+      if (typeof cb === "function") {
+        cb(null, data);
+        return undefined as any;
+      }
+      return Promise.resolve(data);
+    });
+
+  const own = "user_1/0b7d-_EXULU_a.pdf";
+  const routes: Array<[string, (key: string) => request.Test]> = [
+    ["GET sign part", (key) => request(app).get("/s3/multipart/up1/1").query({ key })],
+    ["GET list parts", (key) => request(app).get("/s3/multipart/up1").query({ key })],
+    [
+      "POST complete",
+      (key) =>
+        request(app)
+          .post("/s3/multipart/up1/complete")
+          .query({ key })
+          .send({ parts: [{ PartNumber: 1, ETag: "e" }] }),
+    ],
+    ["DELETE abort", (key) => request(app).delete("/s3/multipart/up1").query({ key })],
+  ];
+
+  it.each(routes)("%s answers 401 unauthenticated and touches no S3", async (_label, call) => {
+    authAs(null);
+    callbackSend();
+    const res = await call(own);
+    expect(res.status).toBe(401);
+    expect(send).not.toHaveBeenCalled();
+    expect(getSignedUrl).not.toHaveBeenCalled();
+  });
+
+  it.each(routes)("%s answers 403 for another user's key", async (_label, call) => {
+    authAs(normalUser);
+    callbackSend();
+    for (const key of ["user_2/x-_EXULU_a.pdf", "user_10/x", "projects/p/files/a", "items/a.pdf", "user_1/../user_2/x"]) {
+      const res = await call(key);
+      expect(res.status).toBe(403);
+    }
+    expect(send).not.toHaveBeenCalled();
+    expect(getSignedUrl).not.toHaveBeenCalled();
+  });
+
+  it.each(routes)("%s passes the caller's own key (and global/) to S3", async (_label, call) => {
+    authAs(normalUser);
+    callbackSend({ Parts: [], Location: "loc" });
+    for (const key of [own, "global/x-_EXULU_a.png"]) {
+      const res = await call(key);
+      expect(res.status).toBe(200);
+    }
+    const inputs = [
+      ...send.mock.calls.map((c) => c[0].input),
+      ...(getSignedUrl as jest.Mock).mock.calls.map((c) => c[1].input),
+    ];
+    expect(inputs.map((i) => i.Key)).toEqual([own, "global/x-_EXULU_a.png"]);
+    expect(inputs.every((i) => i.Bucket === "bkt")).toBe(true);
+  });
+
+  it("an API user's own prefix is user_api/", async () => {
+    authAs({ id: 5, type: "api" });
+    callbackSend({ Parts: [] });
+    expect((await request(app).get("/s3/multipart/up1").query({ key: "user_api/x" })).status).toBe(200);
+    expect((await request(app).get("/s3/multipart/up1").query({ key: "user_5/x" })).status).toBe(403);
+  });
+});
+
+describe("multipartKeyBelongsTo", () => {
+  const u = { id: 1, type: "user" };
+  it("strips the general prefix and requires the caller's own prefix or global/", () => {
+    expect(multipartKeyBelongsTo("tenant/user_1/a", u, "tenant/")).toBe(true);
+    expect(multipartKeyBelongsTo("tenant/global/a", u, "tenant")).toBe(true);
+    expect(multipartKeyBelongsTo("user_1/a", u, "tenant")).toBe(false);
+    expect(multipartKeyBelongsTo("tenant/user_10/a", u, "tenant")).toBe(false);
+    expect(multipartKeyBelongsTo("tenant/user_1/../user_2/a", u, "tenant")).toBe(false);
+    expect(multipartKeyBelongsTo("", u, undefined)).toBe(false);
   });
 });
