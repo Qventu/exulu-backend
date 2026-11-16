@@ -1,4 +1,4 @@
-import { parseWorkStatusConfig, validateWorkStatusConfig, isDoneStatus } from "./work-status";
+import { parseWorkStatusConfig, validateWorkStatusConfig, isDoneStatus, decideWorkStatusWrite } from "./work-status";
 
 describe("parseWorkStatusConfig", () => {
   it("returns the empty config for null, {}, a string that is not JSON, and statuses missing", () => {
@@ -50,4 +50,40 @@ describe("isDoneStatus", () => {
     expect(isDoneStatus(c, "weg")).toBe(false);
     expect(isDoneStatus(c, null)).toBe(false);
   });
+});
+
+describe("decideWorkStatusWrite", () => {
+  const C = parseWorkStatusConfig({
+    statuses: [{ key: "neu", label: "Neu" }, { key: "angebot_im_erp", label: "Angebot im ERP" }, { key: "rueckfrage", label: "Rückfrage" }, { key: "erledigt", label: "Erledigt", done: true }],
+    default: "neu",
+  });
+  const base = { config: C, routineName: "Ersatzteil Angebot", current: { status: "neu", updatedBy: { kind: "default" } as const } };
+  it("writes a configured status", () =>
+    expect(decideWorkStatusWrite({ ...base, next: "angebot_im_erp", origin: "worker" })).toEqual({ action: "write", status: "angebot_im_erp" }));
+  it("skips when unchanged", () =>
+    expect(decideWorkStatusWrite({ ...base, next: "neu", origin: "worker" })).toEqual({ action: "skip", reason: "unchanged" }));
+  it("rejects an unknown key and lists the allowed ones", () => {
+    const d = decideWorkStatusWrite({ ...base, next: "fertig", origin: "worker" });
+    expect(d).toMatchObject({ action: "reject" });
+    expect((d as any).message).toContain("neu, angebot_im_erp, rueckfrage, erledigt");
+  });
+  it("rejects when the routine has no statuses, naming the routine", () => {
+    const d = decideWorkStatusWrite({ ...base, config: { statuses: [], default: null }, next: "neu", origin: "worker" });
+    expect((d as any).message).toContain('"Ersatzteil Angebot" has no work statuses configured');
+  });
+  const human = { status: "erledigt", updatedBy: { kind: "user", id: 14 } as const };
+  it("worker write does not override a human-set status", () =>
+    expect(decideWorkStatusWrite({ ...base, current: human, next: "angebot_im_erp", origin: "worker" })).toEqual({ action: "skip", reason: "human_set" }));
+  it("chat and manual writes do override it", () => {
+    for (const origin of ["chat", "manual"] as const)
+      expect(decideWorkStatusWrite({ ...base, current: human, next: "angebot_im_erp", origin })).toEqual({ action: "write", status: "angebot_im_erp" });
+  });
+  it("clearing (null) is manual-only", () => {
+    expect(decideWorkStatusWrite({ ...base, next: null, origin: "manual" })).toEqual({ action: "write", status: null });
+    expect(decideWorkStatusWrite({ ...base, next: null, origin: "chat" })).toMatchObject({ action: "reject" });
+  });
+  it("a stored key that is no longer configured can be replaced", () =>
+    expect(decideWorkStatusWrite({ ...base, current: { status: "alt_geloescht", updatedBy: null }, next: "neu", origin: "worker" })).toEqual({ action: "write", status: "neu" }));
+  it("manual clear works even when the routine has no statuses any more", () =>
+    expect(decideWorkStatusWrite({ ...base, config: { statuses: [], default: null }, next: null, origin: "manual" })).toEqual({ action: "write", status: null }));
 });

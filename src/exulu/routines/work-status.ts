@@ -94,3 +94,49 @@ export function isDoneStatus(config: WorkStatusConfig, key: string | null): bool
   if (!key) return false;
   return config.statuses.some((status) => status.key === key && status.done === true);
 }
+
+export type WorkStatusOrigin = "worker" | "chat" | "manual";
+export type WorkStatusDecision =
+  | { action: "write"; status: string | null }
+  | { action: "skip"; reason: "human_set" | "unchanged" }
+  | { action: "reject"; message: string };
+
+/**
+ * Whether a status write applies.
+ *
+ *  - worker: a tool or the agent during the worker's run. Never overrides a
+ *    status a person set — a step retry re-runs tools and must not undo a
+ *    person's decision.
+ *  - chat: a tool or the agent in a turn a person started on the run's
+ *    session. The person asked for the action, so the write applies.
+ *  - manual: a person in the runs list. May also clear the status (null).
+ */
+export function decideWorkStatusWrite(input: {
+  config: WorkStatusConfig;
+  routineName: string;
+  current: { status: string | null; updatedBy: WorkStatusActor | null };
+  next: string | null;
+  origin: WorkStatusOrigin;
+}): WorkStatusDecision {
+  const { config, routineName, current, next, origin } = input;
+  if (next === null) {
+    if (origin !== "manual") {
+      return { action: "reject", message: "A work status can only be cleared by a person in the runs list." };
+    }
+    return current.status === null ? { action: "skip", reason: "unchanged" } : { action: "write", status: null };
+  }
+  if (config.statuses.length === 0) {
+    return { action: "reject", message: `Routine "${routineName}" has no work statuses configured.` };
+  }
+  if (!config.statuses.some((status) => status.key === next)) {
+    return {
+      action: "reject",
+      message: `Unknown work status "${next}" for routine "${routineName}". Allowed: ${config.statuses.map((s) => s.key).join(", ")}`,
+    };
+  }
+  if (origin === "worker" && current.updatedBy?.kind === "user") {
+    return { action: "skip", reason: "human_set" };
+  }
+  if (current.status === next) return { action: "skip", reason: "unchanged" };
+  return { action: "write", status: next };
+}
