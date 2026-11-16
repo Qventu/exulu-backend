@@ -88,3 +88,20 @@ it("addresses the session file under the session owner's prefix when an owner is
   await (tool.tool!.execute as (i: unknown) => Promise<unknown>)({ filename: "notes.txt" });
   expect(getPresignedUrl).toHaveBeenCalledWith("bucket", "exulu/user_11/sessions/s1/notes.txt", exuluConfig);
 });
+
+describe("project files", () => {
+  const run = (projectId: string | null, filename: string) => {
+    const tool = createSessionFileReadTool({ sessionID: "s1", user, exuluConfig, projectId })!;
+    return (tool.tool!.execute as (i: unknown) => Promise<{ content?: string; error?: string }>)({ filename });
+  };
+  it("reads project/<name> from the project key", async () => {
+    const r = await run("p1", "project/notes.txt");
+    expect(r.content).toMatch(/^line 1/);
+    expect(getPresignedUrl).toHaveBeenCalledWith("bucket", "exulu/projects/p1/files/notes.txt", exuluConfig);
+  });
+  it("refuses project/<name> without a resolved project and mentions project/ in the description", async () => {
+    expect((await run(null, "project/notes.txt")).error).toBe("This session has no project files.");
+    const tool = createSessionFileReadTool({ sessionID: "s1", user, exuluConfig })!;
+    expect(tool.description).toMatch(/project\/<name>.*read-only/);
+  });
+});

@@ -195,12 +195,40 @@ describe("document tool registration", () => {
       sessionID: "session-1",
       user: { id: 7 },
       exuluConfig: { fileUploads: { s3Bucket: "b" } },
+      projectId: null,
     });
     expect(createViewDocumentPageTool).toHaveBeenCalledWith({
       sessionID: "session-1",
       user: { id: 7 },
       exuluConfig: { fileUploads: { s3Bucket: "b" } },
+      projectId: null,
     });
+  });
+});
+
+describe("document tools get the access-checked project", () => {
+  it("passes the resolved id, not the raw session project, and resolves once", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { createParseDocumentTool } = require("./parse-document-tool") as { createParseDocumentTool: jest.Mock };
+    createParseDocumentTool.mockClear();
+    (resolveSandboxProjectId as jest.Mock).mockReset();
+    (resolveSandboxProjectId as jest.Mock).mockResolvedValue(null);
+    await convertExuluToolsToAiSdkTools(
+      [], [], [], [], [], undefined, { id: 7 } as never, { fileUploads: { s3Bucket: "b" } } as never,
+      "session-1", undefined, "raw-project",
+    );
+    expect(createParseDocumentTool.mock.calls[0][0].projectId).toBeNull();
+
+    createParseDocumentTool.mockClear();
+    (resolveSandboxProjectId as jest.Mock).mockClear();
+    // a caller that already resolved hands the result in: no second resolution
+    await convertExuluToolsToAiSdkTools(
+      [], [], [], [], [], undefined, { id: 7 } as never, { fileUploads: { s3Bucket: "b" } } as never,
+      "session-1", undefined, "raw-project", undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, { id: "p-resolved", name: "Alpha" },
+    );
+    expect(createParseDocumentTool.mock.calls[0][0].projectId).toBe("p-resolved");
+    expect(resolveSandboxProjectId).not.toHaveBeenCalled();
   });
 });
 

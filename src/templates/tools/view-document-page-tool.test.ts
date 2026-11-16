@@ -151,3 +151,26 @@ it("rejects unsupported extensions and path traversal", async () => {
   expect((await runTool({ filename: "notes.txt", model: {} })).error).toMatch(/Unsupported/);
   expect((await runTool({ filename: "../x.pdf", model: {} })).error).toMatch(/Invalid filename/);
 });
+
+describe("project files", () => {
+  const runWith = (projectId: string | null, input: Record<string, unknown>) => {
+    const tool = createViewDocumentPageTool({ sessionID: "s1", user, exuluConfig, projectId })!;
+    return (tool.tool!.execute as (i: unknown, o: unknown) => Promise<ViewResult>)(input, { toolCallId: "c_proj", messages: [] });
+  };
+  it("renders from the project key, and office previews cache on the project key", async () => {
+    getS3ObjectBytes.mockResolvedValue(Buffer.from("%PDF"));
+    renderPdfPageToPng.mockResolvedValue(Buffer.from("png"));
+    expect((await runWith("p1", { filename: "project/a.pdf", model: {} })).attached).toBe(true);
+    expect(getS3ObjectBytes).toHaveBeenCalledWith("exulu/projects/p1/files/a.pdf", exuluConfig);
+
+    getPdfPreviewBytes.mockResolvedValue(Buffer.from("%PDF"));
+    await runWith("p1", { filename: "project/d.pptx", model: {} });
+    expect(getPdfPreviewBytes).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceKey: "exulu/projects/p1/files/d.pptx" }),
+    );
+  });
+  it("refuses project/<name> without a resolved project", async () => {
+    expect((await runWith(null, { filename: "project/a.pdf", model: {} })).error).toBe("This session has no project files.");
+    expect(getS3ObjectBytes).not.toHaveBeenCalled();
+  });
+});

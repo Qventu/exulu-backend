@@ -30,8 +30,7 @@ import type { SkillDecision } from "@SRC/exulu/skills/decisions";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
-import { resolveSandboxProjectId } from "@EE/invoke-skills/project-sync";
-import { RBACResolver } from "@EE/rbac-resolver.ts";
+import { resolveSessionProject, type ResolvedSessionProject } from "@SRC/exulu/resolve-session-project";
 import { getPresignedUrl } from "@SRC/uppy";
 import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
 import { guardToolOutput } from "@SRC/exulu/tool-output-offload";
@@ -207,6 +206,11 @@ export const convertExuluToolsToAiSdkTools = async (
   memoryDecisions?: Map<string, MemoryDecision>,
   /** Approved skill cards → the user's name/description/visibility choices, keyed by toolCallId. */
   skillDecisions?: Map<string, SkillDecision>,
+  /**
+   * The access-checked project of this turn, resolved once by the caller (generate-stream
+   * also needs its name for the prompt). Omit to have it resolved here; null = no project.
+   */
+  resolvedProject?: ResolvedSessionProject | null,
 ): Promise<Record<string, Tool>> => {
   if (!currentTools) return {};
 
@@ -227,30 +231,22 @@ export const convertExuluToolsToAiSdkTools = async (
   // GATED on the agent's `sandbox_enabled` flag (pure opt-in, default off): a
   // knowledge-only agent gets no sandbox and won't be tempted into spurious shell
   // calls. Undefined/false → no sandbox. Skill execution requires this enabled.
+  // One access-checked project id per turn for the sandbox AND the document tools. The
+  // sandbox is one per session, so it follows the session OWNER's access, not the
+  // speaker's. Never the raw `project`: a deleted or inaccessible project must look
+  // like no project everywhere.
+  const sandboxProjectId = (
+    resolvedProject !== undefined
+      ? resolvedProject
+      : sessionID
+        ? await resolveSessionProject({ projectId: project, ownerId: sessionOwnerId ?? user?.id, owner: user })
+        : null
+  )?.id ?? null;
+
   let sharedSessionSandbox:
     | Awaited<ReturnType<typeof createSessionSandbox>>
     | undefined;
   if (sessionID && exuluConfig && agent?.sandbox_enabled === true) {
-    // The sandbox is one per session, so project files follow the session OWNER's
-    // access, not the speaker's. Never throws: no access or an error means no project/.
-    const sandboxProjectId = await resolveSandboxProjectId(
-      { projectId: project, ownerId: sessionOwnerId ?? user?.id, owner: user },
-      {
-        getProject: async (id) => {
-          const { db } = await postgresClient();
-          return db.from("projects").where({ id }).first();
-        },
-        // The rbac table stores the SINGULAR entity name for projects.
-        getRbac: async (p) => {
-          const { db } = await postgresClient();
-          return RBACResolver(db, "project", p.id, p.rights_mode || "private");
-        },
-        getUser: async (id) => {
-          const { db } = await postgresClient();
-          return db.from("users").where({ id }).first();
-        },
-      },
-    );
     try {
       sharedSessionSandbox = await createSessionSandbox(
         sessionID,
@@ -353,17 +349,17 @@ export const convertExuluToolsToAiSdkTools = async (
     }
   }
 
-  const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId });
+  const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });
   if (sessionFileReadTool && !disabled.has(sessionFileReadTool.id)) {
     currentTools.push(sessionFileReadTool);
   }
 
-  const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId });
+  const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });
   if (parseDocumentTool && !disabled.has(parseDocumentTool.id)) {
     currentTools.push(parseDocumentTool);
   }
 
-  const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId });
+  const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });
   if (viewDocumentPageTool && !disabled.has(viewDocumentPageTool.id)) {
     currentTools.push(viewDocumentPageTool);
   }

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { sessionFilePrefix } from "@SRC/exulu/session-files";
+import { resolveFileKey } from "./resolve-file-key";
 import { ExuluTool } from "@SRC/exulu/tool";
 import { getPresignedUrl } from "@SRC/uppy";
 import type { ExuluConfig } from "@SRC/exulu/app";
@@ -28,24 +28,30 @@ export const createSessionFileReadTool = ({
   user,
   exuluConfig,
   ownerId,
+  projectId,
 }: {
   sessionID?: string;
   user?: User;
   exuluConfig?: ExuluConfig;
   /** Session owner — files are namespaced by owner, not by the current speaker. */
   ownerId?: number | string;
+  /** The access-checked project id (never the raw session.project); null/undefined = no project files. */
+  projectId?: string | null;
 }): ExuluTool | undefined => {
   if (!sessionID || !exuluConfig?.fileUploads?.s3Bucket) return undefined;
 
   const readSessionFileExecute = async ({ filename, offset, limit }: { filename: string; offset?: number; limit?: number }) => {
-    const safeName = String(filename ?? "").trim();
-    if (!safeName || safeName.includes("..") || safeName.includes("/") || safeName.includes("\\")) {
-      return {
-        error: "Invalid filename — pass the bare file name exactly as listed in the session files (no paths).",
-      };
-    }
     const uploads = exuluConfig.fileUploads!;
-    const key = `${sessionFilePrefix(ownerId ?? user?.id ?? "api", sessionID, uploads.s3prefix)}${safeName}`;
+    const resolved = resolveFileKey({
+      filename,
+      ownerId: ownerId ?? user?.id ?? "api",
+      sessionId: sessionID,
+      projectId: projectId ?? null,
+      s3prefix: uploads.s3prefix,
+    });
+    if ("error" in resolved) return { error: resolved.error };
+    const key = resolved.key;
+    const safeName = String(filename).trim();
     try {
       const url = await getPresignedUrl(uploads.s3Bucket!, key, exuluConfig);
       const res = await fetch(url);
@@ -84,7 +90,8 @@ export const createSessionFileReadTool = ({
     description:
       "Read a line range from a file stored in this session's files — including offloaded tool outputs " +
       "(tool-output-*.txt) and uploaded documents. Use offset (1-based line number) and limit to page " +
-      "through large files instead of reading everything at once.",
+      "through large files instead of reading everything at once." +
+      " Files of the session's project are addressed as `project/<name>` and are read-only.",
     inputSchema: z.object({
       filename: z
         .string()
