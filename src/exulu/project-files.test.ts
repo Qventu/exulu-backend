@@ -87,4 +87,9 @@ describe("planPromote", () => {
     expect(r.accepted).toEqual([]);
     expect(r.rejected[0].reason).toContain("200");
   });
+  test("an overwritten name does not count toward the 200 cap", () => {
+    const existingNames = Array.from({ length: MAX_PROJECT_FILES }, (_, i) => `e${i}`);
+    const r = planPromote({ ...base, keys: [`${sp}e3`], existingNames, overwrite: true });
+    expect(r.accepted).toHaveLength(1);
+  });
 });

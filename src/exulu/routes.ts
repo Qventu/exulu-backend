@@ -102,6 +102,10 @@ import { transcribeAudio,
 import { transcriptionClient } from "./transcription/client.ts";
 import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts";
 import { registerTranscriptExportRoute } from "./transcription/export-route.ts";
+import { registerProjectFileRoutes } from "./project-file-routes.ts";
+import { listFilesWithOrigin, makeLoadAuthedProject } from "./project-file-handlers.ts";
+import { hasProjectAccess } from "./project-access.ts";
+import { createPromoteS3, getOriginResolver } from "./project-files-s3.ts";
 import { registerViewerIdentityRoutes } from "./viewer-identity-routes.ts";
 import { registerClaimCheckRoutes } from "@EE/claim-check/routes";
 import { claimCheckRateLimiter } from "@EE/claim-check/rate-limit";
@@ -1811,6 +1815,22 @@ export const createExpressRoutes = async (
     }
     return { user: authResult.user, session, db } as const;
   };
+
+  const projectRbac = async (project: any) => {
+    const { db } = await postgresClient();
+    // The rbac table stores the SINGULAR entity name for projects ("project"); the
+    // plural loadAuthedSession passes for sessions would match nothing here.
+    return RBACResolver(db, "project", project.id, project.rights_mode || "private");
+  };
+
+  const loadAuthedProject = makeLoadAuthedProject({
+    authenticate: (req) => requestValidators.authenticate(req),
+    getProject: async (id) => {
+      const { db } = await postgresClient();
+      return db.from("projects").where({ id }).first();
+    },
+    getRbac: projectRbac,
+  });
 
   /**
    * Resolve a saved style by id and verify the calling user has read access
@@ -4792,26 +4812,12 @@ export const createExpressRoutes = async (
     }
 
     const bucket = config.fileUploads.s3Bucket;
-    const files = await Promise.all(
-      objects
-        // Skip the directory marker (key ending with /).
-        .filter((obj) => !obj.key.endsWith("/"))
-        .map(async (obj) => {
-          const name = obj.key.split("/").pop() ?? obj.key;
-          const presignedUrl = await getPresignedUrl(bucket, obj.key, config);
-          return {
-            key: obj.key,
-            name,
-            size: obj.size,
-            lastModified: obj.lastModified.toISOString(),
-            contentType: inferContentType(name),
-            presignedUrl,
-          };
-        }),
-    );
-
-    // Most-recent first.
-    files.sort((a, b) => b.lastModified.localeCompare(a.lastModified));
+    const files = await listFilesWithOrigin({
+      objects,
+      presign: (key) => getPresignedUrl(bucket, key, config),
+      resolveOrigin: getOriginResolver(config),
+      inferContentType,
+    });
 
     res.json({ files });
   });
@@ -5119,6 +5125,31 @@ export const createExpressRoutes = async (
       res.json({ adopted, rejected: [] });
     },
   );
+
+  // ─── Project Files ───────────────────────────────────────────────────────────
+  if (config.fileUploads) {
+    const fileConfig = config;
+    registerProjectFileRoutes(app, {
+      s3prefix: config.fileUploads.s3prefix,
+      loadAuthedProject,
+      canWrite: async (user, project) =>
+        hasProjectAccess({ project, rbac: await projectRbac(project), user, want: "write" }),
+      loadAuthedSession,
+      buildSessionPrefixes,
+      s3: {
+        ...createPromoteS3(fileConfig),
+        list: (prefix) => listS3ObjectsByPrefix(prefix, fileConfig),
+        presign: (key) => getPresignedUrl(fileConfig.fileUploads!.s3Bucket, key, fileConfig),
+        signUpload: (key, contentType) => getS3SignedUploadUrl(key, contentType, fileConfig),
+        remove: (key) => deleteS3Object(key, fileConfig),
+        etag: (key) => getS3ObjectEtag(key, fileConfig),
+      },
+      resolveOrigin: getOriginResolver(fileConfig),
+      inferContentType,
+      previewPdf: (key, etag) => getPdfPreviewBytes({ sourceKey: key, etag, config: fileConfig }),
+      isPreviewError: (err) => err instanceof PreviewRenderError,
+    });
+  }
 
   // ─── End Session Files ────────────────────────────────────────────────────────
 
