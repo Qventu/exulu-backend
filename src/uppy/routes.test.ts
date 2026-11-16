@@ -186,3 +186,62 @@ describe("multipartKeyBelongsTo", () => {
     expect(multipartKeyBelongsTo("", u, undefined)).toBe(false);
   });
 });
+
+describe("POST /s3/object", () => {
+  const head = {
+    ContentLength: 2048,
+    ContentType: "application/pdf",
+    LastModified: new Date("2026-11-01T10:00:00Z"),
+    ETag: '"abc"',
+    Metadata: { originalname: "a.pdf" },
+    // Fields that must not be passed through.
+    $metadata: { httpStatusCode: 200, requestId: "r1" },
+    ServerSideEncryption: "AES256",
+    VersionId: "v1",
+  };
+
+  it("answers 403 for another user's user_X/ key and sends no HeadObject", async () => {
+    authAs(normalUser);
+    const res = await request(app).post("/s3/object").send({ key: "bkt/user_2/x-_EXULU_a.pdf" });
+    expect(res.status).toBe(403);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("answers 200 for an own key with only the whitelisted fields", async () => {
+    authAs(normalUser);
+    send.mockResolvedValue(head as any);
+    const res = await request(app).post("/s3/object").send({ key: "bkt/user_1/x-_EXULU_a.pdf" });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      ContentLength: 2048,
+      ContentType: "application/pdf",
+      LastModified: "2026-11-01T10:00:00.000Z",
+      ETag: '"abc"',
+      Metadata: { originalname: "a.pdf" },
+    });
+    expect(send.mock.calls[0][0].input).toEqual({ Bucket: "bkt", Key: "user_1/x-_EXULU_a.pdf" });
+  });
+
+  it("keeps working for keys outside user_ prefixes (global, knowledge-base item files)", async () => {
+    authAs(normalUser);
+    send.mockResolvedValue(head as any);
+    expect((await request(app).post("/s3/object").send({ key: "bkt/global/x.png" })).status).toBe(200);
+    expect((await request(app).post("/s3/object").send({ key: "bkt/items/ctx/a.pdf" })).status).toBe(200);
+  });
+
+  it.each([[undefined], [42], [""], [["bkt/user_1/a"]], [{ a: 1 }]])("answers 400 for key %p", async (key) => {
+    authAs(normalUser);
+    const res = await request(app).post("/s3/object").send({ key });
+    expect(res.status).toBe(400);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 JSON for a missing object", async () => {
+    authAs(normalUser);
+    const notFound = Object.assign(new Error("NotFound"), { name: "NotFound", $metadata: { httpStatusCode: 404 } });
+    send.mockRejectedValue(notFound);
+    const res = await request(app).post("/s3/object").send({ key: "bkt/user_1/gone.pdf" });
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "Object not found." });
+  });
+});

@@ -443,6 +443,23 @@ export function mayUseGenericS3Route(
 }
 
 /**
+ * Ownership rule of the generic read routes (`GET /s3/download`, `POST /s3/object`):
+ * API users and super admins read anything, everyone else keys without a `user_`
+ * segment or keys under their own `user_<id>/`. `key` is WITHOUT the bucket.
+ */
+export function mayReadGenericS3Key(
+  key: string,
+  user: { id?: number | string; type?: string; super_admin?: boolean },
+): boolean {
+  return (
+    user.type === "api" ||
+    !!user.super_admin ||
+    !key.includes(`user_`) ||
+    key.includes(`user_${user.id}/`)
+  );
+}
+
+/**
  * Whether a multipart key (as `POST /s3/multipart` returned it: general prefix +
  * `user_<id>/` or `global/` + name) belongs to the caller. The follow-up multipart
  * routes take the key from the query string, so without this any caller could sign
@@ -736,17 +753,7 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
 
     // Only the user themselves, a super admin
     // or an api user can download files.
-    let allowed = false;
-    if (
-      user.type === "api" ||
-      user.super_admin ||
-      !key.includes(`user_`) ||
-      key.includes(`user_${user.id}/`)
-    ) {
-      allowed = true;
-    }
-
-    if (!allowed) {
+    if (!mayReadGenericS3Key(key, user)) {
       res
         .status(405)
         .json({ error: "Not allowed to access the file based on authenticated user." });
@@ -790,11 +797,18 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
       return;
     }
 
-    let { key } = req.body;
+    let { key } = req.body ?? {};
+
+    // Type-check before any string operation: a non-string key used to throw in
+    // .split and surface as a 500.
+    if (typeof key !== "string" || key.trim() === "") {
+      res.status(400).json({ error: "Missing or invalid `key` in the request body." });
+      return;
+    }
 
     let bucket = key.split("/")[0];
 
-    if (!bucket || typeof bucket !== "string" || bucket.trim() === "") {
+    if (!bucket || bucket.trim() === "") {
       res.status(400).json({
         error:
           "Missing or invalid `bucket` (should be the first part of the key before the first slash).",
@@ -804,14 +818,23 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
 
     key = key.split("/").slice(1).join("/");
 
-    if (!key || typeof key !== "string" || key.trim() === "") {
-      res.status(400).json({ error: "Missing or invalid `key` query parameter." });
+    if (!key || key.trim() === "") {
+      res.status(400).json({ error: "Missing or invalid `key` in the request body." });
       return;
     }
 
+    const user = authenticationResult.user;
+
     // HeadObject exposes size and metadata of any key, so project keys are closed here too.
-    if (!mayUseGenericS3Route(key, authenticationResult.user, config.fileUploads.s3prefix)) {
+    if (!mayUseGenericS3Route(key, user, config.fileUploads.s3prefix)) {
       res.status(403).json({ error: "Project files cannot be read through this route." });
+      return;
+    }
+
+    // Same ownership rule as GET /s3/download: another user's metadata (original
+    // file names, sizes) is not the caller's to read.
+    if (!mayReadGenericS3Key(key, user)) {
+      res.status(403).json({ error: "Not allowed to access the file based on authenticated user." });
       return;
     }
 
@@ -821,10 +844,26 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
       Key: key,
     });
 
-    const response = await client.send(command);
+    let response;
+    try {
+      response = await client.send(command);
+    } catch (err: any) {
+      if (err?.name === "NotFound" || err?.name === "NoSuchKey" || err?.$metadata?.httpStatusCode === 404) {
+        res.status(404).json({ error: "Object not found." });
+        return;
+      }
+      throw err;
+    }
 
-    res.json(response);
-    res.end();
+    // Only what the file card needs; the raw HeadObject output also carries
+    // request ids, encryption and version details.
+    res.json({
+      ContentLength: response.ContentLength,
+      ContentType: response.ContentType,
+      LastModified: response.LastModified,
+      ETag: response.ETag,
+      Metadata: response.Metadata,
+    });
   });
 
   app.get("/s3/list", async (req, res) => {
