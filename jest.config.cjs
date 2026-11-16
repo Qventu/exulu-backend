@@ -34,7 +34,7 @@ module.exports = {
     "^.+\\.[tj]s$": ["ts-jest", { tsconfig: { allowJs: true } }],
   },
   transformIgnorePatterns: [
-    "/node_modules/(?!(jose|bash-tool|franc|natural|trigram-utils|n-gram|collapse-white-space|@anthropic-ai))",
+    "/node_modules/(?!(jose|bash-tool|franc|natural|trigram-utils|n-gram|collapse-white-space|@anthropic-ai|p-limit|yocto-queue))",
   ],
   setupFilesAfterEnv: ["<rootDir>/src/__tests__/setup.ts"],
   verbose: true,

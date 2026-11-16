@@ -1,4 +1,4 @@
-import { attachmentMaxPages, extractDocument, pagesToText, validateAttachmentsConfig } from "./attachment-text";
+import { attachmentMaxPages, extractDocument, pagesToText, tooLongForToolNotice, tooLongNotice, validateAttachmentsConfig } from "./attachment-text";
 import type { ExuluConfig } from "./app";
 
 const withProcessor = {
@@ -124,5 +124,75 @@ describe("attachment page cap", () => {
     expect(attachmentMaxPages({ EXULU_ATTACHMENT_MAX_PAGES: "40" })).toBe(40);
     expect(attachmentMaxPages({ EXULU_ATTACHMENT_MAX_PAGES: "0" })).toBe(50);
     expect(attachmentMaxPages({ EXULU_ATTACHMENT_MAX_PAGES: "viele" })).toBe(50);
+  });
+});
+
+describe("long documents through the tool path", () => {
+  const pageResult = (n: number) => Array.from({ length: n }, (_, i) => ({ page: i + 1, content: `text ${i + 1}`, headings: [] }));
+
+  it("with maxPages 300 reads a 120-page PDF and forwards the tool options to the processor", async () => {
+    const process = jest.fn().mockResolvedValue(pageResult(120));
+    const onProgress = jest.fn();
+    const result = await extractDocument({
+      bytes, filename: "Handbuch.pdf", exuluConfig: withProcessor, process, countPages: async () => 120,
+      maxPages: 300, tolerateVisionFailures: true, onProgress,
+    });
+    expect(result.tooLong).toBeUndefined();
+    expect(result.pages).toHaveLength(120);
+    expect(result.degradedPages).toBeUndefined();
+    const call = process.mock.calls[0][0];
+    expect(call.tolerateVisionFailures).toBe(true);
+    expect(call.onProgress).toBe(onProgress);
+  });
+
+  it("refuses 301 pages with the tool notice", async () => {
+    const process = jest.fn();
+    const result = await extractDocument({
+      bytes, filename: "Riesig.pdf", exuluConfig: withProcessor, process, countPages: async () => 301, maxPages: 300,
+    });
+    expect(result.tooLong).toEqual({ pageCount: 301, maxPages: 300 });
+    expect(result.text).toBe(tooLongForToolNotice("Riesig.pdf", 301, 300));
+    expect(result.text).toBe(
+      '[Document too long: "Riesig.pdf" has 301 pages, the limit for reading a document is 300 pages (EXULU_DOCUMENT_MAX_PAGES). ' +
+      "The document was NOT read. Tell the user plainly and suggest splitting the file.]",
+    );
+    expect(process).not.toHaveBeenCalled();
+  });
+
+  it("inline attachments (no maxPages) still refuse at 51 with the attachment notice", async () => {
+    const process = jest.fn();
+    const result = await extractDocument({ bytes, filename: "Handbuch.pdf", exuluConfig: withProcessor, process, countPages: async () => 51 });
+    expect(result.tooLong).toEqual({ pageCount: 51, maxPages: 50 });
+    expect(result.text).toBe(tooLongNotice("Handbuch.pdf", 51, 50));
+    expect(process).not.toHaveBeenCalled();
+  });
+
+  it("lists pages whose vision pass failed in degradedPages", async () => {
+    const process = jest.fn().mockResolvedValue([
+      { page: 1, content: "a", headings: [] },
+      { page: 2, content: "b", vlm_failed: true, headings: [] },
+      { page: 3, content: "c", vlm_failed: true, headings: [] },
+    ]);
+    const result = await extractDocument({
+      bytes, filename: "x.pdf", exuluConfig: withProcessor, process, countPages: async () => 3, maxPages: 300, tolerateVisionFailures: true,
+    });
+    expect(result.degradedPages).toEqual([2, 3]);
+    expect(result.engine).toBe("document-processor");
+  });
+});
+
+describe("validateAttachmentsConfig ocr.concurrency", () => {
+  const licensed = { "advanced-document-processing": true };
+  const withOcr = (ocr: unknown) =>
+    ({ attachments: { documentProcessor: { ...(withProcessor.attachments!.documentProcessor as object), ocr } } }) as unknown as ExuluConfig;
+  it("accepts integers 1..8 and absence", () => {
+    expect(validateAttachmentsConfig(withOcr({ concurrency: 1 }), licensed)).toEqual([]);
+    expect(validateAttachmentsConfig(withOcr({ concurrency: 8 }), licensed)).toEqual([]);
+    expect(validateAttachmentsConfig(withOcr({}), licensed)).toEqual([]);
+  });
+  it.each([0, 9, 2.5, "3"])("rejects %p", (value) => {
+    expect(validateAttachmentsConfig(withOcr({ concurrency: value }), licensed)).toEqual([
+      "attachments.documentProcessor.ocr.concurrency must be an integer from 1 to 8",
+    ]);
   });
 });

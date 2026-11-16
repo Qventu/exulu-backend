@@ -16,6 +16,8 @@ import { LiteParse } from '@llamaindex/liteparse';
 import { resolveOcr } from '@SRC/exulu/resolve-ocr';
 import type { ResolveOcrInput } from '@SRC/exulu/resolve-ocr';
 import { resolveModel } from '@SRC/exulu/resolve-model';
+import type { ProgressFn } from '@SRC/exulu/document-cache/progress';
+import { ocrConcurrency, ocrLimiter, visionLimiter } from './limits';
 
 export type DocumentProcessorConfig = {
   vlm?: {
@@ -29,6 +31,14 @@ export type DocumentProcessorConfig = {
     model: string;
     concurrency: number;
   },
+  /**
+   * OCR settings. `concurrency` is how many OCR chunk calls ONE document runs
+   * at once (default 3, 1..8). All documents in the process additionally share
+   * a ceiling of 8 (see limits.ts).
+   */
+  ocr?: {
+    concurrency?: number;
+  }
   processor: {
     name: "liteparse" | "mistral" | "officeparser"
     /**
@@ -67,6 +77,8 @@ export type ProcessedPage = {
   image?: string;
   vlm_corrected_text?: string;
   vlm_validated?: boolean;
+  /** Set only under tolerateVisionFailures: the vision pass failed for this page, the text is OCR only. */
+  vlm_failed?: boolean;
 }
 export type ProcessedDocument = ProcessedPage[];
 
@@ -163,6 +175,8 @@ async function processImage(
   paths: ProcessingPaths,
   config?: DocumentProcessorConfig,
   verbose: boolean = false,
+  tolerateVisionFailures: boolean = false,
+  onProgress?: ProgressFn,
 ): Promise<ProcessorOutput> {
   try {
     // Create images directory
@@ -191,7 +205,8 @@ async function processImage(
         json,
         vlmModel,
         verbose,
-        config!.vlm!.concurrency
+        config!.vlm!.concurrency,
+        tolerateVisionFailures,
       );
 
       // Save the processed result
@@ -531,7 +546,8 @@ async function validateWithVLM(
   document: ProcessedDocument,
   model: LanguageModel,
   verbose: boolean = false,
-  concurrency: number = 10
+  concurrency: number = 10,
+  tolerateVisionFailures: boolean = false,
 ): Promise<ProcessedDocument> {
   console.log(`[EXULU] Starting VLM validation for processor output, ${document.length} pages...`);
   console.log(`[EXULU] Concurrency limit: ${concurrency}`);
@@ -586,7 +602,8 @@ async function validateWithVLM(
       try {
         console.log(`[EXULU] Validating page ${page.page} with VLM`);
         validation = await withRetry(async () => {
-          return await validatePageWithVLM(page, imagePath, model);
+          // Process-wide ceiling, taken per attempt so a retry queues again.
+          return await visionLimiter(() => validatePageWithVLM(page, imagePath, model));
         }, 3);
 
         // Store validation result for post-processing
@@ -600,6 +617,11 @@ async function validateWithVLM(
         }
       } catch (error) {
         console.error(`[EXULU] Error validating page ${page.page} with VLM more than 3 times, skipping:`, error);
+        if (tolerateVisionFailures) {
+          // The page keeps its OCR text; the caller reports it as unverified.
+          page.vlm_failed = true;
+          return;
+        }
         // Throw so the job fails
         throw error;
       }
@@ -667,6 +689,8 @@ async function processDocument(
   tempDir: string,
   config?: DocumentProcessorConfig,
   verbose: boolean = false,
+  tolerateVisionFailures: boolean = false,
+  onProgress?: ProgressFn,
 ): Promise<{
   content: {
     markdown: string,
@@ -712,7 +736,7 @@ async function processDocument(
       };
       break;
     case 'pdf':
-      result = await processPdf(buffer, paths, config, verbose);
+      result = await processPdf(buffer, paths, config, verbose, tolerateVisionFailures, onProgress);
       break;
     case 'docx':
       result = await processDocx(buffer);
@@ -725,7 +749,7 @@ async function processDocument(
     case 'png':
     case 'gif':
     case 'webp':
-      result = await processImage(buffer, paths, config, verbose);
+      result = await processImage(buffer, paths, config, verbose, tolerateVisionFailures, onProgress);
       break;
 
     // Todo other file types with docx and officeparser
@@ -746,6 +770,8 @@ async function processPdf(
   paths: ProcessingPaths,
   config?: DocumentProcessorConfig,
   verbose: boolean = false,
+  tolerateVisionFailures: boolean = false,
+  onProgress?: ProgressFn,
 ): Promise<ProcessorOutput> {
   try {
     let json: ProcessedDocument = [];
@@ -806,7 +832,7 @@ async function processPdf(
 
       // Process chunks in parallel with a concurrency cap to respect rate limits.
       // Each chunk gets a small random jitter to spread out requests.
-      const chunkLimit = pLimit(3);
+      const chunkLimit = pLimit(ocrConcurrency(config));
 
       const chunkResults = await Promise.all(
         pdfChunks.map((chunk, i) =>
@@ -821,10 +847,13 @@ async function processPdf(
             const chunkBase64 = chunkBuffer.toString('base64');
 
             const chunkResponse = await withRetry(async () => {
-              return await resolved.ocr({
+              // Per-document slot (chunkLimit) is held while this waits for the
+              // process-wide slot; the process-wide queue never waits on a
+              // per-document one, so the nesting cannot deadlock.
+              return await ocrLimiter(() => resolved.ocr({
                 type: "document_url",
                 document_url: "data:application/pdf;base64," + chunkBase64,
-              }, { includeImageBase64: false });
+              }, { includeImageBase64: false }));
             }, 10);
 
             return { pages: chunkResponse.pages, offset: chunk.start_page };
@@ -915,7 +944,8 @@ async function processPdf(
         json,
         vlmModel,
         verbose,
-        config!.vlm!.concurrency
+        config!.vlm!.concurrency,
+        tolerateVisionFailures,
       );
 
       console.log('[EXULU] \n📊 Processing Summary:');
@@ -980,6 +1010,7 @@ async function processPdf(
       return {
         page: e.page,
         content: finalContent,
+        ...(e.vlm_failed ? { vlm_failed: true } : {}),
       };
     });
 
@@ -1046,11 +1077,17 @@ const loadFile = async (
 export async function documentProcessor({
   file,
   name,
-  config
+  config,
+  tolerateVisionFailures,
+  onProgress,
 }: {
   file: string | Buffer;
   name: string;
   config?: DocumentProcessorConfig;
+  /** A page whose vision pass failed keeps its OCR text and is flagged `vlm_failed` instead of failing the document. */
+  tolerateVisionFailures?: boolean;
+  /** Accepted for the callers' benefit; progress is not emitted yet. */
+  onProgress?: ProgressFn;
 }): Promise<ProcessedDocument | undefined> {
 
   const license = checkLicense()
@@ -1106,7 +1143,9 @@ export async function documentProcessor({
       buffer,
       tempDir,
       config,
-      true
+      true,
+      tolerateVisionFailures,
+      onProgress,
     );
 
     return content.json;

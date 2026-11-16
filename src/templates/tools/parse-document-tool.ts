@@ -8,8 +8,9 @@ import type { User } from "@EXULU_TYPES/models/user";
 import { convertLegacyOfficeToModern, isLegacyOfficeFormat, pdfToText } from "./document-render-helpers";
 import { resolveFileKey } from "./resolve-file-key";
 import { extractDocument } from "@SRC/exulu/attachment-text";
+import type { ProgressFn } from "@SRC/exulu/document-cache/progress";
 import { createStoreIo, readThroughDocument, type Extracted, type StoreIo } from "@SRC/exulu/document-cache/store";
-import { documentCacheDays, extractorFingerprint } from "@SRC/exulu/document-cache/keys";
+import { documentCacheDays, documentMaxPages, extractorFingerprint } from "@SRC/exulu/document-cache/keys";
 
 const DEFAULT_LIMIT = 250;
 const MAX_CONTENT_CHARS = 16_000;
@@ -192,24 +193,39 @@ export const createParseDocumentTool = ({
       };
 
       /** The whole document as marked text: processor path, then pdftotext / Office. */
-      const extractFull = async (bytes: Buffer): Promise<Extracted> => {
+      const extractFull = async (bytes: Buffer, onProgress?: ProgressFn): Promise<Extracted> => {
         // An instance with attachments.documentProcessor (OCR + VLM, the engine
         // the knowledge bases use) reads scans and images inside pages too; the
         // text-layer paths below stay as the fallback.
         let processorFellBack = false;
         if (exuluConfig.attachments?.documentProcessor) {
-          const extracted = await extractDocument({ bytes, filename: safeName, exuluConfig, attribution: { user } });
+          const extracted = await extractDocument({
+            bytes,
+            filename: safeName,
+            exuluConfig,
+            attribution: { user },
+            maxPages: documentMaxPages(),
+            tolerateVisionFailures: true,
+            onProgress,
+          });
           if (extracted.tooLong) {
             throw new ExtractionRefusal(extracted.text);
           }
           if (extracted.engine === "document-processor") {
             const multiPage = extracted.pages.length > 1;
+            const body = extracted.pages
+              .map(({ page, text }) => (multiPage ? `--- page ${page} ---\n${text.trim()}` : text.trim()))
+              .join("\n");
+            const degraded = extracted.degradedPages ?? [];
+            // A result with unverified pages is returned but never stored: a later
+            // read must get the chance to verify them.
             return {
               totalPages: extracted.pages.length,
-              storable: true,
-              text: extracted.pages
-                .map(({ page, text }) => (multiPage ? `--- page ${page} ---\n${text.trim()}` : text.trim()))
-                .join("\n"),
+              storable: degraded.length === 0,
+              text:
+                degraded.length === 0
+                  ? body
+                  : `${body}\n[Note: figures and tables on page(s) ${degraded.join(", ")} could not be verified; the text for those pages is OCR only.]`,
             };
           }
           // The processor gave nothing usable: what follows is the text-layer fallback,

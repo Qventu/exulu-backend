@@ -291,6 +291,36 @@ describe("stored text", () => {
       expect(extractDocument).toHaveBeenCalledTimes(1);
     });
 
+    it("reads with the tool page cap and tolerates vision failures", async () => {
+      extractDocument.mockResolvedValue({ engine: "document-processor", text: "", pages: [{ page: 1, text: "a" }, { page: 2, text: "b" }] });
+      await run({ filename: "report.pdf" });
+      const input = extractDocument.mock.calls[0][0];
+      expect(input.maxPages).toBe(300);
+      expect(input.tolerateVisionFailures).toBe(true);
+    });
+
+    it("refuses over the tool cap with the extraction's notice", async () => {
+      extractDocument.mockResolvedValue({ engine: "document-processor", text: "[Document too long: ...]", pages: [], tooLong: { pageCount: 301, maxPages: 300 } });
+      expect(await run({ filename: "report.pdf" })).toEqual({ error: "[Document too long: ...]" });
+    });
+
+    it("appends the unverified-pages note and does not store a result with degraded pages", async () => {
+      extractDocument.mockResolvedValue({
+        engine: "document-processor",
+        text: "",
+        pages: [{ page: 1, text: "alpha" }, { page: 2, text: "beta" }, { page: 3, text: "gamma" }],
+        degradedPages: [2, 3],
+      });
+      const first = await run({ filename: "report.pdf" });
+      await run({ filename: "report.pdf" });
+      expect(first.content).toBe(
+        "--- page 1 ---\nalpha\n--- page 2 ---\nbeta\n--- page 3 ---\ngamma\n" +
+        "[Note: figures and tables on page(s) 2, 3 could not be verified; the text for those pages is OCR only.]",
+      );
+      expect(extractDocument).toHaveBeenCalledTimes(2);
+      expect(uppy.putS3ObjectTextExact).not.toHaveBeenCalled();
+    });
+
     it("does not store the officeparser fallback", async () => {
       extractDocument.mockResolvedValue({ engine: "officeparser", text: "x", pages: [{ page: 1, text: "x" }] });
       pdfToText.mockResolvedValue(PAGES);
