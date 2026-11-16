@@ -160,9 +160,18 @@ export function validateAttachmentsConfig(
   config: ExuluConfig | undefined,
   license: { "advanced-document-processing": boolean },
 ): string[] {
-  const processorConfig = config?.attachments?.documentProcessor;
-  if (!processorConfig) return [];
   const problems: string[] = [];
+  // Env settings of the document store are checked even without an attachments config.
+  const rawDays = process.env.EXULU_DOCUMENT_CACHE_DAYS;
+  if (rawDays !== undefined && rawDays.trim() !== "" && !(Number.isInteger(Number(rawDays)) && Number(rawDays) >= 0)) {
+    problems.push(`EXULU_DOCUMENT_CACHE_DAYS must be a non-negative integer, 0 disables the cache (got ${JSON.stringify(rawDays)}; default 365)`);
+  }
+  const rawDocPages = process.env.EXULU_DOCUMENT_MAX_PAGES;
+  if (rawDocPages !== undefined && rawDocPages.trim() !== "" && !(Number.isInteger(Number(rawDocPages)) && Number(rawDocPages) > 0)) {
+    problems.push(`EXULU_DOCUMENT_MAX_PAGES must be a positive integer (got ${JSON.stringify(rawDocPages)}; default 300)`);
+  }
+  const processorConfig = config?.attachments?.documentProcessor;
+  if (!processorConfig) return problems;
   const name = processorConfig.processor?.name;
   if (!name || !PROCESSOR_NAMES.has(name)) {
     problems.push(`attachments.documentProcessor.processor.name must be one of ${[...PROCESSOR_NAMES].join(", ")} (got ${JSON.stringify(name)})`);

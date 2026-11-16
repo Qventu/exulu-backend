@@ -22,6 +22,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { STSClient, GetFederationTokenCommand } from "@aws-sdk/client-sts";
 import { randomUUID } from "node:crypto";
 import { isProjectKey } from "../exulu/project-files";
+import { isDerivedKey } from "../exulu/document-cache/keys";
 
 const expiresIn = 60 * 60 * 24 * 1; // S3 signature expires within 1 day.
 
@@ -438,6 +439,8 @@ export function mayUseGenericS3Route(
   user: { type?: string; super_admin?: boolean },
   s3prefix?: string | null,
 ): boolean {
+  // The derived/ store is backend-internal: nobody reads or writes it here.
+  if (isDerivedKey(key, s3prefix)) return false;
   if (user.type === "api" || user.super_admin) return true;
   return !isProjectKey(key, s3prefix);
 }
