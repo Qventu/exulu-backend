@@ -76,6 +76,16 @@ function listingLines(files: ListedFile[], opts: { now?: Date; lastTurnAt?: Date
   return { lines, omitted: usable.length - shown.length, total: usable.length };
 }
 
+const MAX_PROMPT_NAME = 80;
+
+/**
+ * The project name is user-authored and lands in the system prompt: one line, bounded,
+ * so a long or multi-line name cannot bloat or restructure the prompt.
+ */
+export function promptSafeProjectName(name: string): string {
+  return name.replace(/\s+/g, " ").trim().slice(0, MAX_PROMPT_NAME);
+}
+
 /** The project block of the prompt: 25 newest project files, read as `project/<name>`. */
 export function describeProjectFiles(
   files: ListedFile[],
@@ -85,8 +95,7 @@ export function describeProjectFiles(
   const { lines, omitted, total } = listingLines(files, opts);
   if (total === 0) return "";
   if (omitted > 0) lines.push(`+${omitted} more (list them with \`ls project/\`).`);
-  // The name is user-authored and lands in the system prompt: keep it on one line.
-  const name = projectName.replace(/\s+/g, " ").trim();
+  const name = promptSafeProjectName(projectName);
   return (
     `Project files (shared with everyone on project ${name}):\n` +
     lines.join("\n") +
@@ -100,17 +109,25 @@ export function describeProjectFiles(
  * project it is byte-identical to the text that used to be inline (the embedded newline
  * and indentation come from the template literal it was cut out of) — pinned by a test.
  */
-export function sessionFilesScopeSentence(projectName: string | null | undefined): string {
+export function sessionFilesScopeSentence(
+  projectName: string | null | undefined,
+  /** True when save_to_project is registered this turn (the speaker may write to the project). */
+  canSaveToProject = false,
+): string {
   if (!projectName) {
     return "These files are scoped to\n        this single session; they are NOT visible in other sessions, projects, or knowledge bases.";
   }
-  const name = projectName.replace(/\s+/g, " ").trim();
+  const name = promptSafeProjectName(projectName);
+  const route = canSaveToProject
+    ? "A session file gets into the project with the save_to_project tool (the user approves each save) or " +
+      "by the user in the sidebar."
+    : "You cannot add files to the project: only someone with write access can, by adding a session " +
+      "file to it in the sidebar.";
   return (
     "Files you see by their plain name are private to this session. " +
     `Project files are shared with everyone on project ${name} and appear under \`${PROJECT_DIR}/\`; ` +
     `they are read-only for you — do not write into \`${PROJECT_DIR}/\`, changes there are discarded. ` +
-    "A session file gets into the project with the save_to_project tool (when you have it) or " +
-    "by the user in the sidebar."
+    route
   );
 }
 

@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 
-import { registerProjectFileRoutes, type ProjectFileRouteDeps } from "./project-file-routes";
+import { registerProjectFileRoutes, registerProjectFileRoutesUnconfigured, type ProjectFileRouteDeps } from "./project-file-routes";
 import { makeLoadAuthedProject } from "./project-file-handlers";
 import { hasProjectAccess } from "./project-access";
 import { createOriginResolver } from "./file-origin";
@@ -12,7 +12,14 @@ const RBAC = { type: "private", users: [{ id: "2", rights: "read" }], roles: [] 
 const PP = "projects/p1/files/";
 const sessionPrefix = (owner: number, sid: string) => `user_${owner}/sessions/${sid}/`;
 
-function setup(over: { head?: (key: string) => Promise<Record<string, string> | undefined> } = {}) {
+function setup(
+  over: {
+    head?: (key: string) => Promise<Record<string, string> | undefined>;
+    s3prefix?: string;
+    failCopyOf?: string;
+    failSign?: boolean;
+  } = {},
+) {
   // key -> { lastModified, meta }
   const store = new Map<string, { lastModified: Date; meta?: Record<string, string> }>();
   const put = (key: string, meta?: Record<string, string>) =>
@@ -29,32 +36,38 @@ function setup(over: { head?: (key: string) => Promise<Record<string, string> | 
   });
 
   const deps: ProjectFileRouteDeps = {
-    s3prefix: null,
+    s3prefix: over.s3prefix ?? null,
     loadAuthedProject,
     canWrite: async (user, project) => hasProjectAccess({ project, rbac: RBAC, user, want: "write" }),
     loadAuthedSession: async (req, res, sid) => {
       const user = { id: Number(req.headers["x-user"]) };
       const session = { id: sid, user: sid === "s-user1" ? 1 : 9 };
-      if (session.user !== user.id) {
+      if (session.user !== user.id && sid !== "s-shared") {
         res.status(403).json({ detail: "no session access" });
         return null;
       }
       return { user, session };
     },
-    buildSessionPrefixes: (uid, sid) => ({ fullSessionPrefix: sessionPrefix(Number(uid), sid) }),
+    buildSessionPrefixes: (uid, sid) => ({
+      fullSessionPrefix: `${over.s3prefix ? `${over.s3prefix}/` : ""}${sessionPrefix(Number(uid), sid)}`,
+    }),
     s3: {
       list: async (prefix) =>
         [...store.entries()]
           .filter(([k]) => k.startsWith(prefix))
           .map(([key, v]) => ({ key, size: 10, lastModified: v.lastModified })),
       presign: async (key) => `https://s3/${key}`,
-      signUpload: async (key) => `https://s3/put/${key}`,
+      signUpload: async (key) => {
+        if (over.failSign) throw new Error("sts down");
+        return `https://s3/put/${key}`;
+      },
       remove: async (key) => void store.delete(key),
       etag: async (key) => (store.has(key) ? "etag" : null),
       listProjectNames: async (prefix) =>
         [...store.keys()].filter((k) => k.startsWith(prefix)).map((k) => k.split("/").pop()!),
       sizeOf: async (key) => (store.has(key) ? 10 : null),
       copy: async (src, dest) => {
+        if (over.failCopyOf && src.endsWith(over.failCopyOf)) throw new Error("S3 down");
         copies.push([src, dest]);
         store.set(dest, { ...store.get(src)!, lastModified: new Date() });
       },
@@ -203,6 +216,70 @@ describe("project file routes", () => {
     expect(copies).toEqual([]);
   });
 
+  it("promote: a copy failing midway answers 200 with promoted and rejected", async () => {
+    const { app, put } = setup({ failCopyOf: "b.pdf" });
+    const a = `${sessionPrefix(1, "s-user1")}a.pdf`;
+    const b = `${sessionPrefix(1, "s-user1")}b.pdf`;
+    put(a);
+    put(b);
+    const res = await as(request(app).post("/projects/p1/files/promote").send({ sessionId: "s-user1", keys: [a, b] }), 1);
+    expect(res.status).toBe(200);
+    expect(res.body.promoted).toEqual([{ key: `${PP}a.pdf`, name: "a.pdf" }]);
+    expect(res.body.rejected).toHaveLength(1);
+    expect(res.body.rejected[0].key).toBe(b);
+  });
+
+  it("promote: with an s3prefix the destination and the owner's session prefix both carry it", async () => {
+    const { app, put, copies } = setup({ s3prefix: "exulu" });
+    const src = `exulu/${sessionPrefix(1, "s-user1")}a.pdf`;
+    put(src);
+    const res = await as(request(app).post("/projects/p1/files/promote").send({ sessionId: "s-user1", keys: [src] }), 1);
+    expect(res.status).toBe(200);
+    expect(res.body.promoted).toEqual([{ key: `exulu/${PP}a.pdf`, name: "a.pdf" }]);
+    expect(copies).toEqual([[src, `exulu/${PP}a.pdf`]]);
+    // A key without the prefix is not this session's file.
+    const bare = await as(
+      request(app).post("/projects/p1/files/promote").send({ sessionId: "s-user1", keys: [`${sessionPrefix(1, "s-user1")}a.pdf`] }),
+      1,
+    );
+    expect(bare.body.promoted).toEqual([]);
+  });
+
+  it("promote: in a shared session the OWNER's prefix applies, not the caller's", async () => {
+    // s-shared belongs to user 9 but user 1 (project writer) may write to it.
+    const { app, put, copies } = setup();
+    const owners = `${sessionPrefix(9, "s-shared")}a.pdf`;
+    const callers = `${sessionPrefix(1, "s-shared")}a.pdf`;
+    put(owners);
+    put(callers);
+    const res = await as(
+      request(app).post("/projects/p1/files/promote").send({ sessionId: "s-shared", keys: [owners, callers] }),
+      1,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.promoted).toEqual([{ key: `${PP}a.pdf`, name: "a.pdf" }]);
+    expect(res.body.rejected.map((r: { key: string }) => r.key)).toEqual([callers]);
+    expect(copies).toEqual([[owners, `${PP}a.pdf`]]);
+  });
+
+  it("a sibling project whose id starts with this id (p10 vs p1) fails the prefix check", async () => {
+    const { app, put, store } = setup();
+    put("projects/p10/files/x.pdf");
+    expect((await as(request(app).delete("/projects/p1/files").query({ key: "projects/p10/files/x.pdf" }), 1)).status).toBe(403);
+    expect(store.has("projects/p10/files/x.pdf")).toBe(true);
+    expect((await as(request(app).get("/projects/p1/file/preview-pdf").query({ key: "projects/p10/files/x.pdf" }), 1)).status).toBe(403);
+  });
+
+  it("upload-sign: a signing failure answers the JSON error shape, not an unhandled rejection", async () => {
+    const { app } = setup({ failSign: true });
+    const res = await as(
+      request(app).post("/projects/p1/files/upload-sign").send({ filename: "n.pdf", contentType: "application/pdf" }),
+      1,
+    );
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ detail: "Failed to sign the upload." });
+  });
+
   it("promote: missing source fails the batch before anything is copied", async () => {
     const { app, copies } = setup();
     const res = await as(
@@ -212,5 +289,23 @@ describe("project file routes", () => {
     expect(res.body.promoted).toEqual([]);
     expect(res.body.rejected[0].reason).toContain("not found");
     expect(copies).toEqual([]);
+  });
+});
+
+describe("project file routes without file uploads", () => {
+  it("answer 500 with the session routes' detail instead of a 404", async () => {
+    const app = express();
+    app.use(express.json());
+    registerProjectFileRoutesUnconfigured(app);
+    for (const res of [
+      await request(app).get("/projects/p1/files"),
+      await request(app).post("/projects/p1/files/upload-sign").send({}),
+      await request(app).delete("/projects/p1/files").query({ key: "k" }),
+      await request(app).get("/projects/p1/file/preview-pdf").query({ key: "k" }),
+      await request(app).post("/projects/p1/files/promote").send({}),
+    ]) {
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ detail: "File uploads are not configured." });
+    }
   });
 });

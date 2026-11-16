@@ -25,6 +25,7 @@ import { createMemoryTools } from "@SRC/exulu/memory/tools";
 import { checkMemoryBase } from "@SRC/exulu/memory/memory-base";
 import { isMemoryToolId, type MemoryDecision } from "@SRC/exulu/memory/decisions";
 import { collectKbWriteTools } from "./context-write-tools";
+import { createSaveToProjectTool } from "./save-to-project-tool";
 import { collectSkillAuthorTools } from "./skill-author-tools";
 import type { SkillDecision } from "@SRC/exulu/skills/decisions";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
@@ -235,13 +236,13 @@ export const convertExuluToolsToAiSdkTools = async (
   // sandbox is one per session, so it follows the session OWNER's access, not the
   // speaker's. Never the raw `project`: a deleted or inaccessible project must look
   // like no project everywhere.
-  const sandboxProjectId = (
+  const turnProject =
     resolvedProject !== undefined
       ? resolvedProject
       : sessionID
-        ? await resolveSessionProject({ projectId: project, ownerId: sessionOwnerId ?? user?.id, owner: user })
-        : null
-  )?.id ?? null;
+        ? await resolveSessionProject({ projectId: project, ownerId: sessionOwnerId ?? user?.id, owner: user, speaker: user })
+        : null;
+  const sandboxProjectId = turnProject?.id ?? null;
 
   let sharedSessionSandbox:
     | Awaited<ReturnType<typeof createSessionSandbox>>
@@ -357,6 +358,20 @@ export const convertExuluToolsToAiSdkTools = async (
   const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });
   if (parseDocumentTool && !disabled.has(parseDocumentTool.id)) {
     currentTools.push(parseDocumentTool);
+  }
+
+  // Project sessions only, and only when the SPEAKER may write to the project (the session
+  // owner may have been granted less than the colleague continuing the session).
+  const saveToProjectTool = createSaveToProjectTool({
+    sessionID,
+    user,
+    req,
+    exuluConfig,
+    ownerId: sessionOwnerId,
+    project: turnProject,
+  });
+  if (saveToProjectTool && !disabled.has(saveToProjectTool.id)) {
+    currentTools.push(saveToProjectTool);
   }
 
   const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });

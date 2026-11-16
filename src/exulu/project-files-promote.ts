@@ -68,10 +68,17 @@ export async function promoteSessionFiles(args: {
     return { promoted: [], rejected, clashes: [] };
   }
 
+  // Per copy, not per batch: a failure midway must not lose track of what already
+  // landed in the project, or the caller would report a clean failure for a half-done batch.
   const promoted: PromoteResult["promoted"] = [];
   for (const a of plan.accepted) {
-    await args.s3.copy(a.sourceKey, a.destKey);
-    promoted.push({ key: a.destKey, name: a.name });
+    try {
+      await args.s3.copy(a.sourceKey, a.destKey);
+      promoted.push({ key: a.destKey, name: a.name });
+    } catch (err) {
+      console.error("[PROJECT-FILES] copy failed", a.sourceKey, err);
+      rejected.push({ key: a.sourceKey, reason: "Copying the file into the project failed." });
+    }
   }
   return { promoted, rejected, clashes: [] };
 }

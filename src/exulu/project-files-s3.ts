@@ -1,7 +1,7 @@
 import { createOriginResolver, type FileOrigin } from "./file-origin.ts";
 import {
   copyS3Object,
-  getS3ObjectMetadata,
+  getS3ObjectMetadataStrict,
   getS3ObjectSize,
   listS3ObjectsByPrefix,
 } from "../uppy/index.ts";
@@ -20,7 +20,7 @@ export function getOriginResolver(config: ExuluConfig): (f: {
 }) => Promise<FileOrigin> {
   let r = resolvers.get(config);
   if (!r) {
-    r = createOriginResolver((key) => getS3ObjectMetadata(key, config));
+    r = createOriginResolver((key) => getS3ObjectMetadataStrict(key, config));
     resolvers.set(config, r);
   }
   return r;

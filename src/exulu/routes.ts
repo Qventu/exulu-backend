@@ -102,7 +102,7 @@ import { transcribeAudio,
 import { transcriptionClient } from "./transcription/client.ts";
 import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts";
 import { registerTranscriptExportRoute } from "./transcription/export-route.ts";
-import { registerProjectFileRoutes } from "./project-file-routes.ts";
+import { registerProjectFileRoutes, registerProjectFileRoutesUnconfigured } from "./project-file-routes.ts";
 import { listFilesWithOrigin, makeLoadAuthedProject } from "./project-file-handlers.ts";
 import { hasProjectAccess } from "./project-access.ts";
 import { createPromoteS3, getOriginResolver } from "./project-files-s3.ts";
@@ -5149,6 +5149,8 @@ export const createExpressRoutes = async (
       previewPdf: (key, etag) => getPdfPreviewBytes({ sourceKey: key, etag, config: fileConfig }),
       isPreviewError: (err) => err instanceof PreviewRenderError,
     });
+  } else {
+    registerProjectFileRoutesUnconfigured(app);
   }
 
   // ─── End Session Files ────────────────────────────────────────────────────────

@@ -232,6 +232,26 @@ describe("document tools get the access-checked project", () => {
   });
 });
 
+describe("save_to_project registration", () => {
+  const run = (resolved: unknown, user: unknown = { id: 7 }) =>
+    convertExuluToolsToAiSdkTools(
+      [], [], [], [], [], undefined, user as never, { fileUploads: { s3Bucket: "b" } } as never,
+      "session-1", undefined, "raw-project", undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, resolved as never,
+    );
+  it("is registered, with approval, when the speaker can write to the project", async () => {
+    const tools = await run({ id: "p1", name: "Alpha", speakerCanWrite: true });
+    expect(Object.keys(tools)).toContain("save_to_project");
+    const needs = (tools.save_to_project as any).needsApproval;
+    expect(await needs({}, { toolCallId: "c1", messages: [] })).toBe(true);
+  });
+  it("is absent without a project, for a reader, and for a guest speaker", async () => {
+    expect(Object.keys(await run(null))).not.toContain("save_to_project");
+    expect(Object.keys(await run({ id: "p1", name: "Alpha", speakerCanWrite: false }))).not.toContain("save_to_project");
+    expect(Object.keys(await run({ id: "p1", name: "Alpha", speakerCanWrite: true }, null))).not.toContain("save_to_project");
+  });
+});
+
 describe("knowledge base write tool injection", () => {
   const kbContext = {
     id: "products",

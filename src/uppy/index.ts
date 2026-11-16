@@ -391,6 +391,42 @@ export const getS3ObjectMetadata = async (
   }
 };
 
+/** True for the error shapes the SDK throws when an object does not exist. */
+export function isS3NotFound(err: unknown): boolean {
+  const e = err as { name?: string; Code?: string; $metadata?: { httpStatusCode?: number } } | null;
+  return (
+    e?.$metadata?.httpStatusCode === 404 ||
+    e?.name === "NotFound" ||
+    e?.name === "NoSuchKey" ||
+    e?.Code === "NotFound" ||
+    e?.Code === "NoSuchKey"
+  );
+}
+
+/**
+ * Like getS3ObjectMetadata, but only a missing object yields undefined; any other failure
+ * (network, throttling, credentials) throws so a caller that memoises the answer does not
+ * cache a transient error as if it were the object's real metadata.
+ */
+export const getS3ObjectMetadataStrict = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<Record<string, string> | undefined> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  try {
+    const response = await client.send(
+      new HeadObjectCommand({ Bucket: config.fileUploads.s3Bucket, Key: key }),
+    );
+    return response.Metadata;
+  } catch (err) {
+    if (isS3NotFound(err)) return undefined;
+    throw err;
+  }
+};
+
 /**
  * The generic /s3/* routes only check the `user_<id>` segment, so a key without
  * one (project files) would be served to any authenticated user. Project files

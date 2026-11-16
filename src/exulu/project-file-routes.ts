@@ -97,22 +97,27 @@ export function registerProjectFileRoutes(app: Express, deps: ProjectFileRouteDe
       res.status(400).json({ detail: "Missing contentType in request body." });
       return;
     }
-    const objects = await listObjects(projectId);
-    const decision = decideUploadSign({
-      name: safeName,
-      overwrite: overwrite === true,
-      existing: objects.map((o) => ({
-        name: o.key.split("/").pop() ?? o.key,
-        lastModified: o.lastModified,
-      })),
-    });
-    if (!decision.ok) {
-      res.status(decision.status).json(decision.body);
-      return;
+    try {
+      const objects = await listObjects(projectId);
+      const decision = decideUploadSign({
+        name: safeName,
+        overwrite: overwrite === true,
+        existing: objects.map((o) => ({
+          name: o.key.split("/").pop() ?? o.key,
+          lastModified: o.lastModified,
+        })),
+      });
+      if (!decision.ok) {
+        res.status(decision.status).json(decision.body);
+        return;
+      }
+      const { fullProjectPrefix } = projectFilePrefix(projectId, deps.s3prefix);
+      const key = `${fullProjectPrefix}${safeName}`;
+      res.json({ uploadUrl: await deps.s3.signUpload(key, contentType), key });
+    } catch (err) {
+      console.error("[PROJECT-FILES] upload-sign failed", err);
+      res.status(500).json({ detail: "Failed to sign the upload." });
     }
-    const { fullProjectPrefix } = projectFilePrefix(projectId, deps.s3prefix);
-    const key = `${fullProjectPrefix}${safeName}`;
-    res.json({ uploadUrl: await deps.s3.signUpload(key, contentType), key });
   });
 
   app.delete("/projects/:projectId/files", async (req: Request, res: Response) => {
@@ -206,4 +211,19 @@ export function registerProjectFileRoutes(app: Express, deps: ProjectFileRouteDe
       res.status(500).json({ detail: "Failed to copy files into the project." });
     }
   });
+}
+
+/**
+ * File uploads are not configured: answer like the session-file routes do in that case
+ * (500 + detail) instead of Express's anonymous 404, so the UI and operators see why.
+ */
+export function registerProjectFileRoutesUnconfigured(app: Express) {
+  const handler = (_req: Request, res: Response) => {
+    res.status(500).json({ detail: "File uploads are not configured." });
+  };
+  app.get("/projects/:projectId/files", handler);
+  app.post("/projects/:projectId/files/upload-sign", handler);
+  app.delete("/projects/:projectId/files", handler);
+  app.get("/projects/:projectId/file/preview-pdf", handler);
+  app.post("/projects/:projectId/files/promote", handler);
 }

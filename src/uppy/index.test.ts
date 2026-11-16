@@ -4,6 +4,7 @@ import {
   copyS3Object,
   encodeS3KeyForCopySource,
   getS3ObjectMetadata,
+  getS3ObjectMetadataStrict,
   mayUseGenericS3Route,
 } from "./index";
 
@@ -106,6 +107,25 @@ describe("getS3ObjectMetadata", () => {
       .mockRejectedValueOnce(new Error("404"));
     expect(await getS3ObjectMetadata("k", cfg)).toEqual({ "exulu-origin": "agent" });
     expect(await getS3ObjectMetadata("k", cfg)).toBeUndefined();
+    send.mockRestore();
+  });
+});
+
+describe("getS3ObjectMetadataStrict", () => {
+  const cfg = {
+    fileUploads: { s3Bucket: "bkt", s3region: "r", s3key: "k", s3secret: "s" },
+  } as never;
+  test("undefined only for a missing object; other failures throw", async () => {
+    const send = jest
+      .spyOn(S3Client.prototype, "send")
+      .mockResolvedValueOnce({ Metadata: { a: "b" } } as never)
+      .mockRejectedValueOnce(Object.assign(new Error("nf"), { name: "NotFound" }))
+      .mockRejectedValueOnce(Object.assign(new Error("nf"), { $metadata: { httpStatusCode: 404 } }))
+      .mockRejectedValueOnce(Object.assign(new Error("slow down"), { name: "SlowDown" }));
+    expect(await getS3ObjectMetadataStrict("k", cfg)).toEqual({ a: "b" });
+    expect(await getS3ObjectMetadataStrict("k", cfg)).toBeUndefined();
+    expect(await getS3ObjectMetadataStrict("k", cfg)).toBeUndefined();
+    await expect(getS3ObjectMetadataStrict("k", cfg)).rejects.toThrow("slow down");
     send.mockRestore();
   });
 });

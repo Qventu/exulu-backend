@@ -327,6 +327,7 @@ export const generateSync = async ({
             projectId: project,
             ownerId: sessionOwnerId ?? user?.id,
             owner: user,
+            speaker: user,
         });
     }
 
@@ -534,7 +535,7 @@ export const generateSync = async ({
         The user can upload files to this session through a side panel in the chat UI. Any such
         file appears in your working directory by its original filename — list them with \`ls\` or
         read them with the readFile tool. Files you produce yourself (via writeFile or via shell
-        commands like \`node create_doc.js\`) live in the same place. ${sessionFilesScopeSentence(resolvedProject?.name)}
+        commands like \`node create_doc.js\`) live in the same place. ${sessionFilesScopeSentence(resolvedProject?.name, resolvedProject?.speakerCanWrite === true)}
       `
     if (session) {
         const listing = await loadSessionFileListing({
@@ -798,6 +799,7 @@ export const generateStream = async ({
             projectId: project,
             ownerId: sessionOwnerId ?? user?.id,
             owner: user,
+            speaker: user,
         });
 
         console.log("[EXULU] loading previous messages from session: " + session);
@@ -981,7 +983,7 @@ ${skillsList}
         The user can upload files to this session through a side panel in the chat UI. Any such
         file appears in your working directory by its original filename — list them with \`ls\` or
         read them with the readFile tool. Files you produce yourself (via writeFile or via shell
-        commands like \`node create_doc.js\`) live in the same place. ${sessionFilesScopeSentence(resolvedProject?.name)}
+        commands like \`node create_doc.js\`) live in the same place. ${sessionFilesScopeSentence(resolvedProject?.name, resolvedProject?.speakerCanWrite === true)}
 
         Note on large outputs: oversized tool outputs and large uploaded documents are automatically
         truncated in the conversation; the FULL content is saved as a session file (named in the
