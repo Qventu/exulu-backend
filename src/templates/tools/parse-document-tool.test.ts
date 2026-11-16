@@ -2,8 +2,23 @@ import { createParseDocumentTool, binaryDocumentBashHint } from "./parse-documen
 import type { ExuluConfig } from "@SRC/exulu/app";
 import type { User } from "@EXULU_TYPES/models/user";
 
+// In-memory stand-in for the bucket: source files and the derived text store share it.
+const bucket = new Map<string, { body: Buffer | string; lastModified: Date }>();
 jest.mock("@SRC/uppy", () => ({
-  getPresignedUrl: jest.fn().mockResolvedValue("https://s3.example/presigned"),
+  isS3NotFound: (e: { name?: string }) => e?.name === "NoSuchKey",
+  headS3ObjectExact: jest.fn(async (key: string) => (bucket.has(key) ? { etag: `"etag-${key}"` } : null)),
+  getS3ObjectBytes: jest.fn(async (key: string) => {
+    const obj = bucket.get(key);
+    if (!obj) throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+    return Buffer.from(obj.body);
+  }),
+  getS3ObjectTextExact: jest.fn(async (key: string) => {
+    const obj = bucket.get(key);
+    return obj ? { text: String(obj.body), lastModified: obj.lastModified } : null;
+  }),
+  putS3ObjectTextExact: jest.fn(async (key: string, text: string) => {
+    bucket.set(key, { body: text, lastModified: new Date() });
+  }),
 }));
 jest.mock("./document-render-helpers", () => ({
   pdfToText: jest.fn(),
@@ -11,16 +26,19 @@ jest.mock("./document-render-helpers", () => ({
   isLegacyOfficeFormat: jest.requireActual("./document-render-helpers").isLegacyOfficeFormat,
   convertLegacyOfficeToModern: jest.fn(),
 }));
+jest.mock("@SRC/exulu/attachment-text", () => ({ extractDocument: jest.fn() }));
 jest.mock("officeparser", () => ({
   parseOfficeAsync: jest.fn(),
 }));
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { getPresignedUrl } = require("@SRC/uppy") as { getPresignedUrl: jest.Mock };
+const uppy = require("@SRC/uppy") as { getS3ObjectBytes: jest.Mock; putS3ObjectTextExact: jest.Mock };
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { pdfToText, convertLegacyOfficeToModern } = require("./document-render-helpers") as {
   pdfToText: jest.Mock;
   convertLegacyOfficeToModern: jest.Mock;
 };
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { extractDocument } = require("@SRC/exulu/attachment-text") as { extractDocument: jest.Mock };
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { parseOfficeAsync } = require("officeparser") as { parseOfficeAsync: jest.Mock };
 
@@ -42,11 +60,18 @@ const runTool = (input: Record<string, unknown>): Promise<ParseResult> => {
   return (tool.tool!.execute as (i: unknown) => Promise<ParseResult>)(input);
 };
 
+const PDF_BYTES = Buffer.from([37, 80, 68, 70]); // "%PDF"
+const put = (key: string, body: Buffer = PDF_BYTES) => bucket.set(key, { body, lastModified: new Date() });
 beforeEach(() => {
-  global.fetch = jest.fn().mockResolvedValue({
-    ok: true,
-    arrayBuffer: async () => new Uint8Array([37, 80, 68, 70]).buffer, // "%PDF"
-  } as never) as never;
+  bucket.clear();
+  put("exulu/user_7/sessions/s1/report.pdf");
+  put("exulu/user_7/sessions/s1/scan.pdf");
+  put("exulu/user_7/sessions/s1/long.pdf");
+  put("exulu/user_7/sessions/s1/notes.docx");
+  put("exulu/user_7/sessions/s1/FU_Preise.xls");
+  put("exulu/user_7/sessions/s1/1200_LV-Auszug.pdf");
+  put("exulu/user_11/sessions/s1/Anfrage 04072.pdf");
+  put("exulu/projects/p1/files/a.pdf");
 });
 afterEach(() => jest.clearAllMocks());
 
@@ -71,11 +96,7 @@ it("extracts PDF text with page markers from form-feed separators", async () => 
     "--- page 1 ---\nfirst page body with plenty of extractable text\n--- page 2 ---\nsecond page body with plenty of extractable text\n--- page 3 ---\nthird page body with plenty of extractable text",
   );
   expect(result.totalPages).toBe(3);
-  expect(getPresignedUrl).toHaveBeenCalledWith(
-    "bucket",
-    "exulu/user_7/sessions/s1/report.pdf",
-    exuluConfig,
-  );
+  expect(uppy.getS3ObjectBytes).toHaveBeenCalledWith("exulu/user_7/sessions/s1/report.pdf", exuluConfig);
 });
 
 it("filters to a requested page range", async () => {
@@ -141,7 +162,6 @@ it("pages long output with offset/limit and caps at 16k chars", async () => {
 });
 
 it("surfaces fetch failures as error objects, not throws", async () => {
-  (global.fetch as jest.Mock).mockResolvedValue({ ok: false, status: 404 } as never);
   const result = await runTool({ filename: "missing.pdf" });
   expect(result.error).toMatch(/404/);
 });
@@ -208,11 +228,94 @@ describe("binaryDocumentBashHint — nudges agents off grep/cat against binary d
   });
 });
 
+describe("stored text", () => {
+  const PAGES =
+    "page one full body of searchable text\fpage two full body of searchable text\fpage three full body of searchable text\fpage four full body of searchable text";
+
+  it("two calls for one file extract once, and pages/lines are applied to the stored text", async () => {
+    pdfToText.mockResolvedValue(PAGES);
+    const first = await runTool({ filename: "report.pdf", pages: "2-3" });
+    const second = await runTool({ filename: "report.pdf", pages: "2-3" });
+    expect(pdfToText).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(first);
+    expect(second.content).toBe(
+      "--- page 2 ---\npage two full body of searchable text\n--- page 3 ---\npage three full body of searchable text",
+    );
+    expect(second.totalPages).toBe(4);
+    const whole = await runTool({ filename: "report.pdf", offset: 3, limit: 2 });
+    expect(pdfToText).toHaveBeenCalledTimes(1);
+    expect(whole.content).toBe("--- page 2 ---\npage two full body of searchable text");
+    expect(whole.totalLines).toBe(8);
+  });
+
+  it("does not download the source again on a hit", async () => {
+    pdfToText.mockResolvedValue(PAGES);
+    await runTool({ filename: "report.pdf" });
+    uppy.getS3ObjectBytes.mockClear();
+    await runTool({ filename: "report.pdf" });
+    expect(uppy.getS3ObjectBytes).not.toHaveBeenCalled();
+  });
+
+  it("rejects a page range beyond the document on a hit too", async () => {
+    pdfToText.mockResolvedValue(PAGES);
+    await runTool({ filename: "report.pdf" });
+    expect((await runTool({ filename: "report.pdf", pages: "9-12" })).error).toMatch(/only 4 pages/);
+  });
+
+  it("does not store a refused scan", async () => {
+    pdfToText.mockResolvedValue(" \f  \f ");
+    expect((await runTool({ filename: "scan.pdf" })).error).toMatch(/no extractable text/i);
+    expect((await runTool({ filename: "scan.pdf" })).error).toMatch(/no extractable text/i);
+    expect(pdfToText).toHaveBeenCalledTimes(2);
+    expect(uppy.putS3ObjectTextExact).not.toHaveBeenCalled();
+  });
+
+  describe("with a document processor", () => {
+    const withProcessor = {
+      fileUploads: exuluConfig.fileUploads,
+      attachments: { documentProcessor: { processor: { name: "mistral" } } },
+    } as unknown as ExuluConfig;
+    const run = (input: Record<string, unknown>) =>
+      (createParseDocumentTool({ sessionID: "s1", user, exuluConfig: withProcessor })!.tool!.execute as (i: unknown) => Promise<ParseResult>)(input);
+
+    it("stores processor output with page markers", async () => {
+      extractDocument.mockResolvedValue({
+        engine: "document-processor",
+        text: "",
+        pages: [{ page: 1, text: "alpha" }, { page: 2, text: "beta" }],
+      });
+      const first = await run({ filename: "report.pdf", pages: "2" });
+      const second = await run({ filename: "report.pdf", pages: "2" });
+      expect(first.content).toBe("--- page 2 ---\nbeta");
+      expect(second).toEqual(first);
+      expect(extractDocument).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not store the officeparser fallback", async () => {
+      extractDocument.mockResolvedValue({ engine: "officeparser", text: "x", pages: [{ page: 1, text: "x" }] });
+      pdfToText.mockResolvedValue(PAGES);
+      await run({ filename: "report.pdf" });
+      await run({ filename: "report.pdf" });
+      expect(pdfToText).toHaveBeenCalledTimes(2);
+      expect(uppy.putS3ObjectTextExact).not.toHaveBeenCalled();
+    });
+  });
+
+  it("stores the text under the derived prefix with the readable extractor label", async () => {
+    parseOfficeAsync.mockResolvedValue("word document body");
+    await runTool({ filename: "notes.docx" });
+    const [key, text, metadata] = uppy.putS3ObjectTextExact.mock.calls[0];
+    expect(key).toMatch(/^exulu\/derived\/content\/[0-9a-f]{64}\/[0-9a-f]{16}\.md$/);
+    expect(text).toBe("word document body");
+    expect(metadata).toEqual({ "exulu-extractor": "officeparser@1" });
+  });
+});
+
 it("addresses the session file under the session owner's prefix when an owner is given", async () => {
   pdfToText.mockResolvedValue("Some perfectly readable page content with enough characters.\f");
   const tool = createParseDocumentTool({ sessionID: "s1", user, exuluConfig, ownerId: 11 })!;
   await (tool.tool!.execute as (i: unknown) => Promise<ParseResult>)({ filename: "Anfrage 04072.pdf" });
-  expect(getPresignedUrl).toHaveBeenCalledWith("bucket", "exulu/user_11/sessions/s1/Anfrage 04072.pdf", exuluConfig);
+  expect(uppy.getS3ObjectBytes).toHaveBeenCalledWith("exulu/user_11/sessions/s1/Anfrage 04072.pdf", exuluConfig);
 });
 
 describe("project files", () => {
@@ -224,12 +327,12 @@ describe("project files", () => {
     pdfToText.mockResolvedValue("a page body with plenty of extractable text for the detector");
     const result = await runWith("p1", { filename: "project/a.pdf" });
     expect(result.error).toBeUndefined();
-    expect(getPresignedUrl).toHaveBeenCalledWith("bucket", "exulu/projects/p1/files/a.pdf", exuluConfig);
+    expect(uppy.getS3ObjectBytes).toHaveBeenCalledWith("exulu/projects/p1/files/a.pdf", exuluConfig);
   });
   it("refuses project/<name> without a resolved project", async () => {
     const result = await runWith(null, { filename: "project/a.pdf" });
     expect(result.error).toBe("This session has no project files.");
-    expect(getPresignedUrl).not.toHaveBeenCalled();
+    expect(uppy.getS3ObjectBytes).not.toHaveBeenCalled();
   });
   it("tells the model how project files are addressed", () => {
     const tool = createParseDocumentTool({ sessionID: "s1", user, exuluConfig })!;

@@ -2,12 +2,14 @@ import { z } from "zod";
 import { extname } from "node:path";
 import { parseOfficeAsync } from "officeparser";
 import { ExuluTool } from "@SRC/exulu/tool";
-import { getPresignedUrl } from "@SRC/uppy";
+import { isS3NotFound } from "@SRC/uppy";
 import type { ExuluConfig } from "@SRC/exulu/app";
 import type { User } from "@EXULU_TYPES/models/user";
 import { convertLegacyOfficeToModern, isLegacyOfficeFormat, pdfToText } from "./document-render-helpers";
 import { resolveFileKey } from "./resolve-file-key";
 import { extractDocument } from "@SRC/exulu/attachment-text";
+import { createStoreIo, readThroughDocument, type Extracted, type StoreIo } from "@SRC/exulu/document-cache/store";
+import { documentCacheDays, extractorFingerprint } from "@SRC/exulu/document-cache/keys";
 
 const DEFAULT_LIMIT = 250;
 const MAX_CONTENT_CHARS = 16_000;
@@ -48,6 +50,28 @@ export function looksLikeGarbledTextLayer(text: string): boolean {
 const OFFICE_EXTENSIONS = new Set([
   ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".odt", ".ods", ".odp", ".rtf",
 ]);
+
+/** A result the model must see as a tool error; never stored, never retried as a failure. */
+class ExtractionRefusal extends Error {}
+
+/**
+ * Keeps the pages in `range` of a text with `--- page N ---` markers, exactly as the
+ * extraction would have joined them. Text without markers is returned whole.
+ */
+export function selectPages(fullText: string, range: [number, number]): string {
+  const parts = fullText.split(/^(?=--- page \d+ ---$)/m);
+  if (parts.length < 2 && !/^--- page \d+ ---$/m.test(fullText)) return fullText;
+  const kept: string[] = [];
+  parts.forEach((part, i) => {
+    const m = /^--- page (\d+) ---$/m.exec(part);
+    if (!m) return;
+    const page = Number(m[1]);
+    if (page < range[0] || page > range[1]) return;
+    // Every part but the last still carries the "\n" that joined it to the next page.
+    kept.push(i < parts.length - 1 ? part.replace(/\n$/, "") : part);
+  });
+  return kept.join("\n");
+}
 
 const pagesPattern = /^(\d+)(?:-(\d+))?$/;
 
@@ -150,76 +174,103 @@ export const createParseDocumentTool = ({
 
     const uploads = exuluConfig.fileUploads!;
     try {
-      const url = await getPresignedUrl(uploads.s3Bucket!, key, exuluConfig);
-      const res = await fetch(url);
-      if (!res.ok) {
-        return { error: `Could not read session file "${safeName}" (status ${res.status}). Check the exact file name.` };
-      }
-      const bytes = Buffer.from(await res.arrayBuffer());
+      const baseIo = createStoreIo(exuluConfig);
+      const io: StoreIo = {
+        ...baseIo,
+        getBytes: async (sourceKey) => {
+          try {
+            return await baseIo.getBytes(sourceKey);
+          } catch (err) {
+            if (isS3NotFound(err)) {
+              throw new ExtractionRefusal(
+                `Could not read session file "${safeName}" (status 404). Check the exact file name.`,
+              );
+            }
+            throw err;
+          }
+        },
+      };
 
-      let fullText: string | undefined;
-      let totalPages: number | undefined;
-
-      // An instance with attachments.documentProcessor (OCR + VLM, the engine
-      // the knowledge bases use) reads scans and images inside pages too; the
-      // text-layer paths below stay as the fallback.
-      if (exuluConfig.attachments?.documentProcessor) {
-        const extracted = await extractDocument({ bytes, filename: safeName, exuluConfig, attribution: { user } });
-        if (extracted.tooLong) {
-          return { error: extracted.text };
+      /** The whole document as marked text: processor path, then pdftotext / Office. */
+      const extractFull = async (bytes: Buffer): Promise<Extracted> => {
+        // An instance with attachments.documentProcessor (OCR + VLM, the engine
+        // the knowledge bases use) reads scans and images inside pages too; the
+        // text-layer paths below stay as the fallback.
+        let processorFellBack = false;
+        if (exuluConfig.attachments?.documentProcessor) {
+          const extracted = await extractDocument({ bytes, filename: safeName, exuluConfig, attribution: { user } });
+          if (extracted.tooLong) {
+            throw new ExtractionRefusal(extracted.text);
+          }
+          if (extracted.engine === "document-processor") {
+            const multiPage = extracted.pages.length > 1;
+            return {
+              totalPages: extracted.pages.length,
+              storable: true,
+              text: extracted.pages
+                .map(({ page, text }) => (multiPage ? `--- page ${page} ---\n${text.trim()}` : text.trim()))
+                .join("\n"),
+            };
+          }
+          // The processor gave nothing usable: what follows is the text-layer fallback,
+          // which must not stand in for the processor's output in the store.
+          processorFellBack = extracted.engine === "officeparser";
         }
-        if (extracted.engine === "document-processor") {
-          totalPages = extracted.pages.length;
-          const range = resolvePageRange(pages, totalPages, safeName);
-          if (!Array.isArray(range)) return range;
-          const multiPage = totalPages > 1;
-          fullText = extracted.pages
-            .filter(({ page }) => page >= range[0] && page <= range[1])
-            .map(({ page, text }) => (multiPage ? `--- page ${page} ---\n${text.trim()}` : text.trim()))
-            .join("\n");
-        }
-      }
 
-      if (fullText === undefined && ext === ".pdf") {
-        const raw = await pdfToText(bytes);
-        const pageTexts = raw.replace(/\f$/, "").split("\f");
-        totalPages = pageTexts.length;
-        const nonWhitespace = raw.replace(/\s/g, "").length;
-        if (looksLikeGarbledTextLayer(raw)) {
-          return {
-            error:
+        if (ext === ".pdf") {
+          const raw = await pdfToText(bytes);
+          const pageTexts = raw.replace(/\f$/, "").split("\f");
+          const pageCount = pageTexts.length;
+          const nonWhitespace = raw.replace(/\s/g, "").length;
+          if (looksLikeGarbledTextLayer(raw)) {
+            throw new ExtractionRefusal(
               `"${safeName}" has a text layer that is unreadable (its font encoding maps glyphs to the wrong ` +
-              "characters, so words and especially numbers come out wrong or vanish). Do not use extracted " +
-              "text from this file. Use view_document_page to read the pages visually, or suggest the user add " +
-              "the document to a knowledge base with a document processor for full OCR.",
-          };
-        }
-        if (nonWhitespace < totalPages * MIN_CHARS_PER_PAGE) {
-          return {
-            error:
+                "characters, so words and especially numbers come out wrong or vanish). Do not use extracted " +
+                "text from this file. Use view_document_page to read the pages visually, or suggest the user add " +
+                "the document to a knowledge base with a document processor for full OCR.",
+            );
+          }
+          if (nonWhitespace < pageCount * MIN_CHARS_PER_PAGE) {
+            throw new ExtractionRefusal(
               `"${safeName}" has no extractable text layer (likely a scan or image-based PDF). ` +
-              "Use view_document_page to look at pages visually, or suggest the user add the document " +
-              "to a knowledge base with a document processor for full OCR.",
+                "Use view_document_page to look at pages visually, or suggest the user add the document " +
+                "to a knowledge base with a document processor for full OCR.",
+            );
+          }
+          return {
+            totalPages: pageCount,
+            storable: !processorFellBack,
+            text: pageTexts.map((text, i) => `--- page ${i + 1} ---\n${text.trim()}`).join("\n"),
           };
         }
-        const range = resolvePageRange(pages, totalPages, safeName);
-        if (!Array.isArray(range)) return range;
-        fullText = pageTexts
-          .map((text, i) => ({ page: i + 1, text }))
-          .filter(({ page }) => page >= range[0] && page <= range[1])
-          .map(({ page, text }) => `--- page ${page} ---\n${text.trim()}`)
-          .join("\n");
-      } else if (fullText === undefined) {
+
         // officeparser only reads the modern XML formats; .doc/.xls/.ppt/.rtf
         // need converting first even though OFFICE_EXTENSIONS accepts them.
-        const officeBytes = isLegacyOfficeFormat(ext)
-          ? await convertLegacyOfficeToModern(bytes, ext)
-          : bytes;
-        const extracted = await parseOfficeAsync(officeBytes, {
+        const officeBytes = isLegacyOfficeFormat(ext) ? await convertLegacyOfficeToModern(bytes, ext) : bytes;
+        const parsed = await parseOfficeAsync(officeBytes, {
           outputErrorToConsole: false,
           newlineDelimiter: "\n",
         });
-        fullText = String(extracted);
+        return { text: String(parsed), storable: !processorFellBack };
+      };
+
+      const stored = await readThroughDocument({
+        io,
+        bucket: uploads.s3Bucket!,
+        sourceKey: key,
+        s3prefix: uploads.s3prefix,
+        fingerprint: extractorFingerprint({ filename: safeName, exuluConfig }),
+        cacheDays: documentCacheDays(),
+        extract: extractFull,
+      });
+
+      let fullText = stored.text;
+      // Single-page processor output carries no markers, so a stored copy has no page count.
+      const totalPages = stored.totalPages ?? (ext === ".pdf" ? 1 : undefined);
+      if (ext === ".pdf" && totalPages !== undefined) {
+        const range = resolvePageRange(pages, totalPages, safeName);
+        if (!Array.isArray(range)) return range;
+        if (pages) fullText = selectPages(fullText, range);
       }
 
       const lines = (fullText ?? "").split("\n");
@@ -241,6 +292,7 @@ export const createParseDocumentTool = ({
         linesReturned,
       };
     } catch (err) {
+      if (err instanceof ExtractionRefusal) return { error: err.message };
       return { error: `Failed to parse "${safeName}": ${err instanceof Error ? err.message : "unknown error"}` };
     }
   };
@@ -251,8 +303,9 @@ export const createParseDocumentTool = ({
     needsApproval: false,
     description:
       "Extract the text of an uploaded PDF or Office document from this session's files, with " +
-      '"--- page N ---" markers for PDFs so you can locate content by page. Free and fast (no OCR): ' +
-      "works only on documents with a real text layer. To SEE a page or an image inside a document, " +
+      '"--- page N ---" markers for PDFs so you can locate content by page. Results are ' +
+      "stored and reused, so reading the same document again is fast, but the first read of a long document " +
+      "can take minutes. To SEE a page or an image inside a document, " +
       "use view_document_page." +
       " Files of the session's project are addressed as `project/<name>` and are read-only.",
     inputSchema: z.object({

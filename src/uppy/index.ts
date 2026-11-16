@@ -590,6 +590,85 @@ export const getS3ObjectBytes = async (
 };
 
 /**
+ * Read a text object by its exact key (no user or general prefix is added) together with
+ * its last-modified time. A missing object yields null; other errors throw.
+ */
+export const getS3ObjectTextExact = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<{ text: string; lastModified: Date } | null> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  try {
+    const response = await client.send(
+      new GetObjectCommand({ Bucket: config.fileUploads.s3Bucket, Key: key }),
+    );
+    if (!response.Body) return null;
+    return {
+      text: await response.Body.transformToString("utf-8"),
+      lastModified: response.LastModified ?? new Date(0),
+    };
+  } catch (err) {
+    if (isS3NotFound(err)) return null;
+    throw err;
+  }
+};
+
+/** HeadObject by exact key. A missing object yields null; other errors throw. */
+export const headS3ObjectExact = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<{ etag: string | null } | null> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  try {
+    const response = await client.send(
+      new HeadObjectCommand({ Bucket: config.fileUploads.s3Bucket, Key: key }),
+    );
+    return { etag: response.ETag ?? null };
+  } catch (err) {
+    if (isS3NotFound(err)) return null;
+    throw err;
+  }
+};
+
+/**
+ * Write a text object at exactly `key`: unlike uploadFile, no `user_<id>` segment and no
+ * general prefix is added. Metadata values that are not printable ASCII are URL-encoded.
+ */
+export const putS3ObjectTextExact = async (
+  key: string,
+  text: string,
+  metadata: Record<string, string>,
+  config: ExuluConfig,
+  contentType = "text/markdown; charset=utf-8",
+): Promise<void> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const body = Buffer.from(text, "utf-8");
+  const safeMetadata: Record<string, string> = {};
+  for (const [k, v] of Object.entries(metadata)) {
+    safeMetadata[k] = /^[\x20-\x7e]*$/.test(v) ? v : encodeURIComponent(v);
+  }
+  await client.send(
+    new PutObjectCommand({
+      Bucket: config.fileUploads.s3Bucket,
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+      ContentLength: body.byteLength,
+      Metadata: safeMetadata,
+    }),
+  );
+};
+
+/**
  * Delete a single object from S3 by its full key (no bucket prefix).
  */
 export const deleteS3Object = async (
