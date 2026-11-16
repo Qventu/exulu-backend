@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, lstat } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, lstat, utimes } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,7 @@ import {
   syncProjectDir,
   projectSyncMarkerPath,
   resolveSandboxProjectId,
+  removeTreeSafely,
 } from "./project-sync";
 
 const list = listS3ObjectsByPrefix as jest.Mock;
@@ -280,6 +281,51 @@ describe("syncProjectDir", () => {
       const p = join(root, d);
       if (existsSync(p)) expect(await readdir(p)).toEqual([]);
     }
+  });
+
+  it("removeTreeSafely refuses anything outside the two helper roots", async () => {
+    const err = jest.spyOn(console, "error").mockImplementation(() => {});
+    await writeFile(join(sessionDir, "keep.txt"), "k");
+    for (const p of [
+      sessionDir,
+      join(sessionDir, "keep.txt"),
+      join(root, ".project-trash"),
+      join(root, ".project-trash", "..", "sess-1"),
+      join(root, ".project-trashX", "a"),
+      "/",
+    ]) {
+      expect(await removeTreeSafely(p, sessionDir)).toBe(false);
+    }
+    err.mockRestore();
+    expect(await readFile(join(sessionDir, "keep.txt"), "utf8")).toBe("k");
+  });
+
+  it("removeTreeSafely deletes a trash dir holding a link without touching the link's target", async () => {
+    const victim = await makeVictim();
+    const before = await snapshotTree(victim);
+    const trash = join(root, ".project-trash", "sess-1-abc");
+    await mkdir(join(trash, "nested"), { recursive: true });
+    await writeFile(join(trash, "f.txt"), "f");
+    await symlink(victim, join(trash, "link"));
+    await symlink(victim, join(trash, "nested", "link2"));
+    expect(await removeTreeSafely(trash, sessionDir)).toBe(true);
+    expect(existsSync(trash)).toBe(false);
+    expect(await snapshotTree(victim)).toEqual(before);
+  });
+
+  it("sweeps this session's trash older than a day on the next sync", async () => {
+    const old = join(root, ".project-trash", "sess-1-old");
+    const fresh = join(root, ".project-trash", "sess-1-fresh");
+    const other = join(root, ".project-trash", "sess-2-old");
+    for (const d of [old, fresh, other]) await mkdir(d, { recursive: true });
+    const twoDaysAgo = new Date(Date.now() - 2 * 86400_000);
+    await utimes(old, twoDaysAgo, twoDaysAgo);
+    await utimes(other, twoDaysAgo, twoDaysAgo);
+    list.mockResolvedValue([]);
+    await syncProjectDir({ sessionDir, projectId: "p1", config });
+    expect(existsSync(old)).toBe(false);
+    expect(existsSync(fresh)).toBe(true);
+    expect(existsSync(other)).toBe(true);
   });
 
   it("keeps the marker outside the session directory, so the sandbox cannot write it", () => {

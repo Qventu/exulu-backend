@@ -1,6 +1,8 @@
 import { lstat, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { listS3ObjectsByPrefix, getS3ObjectBytes } from '@SRC/uppy/index.ts'
 import { PROJECT_DIR, projectFilePrefix } from '@SRC/exulu/project-files.ts'
 import { hasProjectAccess } from '@SRC/exulu/project-access.ts'
@@ -53,8 +55,62 @@ const isFlatName = (name: string) => !!name && !name.includes('/') && !name.incl
  * sandbox policy only allows writes inside `sessionDir`, and the leading dot
  * keeps the names apart from session ids (uuids).
  */
-const helperPath = (sessionDir: string, kind: '.project-staging' | '.project-trash') =>
-    join(dirname(sessionDir), kind, `${basename(sessionDir)}-${randomBytes(8).toString('hex')}`)
+const HELPER_KINDS = ['.project-staging', '.project-trash'] as const
+type HelperKind = (typeof HELPER_KINDS)[number]
+const helperRoot = (sessionDir: string, kind: HelperKind) => join(dirname(sessionDir), kind)
+const helperPath = (sessionDir: string, kind: HelperKind) =>
+    join(helperRoot(sessionDir, kind), `${basename(sessionDir)}-${randomBytes(8).toString('hex')}`)
+
+const execFileAsync = promisify(execFile)
+
+/**
+ * Recursively remove a trash or staging directory. Node's fs.rm walks by path
+ * (lstat, then readdir/rmdir by name), so a process the agent left running inside
+ * the moved-away folder could swap a subdirectory for a link mid-walk and steer it
+ * outside. coreutils/BSD `rm` descends by file descriptor (openat/unlinkat, links
+ * never followed), so it is spawned directly, without a shell. Only paths strictly
+ * inside one of the two helper roots are accepted, never anything under a session
+ * dir. Failures are logged: a leftover trash dir is harmless and swept later.
+ */
+export async function removeTreeSafely(path: string, sessionDir: string): Promise<boolean> {
+    const target = resolve(path)
+    const inside = HELPER_KINDS.some((kind) => {
+        const root = resolve(helperRoot(sessionDir, kind))
+        return target.startsWith(root + sep) && !target.slice(root.length + 1).includes(sep)
+    })
+    if (!inside) {
+        console.error(`[SKILLS] Refusing to remove ${path}: not a project staging or trash directory.`)
+        return false
+    }
+    try {
+        await execFileAsync('rm', ['-rf', '--', target])
+        return true
+    } catch (err) {
+        console.error(`[SKILLS] Failed to remove ${target}; leaving it for a later sweep.`, err)
+        return false
+    }
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** Remove this session's helper dirs a crash or failed rm left behind more than a day ago. */
+async function sweepStaleHelpers(sessionDir: string): Promise<void> {
+    const prefix = `${basename(sessionDir)}-`
+    for (const kind of HELPER_KINDS) {
+        const root = helperRoot(sessionDir, kind)
+        let names: string[]
+        try {
+            names = await readdir(root)
+        } catch {
+            continue
+        }
+        for (const name of names) {
+            if (!name.startsWith(prefix)) continue
+            const st = await lstat(join(root, name)).catch(() => null)
+            if (st && Date.now() - st.mtimeMs > DAY_MS) await removeTreeSafely(join(root, name), sessionDir)
+        }
+    }
+}
 
 const errCode = (err: unknown) => (err as NodeJS.ErrnoException | undefined)?.code
 
@@ -75,12 +131,8 @@ async function moveAway(dir: string, sessionDir: string): Promise<string | null>
     }
 }
 
-/** Trash and staging live outside every session dir, so a recursive rm there is ours alone. */
-async function discard(path: string | null): Promise<void> {
-    if (!path) return
-    await rm(path, { recursive: true, force: true }).catch((err) => {
-        console.error(`[SKILLS] Failed to remove ${path}; continuing.`, err)
-    })
+async function discard(path: string | null, sessionDir: string): Promise<void> {
+    if (path) await removeTreeSafely(path, sessionDir)
 }
 
 /**
@@ -107,7 +159,7 @@ export async function syncProjectDir(args: {
 
     if (!projectId) {
         if (previous !== null) {
-            await discard(await moveAway(dir, sessionDir))
+            await discard(await moveAway(dir, sessionDir), sessionDir)
             await clearProjectSyncMarker(sessionDir)
         }
         return
@@ -134,6 +186,8 @@ export async function syncProjectDir(args: {
         console.error(`[SKILLS] Failed to list project files for project ${projectId}; keeping the local copy.`, err)
         return
     }
+
+    await sweepStaleHelpers(sessionDir)
 
     await mkdir(dirname(projectSyncMarkerPath(sessionDir)), { recursive: true })
     // Written before anything moves, so a crash halfway still lets a later detach clean up.
@@ -202,8 +256,8 @@ export async function syncProjectDir(args: {
     } catch (err) {
         console.error(`[SKILLS] Project sync failed for project ${projectId}; continuing.`, err)
     } finally {
-        if (!installed) await discard(staging)
-        for (const t of trashes) await discard(t)
+        if (!installed) await discard(staging, sessionDir)
+        for (const t of trashes) await discard(t, sessionDir)
     }
 }
 
