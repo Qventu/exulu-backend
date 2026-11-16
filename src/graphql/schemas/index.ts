@@ -42,6 +42,7 @@ import { exuluApp } from "@SRC/exulu/app/singleton";
 import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
 import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
 import { cancelRoutineRunRow, casJobResultState, deleteRoutineRunRow, parseRunMetadata } from "@SRC/exulu/routines/run-state.ts";
+import { guardRoutineWorkStatusWrites } from "@SRC/exulu/routines/work-status-save.ts";
 import { applyRoutineRunFilters, mapRoutineRunRow } from "@SRC/exulu/routines/runs-query.ts";
 import { workflowTemplatesSchema } from "@EE/schemas";
 import { checkLicense } from "@EE/entitlements.ts";
@@ -2274,6 +2275,9 @@ type EmbeddingModelOption {
       .count("* as count");
     return Number(rows[0]?.count ?? 0);
   };
+
+  // Reject an invalid work_statuses config before the generic write runs.
+  guardRoutineWorkStatusWrites(resolvers.Mutation);
 
   resolvers.Mutation["cancelRoutineRun"] = async (_, args, context) => {
     const user = context.user;

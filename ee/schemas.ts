@@ -351,6 +351,23 @@ export const jobResultsSchema: ExuluTableDefinition = {
             name: "workflow",
             type: "text",
         },
+        // Work status of a routine run — the fachliche status people work
+        // with (spec 2026-11-16-routine-work-status-design), separate from
+        // the technical `state`. A key from the routine's work_statuses.
+        {
+            name: "work_status",
+            type: "text",
+            index: true,
+        },
+        {
+            name: "work_status_updated_at",
+            type: "date",
+        },
+        // { kind: "user" | "tool" | "agent" | "default", id?, user? }
+        {
+            name: "work_status_updated_by",
+            type: "json",
+        },
     ],
 };
 
@@ -489,6 +506,12 @@ export const workflowTemplatesSchema: ExuluTableDefinition = {
         name: "auto_approve_tools",
         type: "boolean",
         default: false,
+      },
+      // Per-routine work statuses: { statuses: [{ key, label, color?, done? }], default }.
+      // null / empty list = feature off for this routine.
+      {
+        name: "work_statuses",
+        type: "json",
       },
       {
         name: "queue",
