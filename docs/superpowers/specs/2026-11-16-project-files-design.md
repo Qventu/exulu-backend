@@ -75,7 +75,7 @@ Within 1, two sub-decisions (my calls, see "Calls made"):
 ### Routes (`/projects/:projectId/files…`)
 
 - `GET` (read): same payload as the session listing plus `origin`.
-- `POST upload-sign` (write): body `{ filename, contentType, overwrite? }`. If the name exists and `overwrite` is not true → 409 with the existing file's `lastModified`. 50 MB per file enforced server-side by checking the object after upload is out of scope; the client cap stays, as for session files.
+- `POST upload-sign` (write): body `{ filename, contentType, overwrite? }`. If the name exists and `overwrite` is not true → 409 with the existing file's `lastModified`. The 50 MB per-file cap is enforced by the client only, exactly as for session files today; promote enforces its caps on the server.
 - `DELETE ?key=` (write), `GET preview-pdf` (read): as for sessions, with the project prefix check.
 - `POST promote` (write on the project **and** write on the session): body `{ sessionId, keys[], overwrite? }`; copies session files into the project folder, preserving metadata; same caps as adopt (20 keys, 50 MB total), same 409 rule. The source stays in the session.
 - Caps: a project folder holds at most 200 files; upload-sign and promote refuse beyond that.
@@ -115,7 +115,7 @@ Within 1, two sub-decisions (my calls, see "Calls made"):
 | Speaker in a shared session lacks project read | Project availability follows the **session owner** for sandbox content (one sandbox per session) but the **speaker** for `save_to_project`; listing routes always check the caller |
 | Two users upload the same name | Second gets 409 and a confirm; nothing is overwritten silently |
 | File deleted from the project while a session is open | Disappears from the sidebar on the next poll and from the sandbox on the next turn |
-| Project deleted | Its files are deleted with it (best effort, logged) |
+| Project deleted | The routes answer 404 from then on, so the files are unreachable. Removing the objects is a follow-up sweep; the generic delete mutation is not touched here |
 | Agent without sandbox | Tools still read project files (they read S3 directly) |
 | More than 25 project files | Prompt lists 25 newest and says how many more exist |
 
@@ -132,6 +132,14 @@ Within 1, two sub-decisions (my calls, see "Calls made"):
 - How `project/` is materialised in the sandbox (per-session copy excluded from write-back, or a shared read-only directory) as long as the behaviour above holds, including sandbox policy and path resolution.
 - Component split in the frontend, exact tint and icons within the existing design system (no violet).
 - Cache shape for origin metadata.
+
+## Settled after the builder check (2026-11-16)
+
+1. **Generic S3 routes.** `/s3/sign`, `/s3/params` and `/s3/multipart*` mint their own keys (`user_<id>/…` or `global/…`), so they cannot address `projects/`. `/s3/object` requires an API or internal key. `/s3/download`, `/s3/delete`, `/s3/list` get the `projects/` refusal described above. **`/s3/sts` is the exception and a pre-existing hole:** it hands any authenticated user credentials with `s3:PutObject` on the whole bucket (`src/uppy/index.ts:465-477`), which already lets a user overwrite other users' session files. This work narrows that policy to the caller's own `user_<id>/*` prefix (and `global/*` if the frontend needs it — verify the only consumer first). Without it the write side of project RBAC is decorative.
+2. **Promote and the session check.** Promote and `save_to_project` use `loadAuthedSession(…, "write")` as it is. The session's creator always passes, which covers the real case; the RBAC quirks only affect shared sessions and stay a follow-up.
+3. **Metadata on copy.** `copyS3Object` must keep metadata (`MetadataDirective: "COPY"`, the S3 default); a test pins that `exulu-origin` survives adopt and promote. Browser PUTs carry no metadata by design — absence means `user`.
+4. **`project/` in the sandbox.** The top-level name `project` is reserved in project sessions: nothing under it is written back, and whatever the agent puts there is replaced on the next sync. Deletion sync applies to `project/` only; session-file sync is unchanged. In sessions without a project the name has no special meaning.
+5. **Access helper first.** The first task proves `RBACResolver(db, "project", …)` plus the write-implies-read check against creator, granted reader, granted writer, outsider, `public` and no-licence, before any route builds on it.
 
 ## Testing
 
