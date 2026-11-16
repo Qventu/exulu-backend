@@ -40,11 +40,14 @@ jest.mock("node:fs/promises", () => {
 import { mkdtemp, readFile, rm, symlink, unlink, writeFile, mkdir, lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { uploadFile } from "@SRC/uppy/index.ts";
-import { createSessionSandbox } from "./create-sandbox";
-import { readRegularFileInside } from "./safe-fs";
+import { existsSync } from "node:fs";
+import { uploadFile, listS3ObjectsByPrefix, getS3ObjectBytes } from "@SRC/uppy/index.ts";
+import { createSessionSandbox, downloadKeyIntoSandbox, refreshSessionSkills } from "./create-sandbox";
+import { readRegularFileInside, writeFileInside } from "./safe-fs";
 
 const upload = uploadFile as jest.Mock;
+const list = listS3ObjectsByPrefix as jest.Mock;
+const bytes = getS3ObjectBytes as jest.Mock;
 const config = { fileUploads: { s3Bucket: "bucket" } } as any;
 const uploadedKeys = () => upload.mock.calls.map((c) => c[1] as string);
 const uploadedBodies = () => upload.mock.calls.map((c) => String(c[0]));
@@ -61,6 +64,9 @@ const run = (h: any, command: string) => h.tools.bash.execute({ command }, { too
 
 beforeEach(async () => {
   upload.mockClear();
+  list.mockReset();
+  list.mockImplementation(async () => []);
+  bytes.mockReset();
   victimDir = await mkdtemp(join(tmpdir(), "exulu-victim-"));
   await writeFile(join(victimDir, "secret.txt"), "TOP SECRET");
   jest.spyOn(console, "warn").mockImplementation(() => {});
@@ -148,5 +154,143 @@ describe("readRegularFileInside", () => {
     expect(await readRegularFileInside(dir, join(dir, "missing.txt"))).toBeNull();
     expect((await lstat(join(victimDir, "secret.txt"))).isFile()).toBe(true);
     expect(await readFile(join(victimDir, "secret.txt"), "utf8")).toBe("TOP SECRET");
+  });
+});
+
+/** S3 holds `files` (name -> body) under the session prefix and `skills` under skill prefixes. */
+function s3(id: string, files: Record<string, string>, skills: Record<string, string> = {}) {
+  const sessionPrefix = `user_7/sessions/${id}/`;
+  const all: Record<string, string> = {};
+  for (const [n, b] of Object.entries(files)) all[`${sessionPrefix}${n}`] = b;
+  for (const [k, b] of Object.entries(skills)) all[k] = b;
+  list.mockImplementation(async (prefix: string) =>
+    Object.entries(all)
+      .filter(([k]) => k.startsWith(prefix))
+      .map(([key, body]) => ({ key, size: body.length, lastModified: new Date() })),
+  );
+  bytes.mockImplementation(async (key: string) => Buffer.from(all[key] ?? ""));
+}
+
+const victim = () => readFile(join(victimDir, "secret.txt"), "utf8");
+
+describe("session restore does not write through agent-planted links", () => {
+  it("a symlink planted at the destination is replaced, the victim untouched", async () => {
+    const id = sid();
+    const h = await open(id);
+    await symlink(join(victimDir, "secret.txt"), join(h.sessionDir, "doc.txt"));
+    s3(id, { "doc.txt": "uploaded by the user" });
+    await open(id); // cache hit: re-sync of missing session files
+    expect(await victim()).toBe("TOP SECRET");
+    expect((await lstat(join(h.sessionDir, "doc.txt"))).isFile()).toBe(true);
+    expect(await readFile(join(h.sessionDir, "doc.txt"), "utf8")).toBe("uploaded by the user");
+  });
+
+  it("a symlinked parent directory is not written through", async () => {
+    const id = sid();
+    const h = await open(id);
+    await symlink(victimDir, join(h.sessionDir, "sub"));
+    s3(id, { "sub/secret.txt": "overwritten!", "sub/new.txt": "planted" });
+    await open(id);
+    expect(await victim()).toBe("TOP SECRET");
+    expect(existsSync(join(victimDir, "new.txt"))).toBe(false);
+  });
+
+  it("without links, restore behaves as before", async () => {
+    const id = sid();
+    const h = await open(id);
+    s3(id, { "a/b/c.txt": "deep", "top.txt": "top" });
+    await open(id);
+    expect(await readFile(join(h.sessionDir, "a", "b", "c.txt"), "utf8")).toBe("deep");
+    expect(await readFile(join(h.sessionDir, "top.txt"), "utf8")).toBe("top");
+  });
+});
+
+describe("downloadKeyIntoSandbox", () => {
+  it("refuses a key suffix containing .. and writes nothing outside", async () => {
+    const id = sid();
+    const h = await open(id);
+    const escape = `../${id}-escaped.txt`;
+    bytes.mockResolvedValue(Buffer.from("x"));
+    await expect(
+      downloadKeyIntoSandbox({ sessionId: id, userId: 7, fullS3Key: `bkt/user_7/sessions/${id}/${escape}`, config }),
+    ).rejects.toThrow(/\.\./);
+    expect(existsSync(join(h.sessionDir, escape))).toBe(false);
+  });
+
+  it("does not write through a symlinked parent or a planted destination link", async () => {
+    const id = sid();
+    const h = await open(id);
+    await symlink(victimDir, join(h.sessionDir, "sub"));
+    await symlink(join(victimDir, "secret.txt"), join(h.sessionDir, "f.txt"));
+    bytes.mockResolvedValue(Buffer.from("overwritten!"));
+    await expect(
+      downloadKeyIntoSandbox({ sessionId: id, userId: 7, fullS3Key: `bkt/user_7/sessions/${id}/sub/secret.txt`, config }),
+    ).rejects.toThrow();
+    const ok = await downloadKeyIntoSandbox({ sessionId: id, userId: 7, fullS3Key: `bkt/user_7/sessions/${id}/f.txt`, config });
+    expect(ok.written).toBe(true);
+    expect(await victim()).toBe("TOP SECRET");
+    expect((await lstat(join(h.sessionDir, "f.txt"))).isFile()).toBe(true);
+  });
+});
+
+describe("skills/ replaced by a link", () => {
+  const skill = (v: number) => ({ id: "sk1", name: "Review", current_version: v }) as any;
+  const skillFiles = (v: number) => ({ [`skills/sk1/v${v}/SKILL.md`]: `v${v}` });
+
+  it("an upgrade leaves the victim directory untouched and recreates skills/", async () => {
+    const id = sid();
+    s3(id, {}, skillFiles(1));
+    const h = await createSessionSandbox(id, [skill(1)], config, 7, undefined, { projectId: null });
+    handles.push(h);
+    expect(await readFile(join(h.sessionDir, "skills", "Review", "SKILL.md"), "utf8")).toBe("v1");
+
+    await mkdir(join(victimDir, "Review"));
+    await writeFile(join(victimDir, "Review", "keep.txt"), "keep");
+    await rm(join(h.sessionDir, "skills"), { recursive: true, force: true });
+    await symlink(victimDir, join(h.sessionDir, "skills"));
+
+    s3(id, {}, skillFiles(2));
+    await createSessionSandbox(id, [skill(2)], config, 7, undefined, { projectId: null });
+    expect(await readFile(join(victimDir, "Review", "keep.txt"), "utf8")).toBe("keep");
+    expect(existsSync(join(victimDir, "Review", "SKILL.md"))).toBe(false);
+    expect((await lstat(join(h.sessionDir, "skills"))).isDirectory()).toBe(true);
+    expect(await readFile(join(h.sessionDir, "skills", "Review", "SKILL.md"), "utf8")).toBe("v2");
+  });
+
+  it("a reload with skills/<name> replaced by a link removes only the link", async () => {
+    const id = sid();
+    s3(id, {}, skillFiles(1));
+    const h = await createSessionSandbox(id, [skill(1)], config, 7, undefined, { projectId: null });
+    handles.push(h);
+    await mkdir(join(victimDir, "inner"));
+    await writeFile(join(victimDir, "inner", "keep.txt"), "keep");
+    await rm(join(h.sessionDir, "skills", "Review"), { recursive: true, force: true });
+    await symlink(join(victimDir, "inner"), join(h.sessionDir, "skills", "Review"));
+
+    await refreshSessionSkills(id, [skill(1)], config);
+    expect(await readFile(join(victimDir, "inner", "keep.txt"), "utf8")).toBe("keep");
+    expect(existsSync(join(victimDir, "inner", "SKILL.md"))).toBe(false);
+    expect((await lstat(join(h.sessionDir, "skills", "Review"))).isDirectory()).toBe(true);
+    expect(await readFile(join(h.sessionDir, "skills", "Review", "SKILL.md"), "utf8")).toBe("v1");
+  });
+});
+
+describe("writeFileInside", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "exulu-session-"));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it.each(["../x", "a/../../x", "/etc/x", "", "a/.."])("refuses %p", async (p) => {
+    await expect(writeFileInside(dir, p, "x")).rejects.toThrow();
+  });
+
+  it("creates parents and replaces an existing regular file", async () => {
+    await writeFileInside(dir, "a/b/c.txt", "one");
+    await writeFileInside(dir, "a/b/c.txt", "two");
+    expect(await readFile(join(dir, "a", "b", "c.txt"), "utf8")).toBe("two");
   });
 });

@@ -2,7 +2,7 @@ import {
     SandboxManager,
     type SandboxRuntimeConfig,
 } from '@anthropic-ai/sandbox-runtime'
-import { mkdir, rm, writeFile, readdir, stat } from 'node:fs/promises'
+import { mkdir, rm, readdir, stat, lstat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, dirname, resolve, relative, posix } from 'node:path'
 import { exec, spawn } from 'node:child_process'
@@ -26,7 +26,7 @@ import { postgresClient } from "@SRC/postgres/client";
 import { PROJECT_DIR } from "@SRC/exulu/project-files.ts";
 import { ORIGIN_METADATA_KEY } from "@SRC/exulu/file-origin.ts";
 import { syncProjectDir, clearProjectSyncMarker } from "./project-sync";
-import { readRegularFileInside } from "./safe-fs";
+import { readRegularFileInside, writeFileInside, ensureRealDirectory, removeEntryInside, UnsafeSessionPathError } from "./safe-fs";
 
 /**
  * Load the variables an administrator has explicitly granted to the skill
@@ -262,6 +262,11 @@ async function downloadSkill(
         );
     }
 
+    // The agent can replace skills/ or skills/<name> with a link; make both real
+    // directories again (a link is unlinked, never followed) before writing.
+    const sessionDir = dirname(skillsDirectory)
+    await ensureRealDirectory(sessionDir, `skills/${skill.name}`)
+
     for (const file of files) {
         // Extract the path relative to the version prefix, accounting for any S3 general prefix
         const prefixIndex = file.key.indexOf(versionPrefix)
@@ -271,14 +276,26 @@ async function downloadSkill(
 
         if (!relativePath) continue // skip directory markers
 
-        const localPath = join(skillsDirectory, skill.name, relativePath)
-        await mkdir(dirname(localPath), { recursive: true })
-
         // Binary-safe download — skill bundles can ship images, fonts, and
         // other non-text assets alongside the SKILL.md / scripts.
         const bytes = await getS3ObjectBytes(file.key, config)
-        await writeFile(localPath, bytes)
+        try {
+            await writeFileInside(sessionDir, `skills/${skill.name}/${relativePath}`, bytes)
+        } catch (err) {
+            if (!(err instanceof UnsafeSessionPathError)) throw err
+            console.error(`[SKILLS] Skipping skill file ${file.key}: ${err.message}`)
+        }
     }
+}
+
+/**
+ * Remove an installed skill's folder before it is reinstalled. skills/ itself is
+ * made a real directory first, so the removal never runs through a link.
+ */
+async function removeInstalledSkill(skillsDirectory: string, skillName: string): Promise<void> {
+    const sessionDir = dirname(skillsDirectory)
+    await ensureRealDirectory(sessionDir, 'skills')
+    await removeEntryInside(sessionDir, `skills/${skillName}`)
 }
 
 /**
@@ -412,7 +429,10 @@ async function restoreArtifactsFromS3(
         if (opts.onlyMissing) {
             let localSize: number | undefined
             try {
-                localSize = (await stat(localPath)).size
+                // lstat: a link the agent planted counts as missing (the write below
+                // replaces it) instead of reporting the size of whatever it points at.
+                const st = await lstat(localPath)
+                localSize = st.isFile() ? st.size : undefined
             } catch {
                 localSize = undefined
             }
@@ -423,8 +443,8 @@ async function restoreArtifactsFromS3(
             // and other binary formats (from user uploads as well as agent
             // bash-produced files). Reading as utf-8 would corrupt these.
             const bytes = await getS3ObjectBytes(obj.key, config)
-            await mkdir(dirname(localPath), { recursive: true })
-            await writeFile(localPath, bytes)
+            // Never writeFile into the agent-writable tree: it would follow links.
+            await writeFileInside(sessionDir, relativePath, bytes)
         } catch (err) {
             console.error(
                 `[SKILLS] Failed to restore artifact ${obj.key} -> ${localPath}; continuing.`,
@@ -473,11 +493,9 @@ export async function downloadKeyIntoSandbox(opts: {
     const relativePath = fullS3Key.slice(idx + userPrefix.length)
     if (!relativePath) return { written: false } // directory marker
 
-    const localPath = join(sessionDir, relativePath)
-
     const bytes = await getS3ObjectBytes(fullS3Key, config)
-    await mkdir(dirname(localPath), { recursive: true })
-    await writeFile(localPath, bytes)
+    // Refuses ".." in the key suffix and never writes through an agent-planted link.
+    const localPath = await writeFileInside(sessionDir, relativePath, bytes)
 
     return { written: true, localPath }
 }
@@ -529,7 +547,7 @@ export async function refreshSessionSkills(
     const skillsDirectory = join(cached.handle.sessionDir, 'skills')
     let refreshed = 0
     for (const skill of skills) {
-        await rm(join(skillsDirectory, skill.name), { recursive: true, force: true })
+        await removeInstalledSkill(skillsDirectory, skill.name)
         await downloadSkill(skill, skillsDirectory, config)
         cached.installedSkills.set(skill.id, skill.current_version)
         refreshed++
@@ -579,7 +597,7 @@ export async function createSessionSandbox(
 
             if (installedVersion !== undefined) {
                 // Different version installed — remove old files to avoid stale state
-                await rm(join(skillsDirectory, skill.name), { recursive: true, force: true })
+                await removeInstalledSkill(skillsDirectory, skill.name)
             }
 
             await downloadSkill(skill, skillsDirectory, config)
