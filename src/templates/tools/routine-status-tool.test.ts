@@ -4,7 +4,7 @@ const makeHandle = (statuses: { key: string; label: string; done?: boolean }[], 
   const updateWithResult = jest.fn(async () => decision);
   return {
     updateWithResult,
-    handle: { id: "wf-1", name: "Ersatzteil Angebot", statuses, runs: { current: { id: "jr-1", status: "neu", update: jest.fn(), updateWithResult } } } as never,
+    handle: { id: "wf-1", name: "Angebote", statuses, runs: { current: { id: "jr-1", status: "neu", update: jest.fn(), updateWithResult } } } as never,
   };
 };
 const STATUSES = [{ key: "neu", label: "Neu" }, { key: "rueckfrage", label: "Rückfrage vorbereitet" }, { key: "erledigt", label: "Erledigt", done: true }];

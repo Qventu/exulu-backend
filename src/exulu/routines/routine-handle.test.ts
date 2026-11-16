@@ -11,7 +11,7 @@ const db: any = {};
 const RUN = { id: "jr-1", workflow: "wf-1", work_status: "neu", work_status_updated_at: null, work_status_updated_by: { kind: "default" } };
 const ROUTINE = {
   id: "wf-1",
-  name: "Ersatzteil Angebot",
+  name: "Angebote",
   config: { statuses: [{ key: "neu", label: "Neu" }, { key: "angebot_im_erp", label: "Angebot im ERP" }, { key: "erledigt", label: "Erledigt", done: true }], default: "neu" },
 };
 const runSession = { routine_id: "wf-1", job_result_id: "jr-1", trigger: "email" };
@@ -35,7 +35,7 @@ describe("resolveRoutineHandleFactory", () => {
     const factory = await resolveRoutineHandleFactory(db, { jobResultId: "jr-1", sessionId: "s1", sessionMetadata: runSession, actingUser: 11 });
     const routine = factory!({ kind: "tool", id: "generate_offer_xml" });
     expect(routine.id).toBe("wf-1");
-    expect(routine.name).toBe("Ersatzteil Angebot");
+    expect(routine.name).toBe("Angebote");
     expect(routine.statuses).toEqual([{ key: "neu", label: "Neu" }, { key: "angebot_im_erp", label: "Angebot im ERP" }, { key: "erledigt", label: "Erledigt", done: true }]);
     expect(routine.runs.current.id).toBe("jr-1");
     expect(routine.runs.current.status).toBe("neu");

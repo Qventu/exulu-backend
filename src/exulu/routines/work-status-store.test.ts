@@ -23,7 +23,7 @@ function makeDb(tables: Record<string, any[]>) {
   return { db, updates };
 }
 
-const routine = { id: "wf-1", name: "Ersatzteil Angebot", work_statuses: JSON.stringify(CONFIG) };
+const routine = { id: "wf-1", name: "Angebote", work_statuses: JSON.stringify(CONFIG) };
 const run = (over: any = {}) => ({ id: "jr-1", workflow: "wf-1", session: "sess-1", createdAt: 1, work_status: "neu", work_status_updated_at: null, work_status_updated_by: JSON.stringify({ kind: "default" }), ...over });
 
 describe("work-status-store reads", () => {
@@ -36,7 +36,7 @@ describe("work-status-store reads", () => {
   });
   it("loadRoutineWorkStatusConfig returns the parsed config, also for a routine without one", async () => {
     const { db } = makeDb({ workflow_templates: [routine, { id: "wf-2", name: "Ohne", work_statuses: null }] });
-    expect(await loadRoutineWorkStatusConfig(db, "wf-1")).toEqual({ id: "wf-1", name: "Ersatzteil Angebot", config: CONFIG });
+    expect(await loadRoutineWorkStatusConfig(db, "wf-1")).toEqual({ id: "wf-1", name: "Angebote", config: CONFIG });
     expect((await loadRoutineWorkStatusConfig(db, "wf-2"))?.config).toEqual({ statuses: [], default: null });
     expect(await loadRoutineWorkStatusConfig(db, "nope")).toBeUndefined();
   });

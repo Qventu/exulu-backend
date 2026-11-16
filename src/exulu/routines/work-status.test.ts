@@ -57,7 +57,7 @@ describe("decideWorkStatusWrite", () => {
     statuses: [{ key: "neu", label: "Neu" }, { key: "angebot_im_erp", label: "Angebot im ERP" }, { key: "rueckfrage", label: "Rückfrage" }, { key: "erledigt", label: "Erledigt", done: true }],
     default: "neu",
   });
-  const base = { config: C, routineName: "Ersatzteil Angebot", current: { status: "neu", updatedBy: { kind: "default" } as const } };
+  const base = { config: C, routineName: "Angebote", current: { status: "neu", updatedBy: { kind: "default" } as const } };
   it("writes a configured status", () =>
     expect(decideWorkStatusWrite({ ...base, next: "angebot_im_erp", origin: "worker" })).toEqual({ action: "write", status: "angebot_im_erp" }));
   it("skips when unchanged", () =>
@@ -69,7 +69,7 @@ describe("decideWorkStatusWrite", () => {
   });
   it("rejects when the routine has no statuses, naming the routine", () => {
     const d = decideWorkStatusWrite({ ...base, config: { statuses: [], default: null }, next: "neu", origin: "worker" });
-    expect((d as any).message).toContain('"Ersatzteil Angebot" has no work statuses configured');
+    expect((d as any).message).toContain('"Angebote" has no work statuses configured');
   });
   const human = { status: "erledigt", updatedBy: { kind: "user", id: 14 } as const };
   it("worker write does not override a human-set status", () =>
