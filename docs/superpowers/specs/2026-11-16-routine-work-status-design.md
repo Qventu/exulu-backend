@@ -1,7 +1,7 @@
 # Routine work status — design
 
 Date: 2026-11-16
-Status: draft, agreed in conversation with Daniel Claessen; not yet planned or built
+Status: agreed with Daniel Claessen 2026-11-16; not yet planned or built
 Repos: `exulu/backend` (schema, API, tool context, built-in tool), `exulu/frontend` (runs list, routine settings)
 
 ## Why
@@ -146,9 +146,12 @@ Decisions made in the conversation:
   is built now.
 - **One generic `update(patch)`** instead of a method per field, with a closed
   patch type. Unknown keys are a TypeScript error and a runtime error.
-- **`routine` is `undefined` outside a routine run** (a normal chat turn, MCP,
-  the direct agent API). When it is set, `runs.current` always exists, so a
-  tool needs exactly one `?.`.
+- **`routine` is set whenever the session belongs to a routine run** — during
+  the worker's run *and* when a person later opens that run's session in the
+  chat and continues it (decided 2026-11-16). The agent has the same tools in
+  both cases. It is `undefined` everywhere else (a normal chat, MCP, the direct
+  agent API on a non-run session). When it is set, `runs.current` always
+  exists, so a tool needs exactly one `?.`.
 
 ### Behaviour of `update`
 
@@ -161,10 +164,16 @@ Decisions made in the conversation:
    `routine?.statuses.some(s => s.key === …)` or catch; the spec for that tool
    change lives in the ALGI project.)
 3. All-or-nothing: validate every field before writing any.
-4. **Human wins.** When `work_status_updated_by.kind === "user"`, an `update`
-   coming from a tool or the agent does not change the status. It resolves
-   without error and logs one line. Rationale: a routine step retry re-runs
-   tools.
+4. **Human wins — during the worker's run.** When
+   `work_status_updated_by.kind === "user"`, an `update` from a tool or the
+   agent *inside the worker's run* does not change the status. It resolves
+   without error and logs one line. Rationale: a step retry re-runs tools and
+   must not undo a person's decision.
+   In a **chat turn a person started** on the run's session the write applies
+   normally: the person asked for the action ("erstelle das Angebot im ERP"),
+   so the resulting status is theirs. `updated_by` records the tool or agent
+   plus the acting user: `{ kind: "tool", id, user }`. (My call — it follows
+   from decision 2 but was not spelled out.)
 5. Write `work_status`, `work_status_updated_at = now()`,
    `work_status_updated_by = { kind: "tool", id: <tool id> }` (or
    `{ kind: "agent" }` when called through the built-in tool below).
@@ -172,20 +181,27 @@ Decisions made in the conversation:
 
 ### Where the handle is built
 
-The worker knows the run: `processUiMessagesFlow` in `ee/workers.ts` has the
-workflow row and `jobResultId`, and passes `routine: { id, name }` to
-`generateStream` for cost attribution already. Thread the job result id
-alongside it down to `convertExuluToolsToAiSdkTools`, build the handle there
-once per turn (one read of the routine's `work_statuses` and the run's current
-status), and add it to the object passed to `execute`.
+Two entry points reach `convertExuluToolsToAiSdkTools`, and both must build the
+handle:
 
-Do not derive the run from the session alone: a session can be continued by a
-person in the chat UI after the run finished. See open question 2.
+- **Worker run** — `processUiMessagesFlow` in `ee/workers.ts` has the workflow
+  row and `jobResultId`; pass them down (it already passes
+  `routine: { id, name }` to `generateStream` for cost attribution).
+- **Chat turn on a run session** — the chat route (`routes.ts`) loads the
+  session; `isRunSessionMetadata(session.metadata)`
+  (`src/exulu/routines/run-session.ts`) says it is a run and the metadata
+  carries `routine_id`. Resolve the run with
+  `job_results WHERE session = <session id>` (one row per run session).
+
+Put the resolution in one helper (`resolveRoutineHandle({ sessionId, jobResultId?, toolId, actingUser?, origin: "worker" | "chat" })`)
+so both paths share validation and the human-wins rule. If the run row cannot
+be found (pruned by retention), `routine` is `undefined`.
 
 ## Built-in agent tool: `set_routine_status`
 
 Injected automatically, like the other session-scoped tools, when **both** hold:
-the turn has a `routine` handle and `routine.statuses.length > 0`.
+the turn has a `routine` handle and `routine.statuses.length > 0` — so it is
+available in the worker's run and in a chat a person continues on that run.
 
 - Input: `{ status: enum(<keys of routine.statuses>) }` — the enum is generated
   per turn, so the model cannot invent a value. The description lists each key
@@ -215,7 +231,7 @@ GraphQL, next to the existing routine-run operations in
   `workStatusOpen: Boolean` (true = status is null or not flagged `done`).
 - `setRoutineRunWorkStatus(id: ID!, status: String): RoutineRun` — `status:
   null` clears it. Validates against the routine's list. Writes
-  `updated_by = { kind: "user", id }`.
+  `updated_by = { kind: "user", id }`. This is the manual path from the runs list.
 - `work_statuses` is a normal field on the routine and is saved through the
   existing routine update mutation, with the validation above (immutable keys,
   default must exist).
@@ -224,8 +240,7 @@ GraphQL, next to the existing routine-run operations in
 `job_results` has no RBAC of its own; the resolvers already restrict to the
 access-filtered routine ids — reuse exactly that check. Editing the status
 *list* needs write access to the routine, like any other routine setting.
-(This is my call: the people working the inbox are usually not the routine's
-editors. Flagged as open question 1.)
+(Confirmed, decision 1.)
 
 ## Run creation
 
@@ -245,14 +260,20 @@ Existing runs are not backfilled; they show no badge.
   `setRoutineRunWorkStatus`. Optimistic update, revert with a toast on error.
 - Tooltip on the badge: who set it and when ("gesetzt von Laura Büttner,
   16.11. 09:12" / "gesetzt vom Tool Generate offer XML").
-- A filter for work status. When the routine has statuses, the list opens with
-  "open" preselected (everything not flagged `done`); a visible chip shows the
-  filter is on and clears it.
+- **Two areas** when the routine has statuses (decided 2026-11-16): "Offen"
+  (work status null or not flagged done) on top, "Erledigt" (flagged done)
+  below, collapsed by default with its count. Setting a done status moves the
+  row down, setting an open one moves it back. Each area pages separately via
+  `workStatusOpen: true / false`. An additional filter narrows by individual
+  status.
 - Routines without statuses: no badge column, no filter — unchanged.
 
 Routine settings (a new block in `sections/basics.tsx` or its own section —
-builder's call): an editable list of statuses with label, colour, a "counts as
-done" switch, drag to reorder, a default selector. The key is derived from the
+builder's call): an editable list of statuses with label, colour, a
+**"Erledigt" checkbox per status** (the `done` flag — it decides which area a
+run appears in; several statuses may be done, at least one should be, warn if
+none is), drag to reorder, a default selector (the default may not be a done
+status). The key is derived from the
 label on creation, shown read-only afterwards.
 
 All new strings in `messages/de.json` and `messages/en.json`.
@@ -265,8 +286,10 @@ Backend (jest):
   keys; valid status writes all three columns; human-set status is not
   overwritten by tool or agent; same value twice is a no-op; routine without
   statuses throws.
-- Handle construction: `routine` is undefined for a non-routine turn; present
-  with `runs.current` for a routine turn.
+- Handle construction: `routine` is undefined for a non-run session; present
+  for a worker run and for a chat turn on a run session; undefined when the
+  run row was pruned.
+- Human-wins applies with origin "worker" and not with origin "chat".
 - `set_routine_status`: only injected when statuses exist; enum equals the
   configured keys.
 - Resolver: `setRoutineRunWorkStatus` rejects a run the caller cannot read,
@@ -277,21 +300,18 @@ Backend (jest):
 - Run creation writes the default; filtered runs get none.
 
 Frontend (vitest): badge renders label and colour; menu calls the mutation;
-"open" preselected only when the routine has statuses; a removed status
+two areas only when the routine has statuses; a done status moves the row; a removed status
 renders the neutral fallback.
 
-## Open questions for Daniel
+## Decisions (Daniel, 2026-11-16)
 
-1. **Who may set a run's status** — everyone who can see the runs (assumed
-   here), or only people with write access to the routine?
-2. **Continued sessions.** When a person continues a routine run's session in
-   the chat and the agent calls a tool there, should `routine` still be set
-   (so the XML tool can still flip the status on a corrected offer), or only
-   during the worker's run? Assumed here: only during the worker's run; the
-   person sets the status by hand afterwards. ALGI's "erstelle das Angebot im
-   ERP" follow-ups in the chat argue for the former.
-3. **Default view.** Is "open only" the right default for the runs list when
-   statuses exist, or should it stay "all" with one click to "open"?
+1. Everyone who can see a routine's runs may set a run's work status, by hand
+   in the runs list.
+2. The agent has the same tools — including `routine` and
+   `set_routine_status` — whenever the session is part of a routine run, also
+   when a person opens and continues that session in the chat.
+3. The runs list shows two areas, open and done; each configured status has a
+   checkbox that says whether it represents "done".
 
 ## Left to the builder
 
