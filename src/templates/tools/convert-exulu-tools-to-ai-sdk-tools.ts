@@ -30,6 +30,8 @@ import type { SkillDecision } from "@SRC/exulu/skills/decisions";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
+import { resolveSandboxProjectId } from "@EE/invoke-skills/project-sync";
+import { RBACResolver } from "@EE/rbac-resolver.ts";
 import { getPresignedUrl } from "@SRC/uppy";
 import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
 import { guardToolOutput } from "@SRC/exulu/tool-output-offload";
@@ -229,6 +231,26 @@ export const convertExuluToolsToAiSdkTools = async (
     | Awaited<ReturnType<typeof createSessionSandbox>>
     | undefined;
   if (sessionID && exuluConfig && agent?.sandbox_enabled === true) {
+    // The sandbox is one per session, so project files follow the session OWNER's
+    // access, not the speaker's. Never throws: no access or an error means no project/.
+    const sandboxProjectId = await resolveSandboxProjectId(
+      { projectId: project, ownerId: sessionOwnerId ?? user?.id, owner: user },
+      {
+        getProject: async (id) => {
+          const { db } = await postgresClient();
+          return db.from("projects").where({ id }).first();
+        },
+        // The rbac table stores the SINGULAR entity name for projects.
+        getRbac: async (p) => {
+          const { db } = await postgresClient();
+          return RBACResolver(db, "project", p.id, p.rights_mode || "private");
+        },
+        getUser: async (id) => {
+          const { db } = await postgresClient();
+          return db.from("users").where({ id }).first();
+        },
+      },
+    );
     try {
       sharedSessionSandbox = await createSessionSandbox(
         sessionID,
@@ -238,6 +260,7 @@ export const convertExuluToolsToAiSdkTools = async (
         // Same agent descriptor the tool-call audit emitter uses below, so a
         // skill.sandbox.created event can be joined to the agent that caused it.
         agent ? { id: agent.id, name: agent.name, slug: (agent as any).slug } : undefined,
+        { projectId: sandboxProjectId },
       );
     } catch (err) {
       console.error(

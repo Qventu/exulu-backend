@@ -23,6 +23,9 @@ import { z } from "zod";
 import { type Variable } from "@EXULU_TYPES/models/variable";
 import CryptoJS from "crypto-js";
 import { postgresClient } from "@SRC/postgres/client";
+import { PROJECT_DIR } from "@SRC/exulu/project-files.ts";
+import { ORIGIN_METADATA_KEY } from "@SRC/exulu/file-origin.ts";
+import { syncProjectDir, clearProjectSyncMarker } from "./project-sync";
 
 /**
  * Load the variables an administrator has explicitly granted to the skill
@@ -212,10 +215,20 @@ export interface SessionSandboxHandle {
     cleanup: () => Promise<void>
 }
 
+/**
+ * Per-sandbox, mutable: the cached sandbox outlives a turn, and the session's
+ * project can change between turns (detach, re-attach, access revoked). The
+ * write-back closures read it at call time, so it must not be captured once.
+ */
+interface ProjectState {
+    projectId: string | null
+}
+
 interface CachedSandbox {
     handle: SessionSandboxHandle
     /** skill id -> installed version */
     installedSkills: Map<string, number>
+    projectState: ProjectState
 }
 
 const sandboxCache = new Map<string, CachedSandbox>()
@@ -271,14 +284,44 @@ async function downloadSkill(
  * A file written inside the sandbox qualifies as a session artifact iff it lives
  * under sessionDir but NOT under sessionDir/skills/. Skill source files are
  * authored elsewhere and should never be mirrored back to the per-session
- * artifact tree.
+ * artifact tree. In a project session `project/` is the read-only copy of the
+ * project's shared files and is never written back either; without a project
+ * the name has no special meaning.
  */
-function isArtifactPath(absPath: string, sessionDir: string): boolean {
+export function isArtifactPath(
+    absPath: string,
+    sessionDir: string,
+    opts: { hasProject?: boolean } = {},
+): boolean {
     const resolved = resolve(absPath)
     const rel = relative(sessionDir, resolved)
     if (!rel || rel.startsWith('..')) return false
     const first = rel.split('/')[0]
+    if (opts.hasProject && first === PROJECT_DIR) return false
     return first !== 'skills'
+}
+
+/**
+ * Upload a file the agent produced in its sandbox. The origin marker is what the
+ * file lists use to badge agent-made files; only this path sets it, so user
+ * uploads (which go through other uploadFile callers) stay unmarked.
+ */
+export async function uploadAgentArtifact(
+    content: Buffer,
+    s3Key: string,
+    config: ExuluConfig,
+    userId: number | string | undefined,
+): Promise<string> {
+    return uploadFile(
+        content,
+        s3Key,
+        config,
+        { metadata: { [ORIGIN_METADATA_KEY]: 'agent' } },
+        // uploadFile's user param is typed as number, but the
+        // addUserPrefixToKey helper it delegates to accepts
+        // number | string at runtime — pass through as-is.
+        userId as unknown as number,
+    )
 }
 
 function artifactS3Key(sessionId: string, relPath: string): string {
@@ -330,7 +373,7 @@ async function restoreArtifactsFromS3(
     sessionId: string,
     userId: number | string,
     config: ExuluConfig,
-    opts: { onlyMissing?: boolean } = {},
+    opts: { onlyMissing?: boolean; skipProjectDir?: boolean } = {},
 ): Promise<void> {
     const userPrefix = `user_${userId}/sessions/${sessionId}/`
     let objects: S3FileObject[]
@@ -359,6 +402,10 @@ async function restoreArtifactsFromS3(
         const relativePath = idx >= 0 ? obj.key.slice(idx + userPrefix.length) : ''
         if (!relativePath) continue // directory marker or unexpected key shape
         if (isIgnoredArtifactPath(relativePath)) continue // never pull dependency trees back
+        // In a project session project/ belongs to the project sync; a session file
+        // under that name (written before the session joined a project) would
+        // otherwise be pulled in and removed again on every turn.
+        if (opts.skipProjectDir && relativePath.split('/')[0] === PROJECT_DIR) continue
 
         const localPath = join(sessionDir, relativePath)
         if (opts.onlyMissing) {
@@ -500,10 +547,29 @@ export async function createSessionSandbox(
      * callers outside the agent loop are unaffected.
      */
     agent?: { id?: string; name?: string; slug?: string },
+    opts: {
+        /**
+         * The session's project, already checked by the caller (session owner has
+         * read access); null/absent = no project. Applied on every call, cache hit
+         * included, because it can change between turns.
+         */
+        projectId?: string | null
+    } = {},
 ): Promise<SessionSandboxHandle> {
     const cached = sandboxCache.get(sessionId)
+    const projectId = opts.projectId ?? null
+
+    // After the session restore, so project/ wins over anything else of that name.
+    const syncProject = async (dir: string) => {
+        try {
+            await syncProjectDir({ sessionDir: dir, projectId, config })
+        } catch (err) {
+            console.error(`[SKILLS] Failed to sync project files into session ${sessionId}; continuing.`, err)
+        }
+    }
 
     if (cached) {
+        cached.projectState.projectId = projectId
         const skillsDirectory = join(cached.handle.sessionDir, 'skills')
 
         for (const skill of skills) {
@@ -524,11 +590,15 @@ export async function createSessionSandbox(
         // `ls` never sees them although the system prompt promises it will.
         if (userId && config.fileUploads) {
             try {
-                await restoreArtifactsFromS3(cached.handle.sessionDir, sessionId, userId, config, { onlyMissing: true })
+                await restoreArtifactsFromS3(cached.handle.sessionDir, sessionId, userId, config, {
+                    onlyMissing: true,
+                    skipProjectDir: projectId !== null,
+                })
             } catch (err) {
                 console.error(`[SKILLS] Failed to re-sync S3 session files for session ${sessionId}; continuing.`, err)
             }
         }
+        await syncProject(cached.handle.sessionDir)
         return cached.handle
     }
 
@@ -566,8 +636,14 @@ export async function createSessionSandbox(
     // unsaved-to-S3 writes from a prior process.
     if (userId && config.fileUploads) {
         // Cold start restores everything; a surviving on-disk dir only fetches what changed.
-        await restoreArtifactsFromS3(sessionDir, sessionId, userId, config, { onlyMissing: dirExisted })
+        await restoreArtifactsFromS3(sessionDir, sessionId, userId, config, {
+            onlyMissing: dirExisted,
+            skipProjectDir: projectId !== null,
+        })
     }
+    await syncProject(sessionDir)
+
+    const projectState: ProjectState = { projectId }
 
     // Probe whether bwrap can actually create namespaces on this host. On a
     // failure, either throw (strict mode) or degrade to direct exec.
@@ -843,23 +919,17 @@ export async function createSessionSandbox(
         absPath: string,
         content: Buffer,
     ): Promise<{ key?: string; url?: string }> {
-        if (!persistenceEnabled || !isArtifactPath(absPath, sessionDir)) {
+        if (
+            !persistenceEnabled ||
+            !isArtifactPath(absPath, sessionDir, { hasProject: projectState.projectId !== null })
+        ) {
             return {}
         }
         const rel = relative(sessionDir, resolve(absPath))
         const s3Key = artifactS3Key(sessionId, rel)
         const out: { key?: string; url?: string } = {}
         try {
-            const fullKey = await uploadFile(
-                content,
-                s3Key,
-                config,
-                {},
-                // uploadFile's user param is typed as number, but the
-                // addUserPrefixToKey helper it delegates to accepts
-                // number | string at runtime — pass through as-is.
-                userId as unknown as number,
-            )
+            const fullKey = await uploadAgentArtifact(content, s3Key, config, userId)
             out.key = fullKey
             // uploadFile returns "<bucket>/<key>" — split to call
             // getPresignedUrl, which expects bucket and key separately.
@@ -936,6 +1006,8 @@ export async function createSessionSandbox(
     async function snapshotSessionArtifacts(): Promise<Map<string, number>> {
         const map = new Map<string, number>()
         const skillsDir = join(sessionDir, 'skills')
+        // Read at call time: the session's project can change between turns.
+        const projectDir = projectState.projectId !== null ? join(sessionDir, PROJECT_DIR) : null
         const walk = async (dir: string): Promise<void> => {
             let entries
             try {
@@ -946,6 +1018,7 @@ export async function createSessionSandbox(
             for (const entry of entries) {
                 const full = join(dir, entry.name)
                 if (full === skillsDir) continue
+                if (projectDir !== null && full === projectDir) continue
                 if (isIgnoredArtifactPath(relative(sessionDir, full))) continue
                 if (entry.isDirectory()) {
                     await walk(full)
@@ -1153,10 +1226,11 @@ export async function createSessionSandbox(
                 await SandboxManager.reset()
             }
             await rm(sessionDir, { recursive: true, force: true })
+            await clearProjectSyncMarker(sessionDir)
         },
     }
 
-    sandboxCache.set(sessionId, { handle, installedSkills })
+    sandboxCache.set(sessionId, { handle, installedSkills, projectState })
 
     return handle
 }

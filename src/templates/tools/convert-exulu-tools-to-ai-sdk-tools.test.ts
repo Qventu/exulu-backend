@@ -4,6 +4,8 @@ import {
 } from "./convert-exulu-tools-to-ai-sdk-tools";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
 import { postgresClient } from "@SRC/postgres/client";
+import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
+import { resolveSandboxProjectId } from "@EE/invoke-skills/project-sync";
 
 jest.mock("@EE/agentic-retrieval/pipeline/index", () => ({
   createAgenticRetrievalTool: jest.fn(() => ({
@@ -24,6 +26,7 @@ jest.mock("@SRC/postgres/client", () => ({ postgresClient: jest.fn() }));
 
 // Additional mocks to prevent import-time failures from heavy side-effect modules
 jest.mock("@EE/invoke-skills/create-sandbox", () => ({ createSessionSandbox: jest.fn() }));
+jest.mock("@EE/invoke-skills/project-sync", () => ({ resolveSandboxProjectId: jest.fn(async () => null) }));
 jest.mock("@SRC/uppy", () => ({ getPresignedUrl: jest.fn() }));
 jest.mock("@SRC/exulu/tool-output-offload", () => ({ guardToolOutput: jest.fn(async (v: unknown) => v) }));
 jest.mock("@SRC/exulu/statistics", () => ({ updateStatistic: jest.fn() }));
@@ -360,5 +363,33 @@ describe("memory tool registration", () => {
     for await (const _chunk of (tools as any).memory_forget.execute({ memoryId: "m1" }, { toolCallId: "call-1", messages: [] })) { /* drain */ }
     expect(seen[0].memoryDecision).toEqual({ v: 1, kind: "forget" });
     expect(seen[0].user).toBe(user);
+  });
+});
+
+describe("project → session sandbox wiring", () => {
+  const sandboxCall = (project: string | undefined, ownerId: number, user: unknown) =>
+    convertExuluToolsToAiSdkTools(
+      [] as never, [], [], [], [], [] as never, user as never, {} as never, "s1", undefined,
+      project, undefined, model, { id: "a1", name: "A", sandbox_enabled: true } as never, undefined, undefined,
+      ["agentic_context_search"], ownerId,
+    );
+
+  beforeEach(() => {
+    (createSessionSandbox as jest.Mock).mockReset().mockResolvedValue({ tools: {}, sessionDir: "/tmp/x" });
+    (resolveSandboxProjectId as jest.Mock).mockReset();
+  });
+
+  it("passes the project id the resolver granted for the session owner", async () => {
+    (resolveSandboxProjectId as jest.Mock).mockResolvedValue("p1");
+    const user = { id: 9, role: { id: "r1" } };
+    await sandboxCall("p1", 3, user);
+    expect((resolveSandboxProjectId as jest.Mock).mock.calls[0][0]).toEqual({ projectId: "p1", ownerId: 3, owner: user });
+    expect((createSessionSandbox as jest.Mock).mock.calls[0][5]).toEqual({ projectId: "p1" });
+  });
+
+  it("passes null when the resolver denies (no access, gone, or failed)", async () => {
+    (resolveSandboxProjectId as jest.Mock).mockResolvedValue(null);
+    await sandboxCall("p1", 3, { id: 3 });
+    expect((createSessionSandbox as jest.Mock).mock.calls[0][5]).toEqual({ projectId: null });
   });
 });
