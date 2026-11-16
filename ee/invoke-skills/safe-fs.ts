@@ -53,7 +53,14 @@ export async function readRegularFileInside(sessionDir: string, path: string): P
     let handle
     try {
         // O_NOFOLLOW: a final component that is a link fails with ELOOP instead of being followed.
-        handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+        // O_NONBLOCK: a FIFO the agent planted would otherwise block this open (and a
+        // libuv threadpool thread with it) until a writer appears; with it the open
+        // returns at once and the isFile() check below skips the entry.
+        // O_NOCTTY: opening a terminal device must never make it our controlling tty.
+        handle = await open(
+            path,
+            constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | constants.O_NOCTTY,
+        )
     } catch (err) {
         return skip(errCode(err) === 'ELOOP' ? 'it is a symbolic link' : `open failed (${errCode(err) ?? 'unknown'})`)
     }
