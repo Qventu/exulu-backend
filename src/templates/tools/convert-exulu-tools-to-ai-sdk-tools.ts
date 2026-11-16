@@ -30,6 +30,8 @@ import type { SkillDecision } from "@SRC/exulu/skills/decisions";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
+import type { RoutineHandleInternal } from "@SRC/exulu/routines/routine-handle";
+import { createRoutineStatusTool } from "./routine-status-tool";
 import { getPresignedUrl } from "@SRC/uppy";
 import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
 import { guardToolOutput } from "@SRC/exulu/tool-output-offload";
@@ -205,6 +207,11 @@ export const convertExuluToolsToAiSdkTools = async (
   memoryDecisions?: Map<string, MemoryDecision>,
   /** Approved skill cards → the user's name/description/visibility choices, keyed by toolCallId. */
   skillDecisions?: Map<string, SkillDecision>,
+  /**
+   * Builds the `routine` object for a tool when this turn is part of a
+   * routine run (routines/routine-handle.ts); undefined otherwise.
+   */
+  routineHandleFactory?: (actor: { kind: "tool"; id: string } | { kind: "agent" }) => RoutineHandleInternal,
 ): Promise<Record<string, Tool>> => {
   if (!currentTools) return {};
 
@@ -338,6 +345,13 @@ export const convertExuluToolsToAiSdkTools = async (
   const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId });
   if (parseDocumentTool && !disabled.has(parseDocumentTool.id)) {
     currentTools.push(parseDocumentTool);
+  }
+
+  // Inside a routine run with configured work statuses the agent may set
+  // the run's status itself (spec 2026-11-16-routine-work-status-design).
+  const routineStatusTool = createRoutineStatusTool(routineHandleFactory?.({ kind: "agent" }));
+  if (routineStatusTool && !disabled.has(routineStatusTool.id)) {
+    currentTools.push(routineStatusTool);
   }
 
   const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId });
@@ -659,6 +673,8 @@ export const convertExuluToolsToAiSdkTools = async (
                 upload,
                 exuluConfig,
                 toolVariablesConfig: toolVariablesConfigData,
+                // Present only inside a routine run: routine.runs.current.update({ status }).
+                routine: routineHandleFactory?.({ kind: "tool", id: cur.id }),
               },
               options,
             );

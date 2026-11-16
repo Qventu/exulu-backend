@@ -164,3 +164,70 @@ describe("mapRoutineRunRow", () => {
     });
   });
 });
+
+describe("work status in the runs query", () => {
+  const recorder = () => {
+    const calls: { name: string; args: any[] }[] = [];
+    const builder: any = {};
+    for (const name of ["where", "whereIn", "whereNull", "orWhereNotIn", "whereRaw", "leftJoin"]) {
+      builder[name] = (...args: any[]) => {
+        calls.push({ name, args });
+        // A where(fn) group: run the callback against the same recorder.
+        if (name === "where" && typeof args[0] === "function") args[0](builder);
+        return builder;
+      };
+    }
+    return { builder, calls };
+  };
+
+  it("filters by explicit work statuses", () => {
+    const { builder, calls } = recorder();
+    applyRoutineRunFilters(builder, { workStatuses: ["neu", "rueckfrage"] }, ["wf-1"]);
+    expect(calls).toContainEqual({ name: "whereIn", args: ["job_results.work_status", ["neu", "rueckfrage"]] });
+  });
+
+  it("open = no status or a status that is not done", () => {
+    const { builder, calls } = recorder();
+    applyRoutineRunFilters(builder, { workStatusOpen: true }, ["wf-1"], ["erledigt", "storniert"]);
+    expect(calls).toContainEqual({ name: "whereNull", args: ["job_results.work_status"] });
+    expect(calls).toContainEqual({ name: "orWhereNotIn", args: ["job_results.work_status", ["erledigt", "storniert"]] });
+  });
+
+  it("done = a status flagged done", () => {
+    const { builder, calls } = recorder();
+    applyRoutineRunFilters(builder, { workStatusOpen: false }, ["wf-1"], ["erledigt"]);
+    expect(calls).toContainEqual({ name: "whereIn", args: ["job_results.work_status", ["erledigt"]] });
+    expect(calls.some((c) => c.name === "whereNull")).toBe(false);
+  });
+
+  it("with no done status configured, open matches everything and done matches nothing", () => {
+    const open = recorder();
+    applyRoutineRunFilters(open.builder, { workStatusOpen: true }, ["wf-1"], []);
+    expect(open.calls.some((c) => c.name === "whereNull" || c.name === "orWhereNotIn")).toBe(false);
+    const done = recorder();
+    applyRoutineRunFilters(done.builder, { workStatusOpen: false }, ["wf-1"], []);
+    expect(done.calls).toContainEqual({ name: "whereRaw", args: ["1 = 0"] });
+  });
+
+  it("ignores workStatusOpen when the done keys are unknown (cross-routine list)", () => {
+    const { builder, calls } = recorder();
+    applyRoutineRunFilters(builder, { workStatusOpen: true }, ["wf-1", "wf-2"]);
+    expect(calls.map((c) => c.name)).toEqual(["where", "whereIn"]);
+  });
+
+  it("maps the work status columns, parsing updated_by from a string, and nulls when absent", () => {
+    const routineById = new Map([["wf-1", { id: "wf-1", name: "R", agent: "a" }]]);
+    const at = new Date("2026-11-16T09:12:00Z");
+    const run = mapRoutineRunRow(
+      { id: "jr-1", state: "completed", workflow: "wf-1", work_status: "alt_geloescht", work_status_updated_at: at, work_status_updated_by: '{"kind":"user","id":14}' },
+      routineById,
+    );
+    expect(run.work_status).toBe("alt_geloescht");
+    expect(run.work_status_updated_at).toBe(at);
+    expect(run.work_status_updated_by).toEqual({ kind: "user", id: 14 });
+    const bare = mapRoutineRunRow({ id: "jr-2", state: "completed", workflow: "wf-1" }, routineById);
+    expect(bare.work_status).toBeNull();
+    expect(bare.work_status_updated_at).toBeNull();
+    expect(bare.work_status_updated_by).toBeNull();
+  });
+});
