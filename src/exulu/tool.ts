@@ -106,6 +106,10 @@ export class ExuluTool {
     // image_generation, which needs toolCallId to scope persistence) can
     // read it; tools that don't simply ignore it. Typed loosely as `any`
     // because the AI SDK options shape is provider-specific.
+    // `inputs` carries the model's arguments plus injected context (sessionID,
+    // user, contexts, exuluConfig, …). Inside a routine run it also carries
+    // `routine` (RoutineHandle): `await inputs.routine?.runs.current.update({ status })`.
+    // It is undefined in a normal chat, so always use `?.`.
     execute: (inputs: any, options?: any) =>
       | Promise<{
           result?: string;

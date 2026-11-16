@@ -25,6 +25,7 @@ import type { ExuluTool } from "./tool";
 import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { postgresClient } from "@SRC/postgres/client.ts";
 import { isRunSessionMetadata } from "./routines/run-session";
+import { resolveRoutineHandleFactory } from "./routines/routine-handle";
 import { setSessionCurrentTask } from "./task-description.ts";
 import { autoDeclineStaleApprovals } from "./auto-decline-stale-approvals";
 import { sliceHistoryAtCheckpoint, deriveContextBudget, contextOccupancy, ContextCompactionRequiredError } from "./context-budget";
@@ -466,6 +467,7 @@ export const generateSync = async ({
         sessionOwnerId,
         undefined,
         undefined,
+        undefined, // routineHandleFactory: the sync path is never part of a routine run
         resolvedProject,
     );
 
@@ -762,6 +764,7 @@ export const generateStream = async ({
     maxStepCount,
     contextWindow,
     disabledTools,
+    routineRun,
 }: {
     user?: User;
     session?: string;
@@ -781,6 +784,12 @@ export const generateStream = async ({
     req?: Request;
     contextWindow?: number;
     disabledTools?: string[];
+    /**
+     * Set by the routine worker: the job_results row of the run this turn
+     * belongs to. A chat turn on a run session leaves it unset — the run is
+     * then resolved from the session metadata (routines/routine-handle.ts).
+     */
+    routineRun?: { jobResultId: string };
 }): Promise<{
     stream: ReturnType<typeof streamText>;
     originalMessages: UIMessage[];
@@ -799,6 +808,7 @@ export const generateStream = async ({
     let project: string | undefined;
     let sessionItems: string[] | undefined;
     let sessionOwnerId: number | string | undefined;
+    let sessionMetadata: unknown;
     let lastTurnAt: Date | undefined;
     // Access-checked project of this turn (null = none/detached/deleted/no access). Resolved
     // once and shared by the sandbox, the document tools and the prompt.
@@ -808,6 +818,7 @@ export const generateStream = async ({
         project = sessionData.project;
         sessionItems = sessionData.session_items;
         sessionOwnerId = sessionData.user ?? undefined;
+        sessionMetadata = sessionData.metadata;
         resolvedProject = await resolveSessionProject({
             projectId: project,
             ownerId: sessionOwnerId ?? user?.id,
@@ -1028,6 +1039,18 @@ ${skillsList}
 
     const memoryDecisions = collectMemoryDecisions(messages);
     const skillDecisions = collectSkillDecisions(messages);
+    // The `routine` object tools receive when this turn is part of a routine
+    // run — the worker's run, or a person continuing that run's session.
+    const routineHandleFactory =
+        routineRun || session
+            ? await resolveRoutineHandleFactory((await postgresClient()).db, {
+                  sessionId: session,
+                  sessionMetadata,
+                  jobResultId: routineRun?.jobResultId,
+                  actingUser: user?.id,
+              })
+            : undefined;
+
     const tools = await convertExuluToolsToAiSdkTools(
         currentTools,
         currentSkills,
@@ -1049,6 +1072,7 @@ ${skillsList}
         sessionOwnerId,
         memoryDecisions,
         skillDecisions,
+        routineHandleFactory,
         resolvedProject,
     )
     console.log("[EXULU] Converted tools", Object.keys(tools));

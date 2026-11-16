@@ -225,7 +225,7 @@ describe("document tools get the access-checked project", () => {
     await convertExuluToolsToAiSdkTools(
       [], [], [], [], [], undefined, { id: 7 } as never, { fileUploads: { s3Bucket: "b" } } as never,
       "session-1", undefined, "raw-project", undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, { id: "p-resolved", name: "Alpha" },
+      undefined, undefined, undefined, undefined, { id: "p-resolved", name: "Alpha" },
     );
     expect(createParseDocumentTool.mock.calls[0][0].projectId).toBe("p-resolved");
     expect(resolveSandboxProjectId).not.toHaveBeenCalled();
@@ -237,7 +237,7 @@ describe("save_to_project registration", () => {
     convertExuluToolsToAiSdkTools(
       [], [], [], [], [], undefined, user as never, { fileUploads: { s3Bucket: "b" } } as never,
       "session-1", undefined, "raw-project", undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, resolved as never,
+      undefined, undefined, undefined, undefined, resolved as never,
     );
   it("is registered, with approval, when the speaker can write to the project", async () => {
     const tools = await run({ id: "p1", name: "Alpha", speakerCanWrite: true });
@@ -258,7 +258,7 @@ describe("save_to_project approval", () => {
     convertExuluToolsToAiSdkTools(
       [], [], approved, [], [], undefined, { id: 7 } as never, { fileUploads: { s3Bucket: "b" } } as never,
       "session-1", undefined, "raw-project", undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, project as never,
+      undefined, undefined, undefined, undefined, project as never,
     );
   const ask = async (tools: any, input: unknown, messages: unknown[] = []) =>
     tools.save_to_project.needsApproval(input, { toolCallId: "c1", messages });
@@ -469,5 +469,67 @@ describe("project → session sandbox wiring", () => {
     (resolveSandboxProjectId as jest.Mock).mockResolvedValue(null);
     await sandboxCall("p1", 3, { id: 3 });
     expect((createSessionSandbox as jest.Mock).mock.calls[0][5]).toEqual({ projectId: null });
+  });
+});
+
+describe("routine handle in the execute context", () => {
+  const drainAll = async (gen: AsyncGenerator<unknown>) => {
+    for await (const _ of gen) void _;
+  };
+  const toolEntry = () => {
+    const execute = jest.fn(async (_inputs: Record<string, unknown>) => "ok");
+    return {
+      execute,
+      entry: { id: "generate_offer_xml", name: "Offer", description: "d", type: "utility", category: "erp", config: [], tool: { execute } } as never,
+    };
+  };
+  const convert = (entry: unknown, factory?: unknown) =>
+    convertExuluToolsToAiSdkTools(
+      [entry] as never, [], [], [], [], [] as never, undefined, undefined, undefined, undefined,
+      undefined, undefined, model, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      factory as never,
+    );
+
+  it("passes routine, built for the executing tool's id, when the turn is part of a routine run", async () => {
+    const handle = { id: "wf-1", name: "R", statuses: [], runs: { current: { id: "jr-1", status: null, update: jest.fn() } } };
+    const factory = jest.fn(() => handle);
+    const { execute, entry } = toolEntry();
+    const tools = await convert(entry, factory);
+    await drainAll((tools as Record<string, { execute: (i: unknown, o: unknown) => AsyncGenerator<unknown> }>).Offer.execute({}, {}));
+    expect(factory).toHaveBeenCalledWith({ kind: "tool", id: "generate_offer_xml" });
+    expect(execute.mock.calls[0][0].routine).toBe(handle);
+  });
+
+  it("passes routine: undefined outside a routine run", async () => {
+    const { execute, entry } = toolEntry();
+    const tools = await convert(entry);
+    await drainAll((tools as Record<string, { execute: (i: unknown, o: unknown) => AsyncGenerator<unknown> }>).Offer.execute({}, {}));
+    expect(execute.mock.calls[0][0].routine).toBeUndefined();
+  });
+});
+
+describe("set_routine_status injection", () => {
+  const handleWith = (statuses: unknown[]) => ({
+    id: "wf-1", name: "R", statuses,
+    runs: { current: { id: "jr-1", status: null, update: jest.fn(), updateWithResult: jest.fn() } },
+  });
+  const convert = (factory?: unknown, disabledTools?: string[]) =>
+    convertExuluToolsToAiSdkTools(
+      [] as never, [], [], [], [], [] as never, undefined, undefined, undefined, undefined,
+      undefined, undefined, model, undefined, undefined, undefined, disabledTools, undefined, undefined, undefined,
+      factory as never,
+    );
+  const hasStatusTool = (tools: Record<string, unknown>) => Object.keys(tools).some((name) => /set_routine_status/i.test(name));
+
+  it("is offered in a routine run whose routine has statuses, built with the agent as actor", async () => {
+    const factory = jest.fn(() => handleWith([{ key: "neu", label: "Neu" }]));
+    expect(hasStatusTool(await convert(factory))).toBe(true);
+    expect(factory).toHaveBeenCalledWith({ kind: "agent" });
+  });
+
+  it("is not offered outside a routine run, without statuses, or when disabled", async () => {
+    expect(hasStatusTool(await convert(undefined))).toBe(false);
+    expect(hasStatusTool(await convert(() => handleWith([])))).toBe(false);
+    expect(hasStatusTool(await convert(() => handleWith([{ key: "neu", label: "Neu" }]), ["set_routine_status"]))).toBe(false);
   });
 });

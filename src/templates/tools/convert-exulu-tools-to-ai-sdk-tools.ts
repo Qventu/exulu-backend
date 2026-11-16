@@ -32,6 +32,8 @@ import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-sear
 import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
 import { resolveSessionProject, type ResolvedSessionProject } from "@SRC/exulu/resolve-session-project";
+import type { RoutineHandleInternal } from "@SRC/exulu/routines/routine-handle";
+import { createRoutineStatusTool } from "./routine-status-tool";
 import { getPresignedUrl } from "@SRC/uppy";
 import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
 import { guardToolOutput } from "@SRC/exulu/tool-output-offload";
@@ -208,6 +210,11 @@ export const convertExuluToolsToAiSdkTools = async (
   /** Approved skill cards → the user's name/description/visibility choices, keyed by toolCallId. */
   skillDecisions?: Map<string, SkillDecision>,
   /**
+   * Builds the `routine` object for a tool when this turn is part of a
+   * routine run (routines/routine-handle.ts); undefined otherwise.
+   */
+  routineHandleFactory?: (actor: { kind: "tool"; id: string } | { kind: "agent" }) => RoutineHandleInternal,
+  /**
    * The access-checked project of this turn, resolved once by the caller (generate-stream
    * also needs its name for the prompt). Omit to have it resolved here; null = no project.
    */
@@ -358,6 +365,13 @@ export const convertExuluToolsToAiSdkTools = async (
   const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });
   if (parseDocumentTool && !disabled.has(parseDocumentTool.id)) {
     currentTools.push(parseDocumentTool);
+  }
+
+  // Inside a routine run with configured work statuses the agent may set
+  // the run's status itself (spec 2026-11-16-routine-work-status-design).
+  const routineStatusTool = createRoutineStatusTool(routineHandleFactory?.({ kind: "agent" }));
+  if (routineStatusTool && !disabled.has(routineStatusTool.id)) {
+    currentTools.push(routineStatusTool);
   }
 
   // Project sessions only, and only when the SPEAKER may write to the project (the session
@@ -702,6 +716,8 @@ export const convertExuluToolsToAiSdkTools = async (
                 upload,
                 exuluConfig,
                 toolVariablesConfig: toolVariablesConfigData,
+                // Present only inside a routine run: routine.runs.current.update({ status }).
+                routine: routineHandleFactory?.({ kind: "tool", id: cur.id }),
               },
               options,
             );

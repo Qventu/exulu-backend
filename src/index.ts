@@ -13,6 +13,7 @@ export { defaultChunker } from "./exulu/chunker.ts"
 export type { ChunkerOperation, ChunkerResponse } from "./exulu/chunker.ts"
 export type { ExuluContextEmbedder } from "./exulu/context.ts"
 export type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts"
+export type { RoutineHandle, RoutineRunPatch } from "./exulu/routines/routine-handle.ts"
 export { ExuluContext } from "./exulu/context.ts"
 export { ExuluReadApi } from "./exulu/read-api.ts";
 export { postgresClient } from "./postgres/client";

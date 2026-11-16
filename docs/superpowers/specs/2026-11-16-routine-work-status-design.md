@@ -6,8 +6,8 @@ Repos: `exulu/backend` (schema, API, tool context, built-in tool), `exulu/fronte
 
 ## Why
 
-ALGI's Kundendienst uses the routine runs list as an inbox: a mail arrives, the
-"Ersatzteil Angebot" routine runs, the row says "Abgeschlossen". That state is
+A service team uses the routine runs list as an inbox: a mail arrives, a
+mail-triggered offer routine runs, the row says "Abgeschlossen". That state is
 purely technical. It does not say whether the run produced an ERP offer, only
 prepared a clarification mail, or needs a human — and nobody can tick a run off
 as handled. The team asked for a working list: see what each run produced, and
@@ -73,6 +73,9 @@ Rules:
 - `key`: `^[a-z][a-z0-9_]{1,39}$`, unique within the routine, **immutable once
   saved**. Project code and tool mappings refer to keys; renaming one in the UI
   would silently break them. Label, colour, order and `done` stay editable.
+  Enforced in the settings UI (key field read-only after the first save); the
+  API cannot tell a rename from remove + add, which is allowed, so it only
+  checks format and uniqueness.
 - `default` must be one of the keys. It is written to a run when the run is
   created.
 - `color` is one of the design system's named badge colours (builder: reuse
@@ -162,7 +165,7 @@ Decisions made in the conversation:
    on an unconfigured routine is a setup mistake that should be visible in the
    run, not swallowed. (Builder: the offer-XML tool should therefore guard with
    `routine?.statuses.some(s => s.key === …)` or catch; the spec for that tool
-   change lives in the ALGI project.)
+   change lives in the project that owns the tool.)
 3. All-or-nothing: validate every field before writing any.
 4. **Human wins — during the worker's run.** When
    `work_status_updated_by.kind === "user"`, an `update` from a tool or the
@@ -215,9 +218,9 @@ available in the worker's run and in a chat a person continues on that run.
 Routine authors then steer it in the step text, e.g. "Wenn du eine Rückfrage
 vorbereitet hast, setze den Status auf Rückfrage vorbereitet."
 
-Hard facts should not depend on the model. For ALGI, the offer-XML tool sets
-`angebot_im_erp` itself (a real run showed the agent claiming an XML it never
-generated). That is a project change, outside this spec.
+Hard facts should not depend on the model. In an offer routine, the tool that
+creates the offer sets `angebot_im_erp` itself (a model can claim an action it
+never performed). That is a project change, outside this spec.
 
 ## API
 
@@ -258,7 +261,7 @@ Existing runs are not backfilled; they show no badge.
 - A work-status badge per row, next to the technical state badge. Clicking it
   opens a small menu with the routine's statuses; choosing one calls
   `setRoutineRunWorkStatus`. Optimistic update, revert with a toast on error.
-- Tooltip on the badge: who set it and when ("gesetzt von Laura Büttner,
+- Tooltip on the badge: who set it and when ("gesetzt von Erika Mustermann,
   16.11. 09:12" / "gesetzt vom Tool Generate offer XML").
 - **Two areas** when the routine has statuses (decided 2026-11-16): "Offen"
   (work status null or not flagged done) on top, "Erledigt" (flagged done)
