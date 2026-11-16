@@ -444,19 +444,25 @@ export function mayUseGenericS3Route(
 
 /**
  * Ownership rule of the generic read routes (`GET /s3/download`, `POST /s3/object`):
- * API users and super admins read anything, everyone else keys without a `user_`
- * segment or keys under their own `user_<id>/`. `key` is WITHOUT the bucket.
+ * API users and super admins read anything; everyone else a key whose FIRST
+ * segment (after the general prefix) is their own `user_<id>`, or does not start
+ * with `user_` at all. Only the first segment counts: that is where every upload
+ * path puts the owner (uploadFile, Uppy, session files), and a substring match let
+ * `user_2/x/user_1/y` through for user 1 while blocking `items/report_user_1.pdf`
+ * for everyone. `key` is WITHOUT the bucket.
  */
 export function mayReadGenericS3Key(
   key: string,
   user: { id?: number | string; type?: string; super_admin?: boolean },
+  s3prefix?: string | null,
 ): boolean {
-  return (
-    user.type === "api" ||
-    !!user.super_admin ||
-    !key.includes(`user_`) ||
-    key.includes(`user_${user.id}/`)
-  );
+  if (user.type === "api" || user.super_admin) return true;
+  let rest = key.replace(/^\/+/, "");
+  const general = (s3prefix ?? "").replace(/\/+$/, "");
+  // Keys outside the general prefix (older objects, other buckets) are judged as they are.
+  if (general && rest.startsWith(`${general}/`)) rest = rest.slice(general.length + 1);
+  const first = rest.split("/")[0] ?? "";
+  return !first.startsWith("user_") || first === `user_${user.id}`;
 }
 
 /**
@@ -753,7 +759,7 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
 
     // Only the user themselves, a super admin
     // or an api user can download files.
-    if (!mayReadGenericS3Key(key, user)) {
+    if (!mayReadGenericS3Key(key, user, config.fileUploads?.s3prefix)) {
       res
         .status(405)
         .json({ error: "Not allowed to access the file based on authenticated user." });
@@ -833,7 +839,7 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
 
     // Same ownership rule as GET /s3/download: another user's metadata (original
     // file names, sizes) is not the caller's to read.
-    if (!mayReadGenericS3Key(key, user)) {
+    if (!mayReadGenericS3Key(key, user, config.fileUploads?.s3prefix)) {
       res.status(403).json({ error: "Not allowed to access the file based on authenticated user." });
       return;
     }

@@ -16,7 +16,7 @@ jest.mock("@aws-sdk/s3-request-presigner", () => ({
 
 import { authentication } from "../auth/auth";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { createUppyRoutes, getS3SignedUploadUrl, multipartKeyBelongsTo } from "./index";
+import { createUppyRoutes, getS3SignedUploadUrl, mayReadGenericS3Key, multipartKeyBelongsTo } from "./index";
 
 const config: any = {
   fileUploads: {
@@ -243,5 +243,39 @@ describe("POST /s3/object", () => {
     const res = await request(app).post("/s3/object").send({ key: "bkt/user_1/gone.pdf" });
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: "Object not found." });
+  });
+});
+
+describe("mayReadGenericS3Key — the user_ rule applies to the first path segment only", () => {
+  const u1 = { id: 1, type: "user", super_admin: false };
+  it("refuses a nested user_<caller>/ under another user's prefix", () => {
+    expect(mayReadGenericS3Key("user_2/x/user_1/y", u1)).toBe(false);
+  });
+  it("allows a user_ substring in a filename or deeper segment", () => {
+    expect(mayReadGenericS3Key("items/report_user_1.pdf", u1)).toBe(true);
+    expect(mayReadGenericS3Key("items/user_2.pdf", u1)).toBe(true);
+  });
+  it("keeps own and foreign first-segment decisions", () => {
+    expect(mayReadGenericS3Key("user_1/a.pdf", u1)).toBe(true);
+    expect(mayReadGenericS3Key("user_10/a.pdf", u1)).toBe(false);
+    expect(mayReadGenericS3Key("user_api/a.pdf", u1)).toBe(false);
+    expect(mayReadGenericS3Key("global/a.png", u1)).toBe(true);
+  });
+  it("looks past the general prefix", () => {
+    expect(mayReadGenericS3Key("tenant/user_1/a.pdf", u1, "tenant/")).toBe(true);
+    expect(mayReadGenericS3Key("tenant/user_2/a.pdf", u1, "tenant")).toBe(false);
+    expect(mayReadGenericS3Key("tenant/user_2/user_1/a.pdf", u1, "tenant")).toBe(false);
+  });
+  it("API users and super admins read anything", () => {
+    expect(mayReadGenericS3Key("user_2/a", { id: 9, type: "api" })).toBe(true);
+    expect(mayReadGenericS3Key("user_2/a", { id: 9, super_admin: true })).toBe(true);
+  });
+});
+
+describe("GET /s3/download uses the first-segment rule", () => {
+  it("refuses user_2/x/user_1/y for user 1 and allows items/report_user_1.pdf", async () => {
+    authAs(normalUser);
+    expect((await request(app).get("/s3/download").query({ key: "bkt/user_2/x/user_1/y" })).status).toBe(405);
+    expect((await request(app).get("/s3/download").query({ key: "bkt/items/report_user_1.pdf" })).status).toBe(200);
   });
 });
