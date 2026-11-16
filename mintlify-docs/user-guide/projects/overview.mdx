@@ -13,13 +13,30 @@ import { RightsCallout } from "/snippets/rights-callout.mdx";
 A project is a workspace that keeps related work together. Every project holds:
 
 - **Sessions** — the conversations you start inside the project. Members can see and continue any session in the project.
-- **Files** — up to 15 pinned knowledge items shared across every session in that project. You don't need to re-add them each time.
+- **Knowledge** — up to 15 pinned knowledge items shared across every session in that project. You don't need to re-add them each time.
+- **Files** — a shared folder of documents (PDFs, spreadsheets, images, …) that every session in the project can read. See [Project files](#project-files).
 - **Custom instructions** — text added to the system prompt of every conversation in the project. Use it to set context once ("This project covers our Q3 roadmap — respond in German.").
 - **Access control** — the project can be private (only you), shared with specific users, or shared with roles.
 
 <Frame caption="Creating a new project: enter a name, optionally add a description, and click Create project.">
   <video autoPlay muted loop playsInline src="/videos/create-project.mp4" />
 </Frame>
+
+## Project files
+
+Every project has one shared folder. Whatever is in it is available in every session of the project, for everyone who can open the project: in a project session the **Project** section of the files sidebar sits above **This session**, and the agent reads the folder's files as `project/<name>`.
+
+- **Who can read, who can write** — anyone with read access to the project sees the folder. Only people with write access can add or delete files or use **Add to project**; for everyone else the folder is read-only.
+- **Sharing a project session** — the agent in a project session reads the folder with the session owner's access, so sharing a project session with someone outside the project lets them read project files through the agent in that session.
+- **Adding files** — upload on the project's **Files** tab or in a project session's sidebar, or click **Add to project** on a session file. If a file with that name already exists you are asked before it is replaced; nothing is overwritten silently.
+- **The agent** — an agent can read project files but not change them directly. When it should keep something it produced, it uses the `save_to_project` tool, which asks you to approve a save unless you allowed the tool for the chat, and always asks before replacing an existing project file. The saved file is visible to the agent as `project/<name>` from the next message on.
+- **Origin marker** — files the agent created carry a small agent icon ("Created by the agent") in the folder and in the sidebar.
+- **Limits** — up to 200 files per project, flat names (no subfolders), 50 MB per file.
+- **Files versus knowledge** — files are documents the agent opens and reads on demand, exactly as they are. Knowledge items are indexed for search and shared across sessions. Use files for a specific document you want read as a whole, knowledge for material to search across.
+
+<Note>
+Project files are only reachable through the project, so deleting a project makes its files unreachable. Session files stay private to their session until someone adds them to the project.
+</Note>
 
 ## The projects screen
 

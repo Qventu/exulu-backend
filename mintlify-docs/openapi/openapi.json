@@ -2294,7 +2294,7 @@
       "get": {
         "operationId": "s3Sts",
         "summary": "Get STS federation token",
-        "description": "Returns temporary AWS STS credentials (via `GetFederationToken`) that give the holder `s3:PutObject` permission on the configured bucket. The token is cached by the browser for `expiresIn` seconds. Used by the Uppy AwsS3 plugin for direct multipart uploads.",
+        "description": "Requires authentication (bearer token, `exulu-api-key` or `internal-key`). Returns temporary AWS STS credentials (via `GetFederationToken`) whose policy grants `s3:PutObject` only under the caller's own prefix (`[<s3prefix>/]user_<id>/*`, `user_api/*` for API keys) — never another user's prefix, `global/` or `projects/`. The response is marked `private` and cached by the browser for `expiresIn` seconds. Used by the Uppy AwsS3 plugin for direct multipart uploads.",
         "tags": ["Uploads"],
         "responses": {
           "200": {

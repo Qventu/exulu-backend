@@ -4,6 +4,8 @@ import {
 } from "./convert-exulu-tools-to-ai-sdk-tools";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
 import { postgresClient } from "@SRC/postgres/client";
+import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
+import { resolveSandboxProjectId } from "@EE/invoke-skills/project-sync";
 
 jest.mock("@EE/agentic-retrieval/pipeline/index", () => ({
   createAgenticRetrievalTool: jest.fn(() => ({
@@ -24,6 +26,7 @@ jest.mock("@SRC/postgres/client", () => ({ postgresClient: jest.fn() }));
 
 // Additional mocks to prevent import-time failures from heavy side-effect modules
 jest.mock("@EE/invoke-skills/create-sandbox", () => ({ createSessionSandbox: jest.fn() }));
+jest.mock("@EE/invoke-skills/project-sync", () => ({ resolveSandboxProjectId: jest.fn(async () => null) }));
 jest.mock("@SRC/uppy", () => ({ getPresignedUrl: jest.fn() }));
 jest.mock("@SRC/exulu/tool-output-offload", () => ({ guardToolOutput: jest.fn(async (v: unknown) => v) }));
 jest.mock("@SRC/exulu/statistics", () => ({ updateStatistic: jest.fn() }));
@@ -192,12 +195,90 @@ describe("document tool registration", () => {
       sessionID: "session-1",
       user: { id: 7 },
       exuluConfig: { fileUploads: { s3Bucket: "b" } },
+      projectId: null,
     });
     expect(createViewDocumentPageTool).toHaveBeenCalledWith({
       sessionID: "session-1",
       user: { id: 7 },
       exuluConfig: { fileUploads: { s3Bucket: "b" } },
+      projectId: null,
     });
+  });
+});
+
+describe("document tools get the access-checked project", () => {
+  it("passes the resolved id, not the raw session project, and resolves once", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { createParseDocumentTool } = require("./parse-document-tool") as { createParseDocumentTool: jest.Mock };
+    createParseDocumentTool.mockClear();
+    (resolveSandboxProjectId as jest.Mock).mockReset();
+    (resolveSandboxProjectId as jest.Mock).mockResolvedValue(null);
+    await convertExuluToolsToAiSdkTools(
+      [], [], [], [], [], undefined, { id: 7 } as never, { fileUploads: { s3Bucket: "b" } } as never,
+      "session-1", undefined, "raw-project",
+    );
+    expect(createParseDocumentTool.mock.calls[0][0].projectId).toBeNull();
+
+    createParseDocumentTool.mockClear();
+    (resolveSandboxProjectId as jest.Mock).mockClear();
+    // a caller that already resolved hands the result in: no second resolution
+    await convertExuluToolsToAiSdkTools(
+      [], [], [], [], [], undefined, { id: 7 } as never, { fileUploads: { s3Bucket: "b" } } as never,
+      "session-1", undefined, "raw-project", undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, { id: "p-resolved", name: "Alpha" },
+    );
+    expect(createParseDocumentTool.mock.calls[0][0].projectId).toBe("p-resolved");
+    expect(resolveSandboxProjectId).not.toHaveBeenCalled();
+  });
+});
+
+describe("save_to_project registration", () => {
+  const run = (resolved: unknown, user: unknown = { id: 7 }) =>
+    convertExuluToolsToAiSdkTools(
+      [], [], [], [], [], undefined, user as never, { fileUploads: { s3Bucket: "b" } } as never,
+      "session-1", undefined, "raw-project", undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, resolved as never,
+    );
+  it("is registered, with approval, when the speaker can write to the project", async () => {
+    const tools = await run({ id: "p1", name: "Alpha", speakerCanWrite: true });
+    expect(Object.keys(tools)).toContain("save_to_project");
+    const needs = (tools.save_to_project as any).needsApproval;
+    expect(await needs({}, { toolCallId: "c1", messages: [] })).toBe(true);
+  });
+  it("is absent without a project, for a reader, and for a guest speaker", async () => {
+    expect(Object.keys(await run(null))).not.toContain("save_to_project");
+    expect(Object.keys(await run({ id: "p1", name: "Alpha", speakerCanWrite: false }))).not.toContain("save_to_project");
+    expect(Object.keys(await run({ id: "p1", name: "Alpha", speakerCanWrite: true }, null))).not.toContain("save_to_project");
+  });
+});
+
+describe("save_to_project approval", () => {
+  const project = { id: "p1", name: "Alpha", speakerCanWrite: true };
+  const build = (approved: string[]) =>
+    convertExuluToolsToAiSdkTools(
+      [], [], approved, [], [], undefined, { id: 7 } as never, { fileUploads: { s3Bucket: "b" } } as never,
+      "session-1", undefined, "raw-project", undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, project as never,
+    );
+  const ask = async (tools: any, input: unknown, messages: unknown[] = []) =>
+    tools.save_to_project.needsApproval(input, { toolCallId: "c1", messages });
+  const answered = [
+    { role: "assistant", content: [{ type: "tool-approval-request", approvalId: "a1", toolCallId: "c1" }] },
+    { role: "tool", content: [{ type: "tool-approval-response", approvalId: "a1", approved: true }] },
+  ];
+  it("allowed for this chat: a plain save is not asked again, an overwrite always is", async () => {
+    const tools = await build(["tool-save_to_project"]);
+    expect(await ask(tools, { filename: "a.pdf" })).toBe(false);
+    expect(await ask(tools, { filename: "a.pdf", overwrite: true })).toBe(true);
+  });
+  it("not allowed for the chat: every call is asked", async () => {
+    const tools = await build([]);
+    expect(await ask(tools, { filename: "a.pdf" })).toBe(true);
+  });
+  it("an already-answered overwrite call keeps needing approval so the SDK honours the answer", async () => {
+    const tools = await build(["tool-save_to_project"]);
+    expect(await ask(tools, { filename: "a.pdf", overwrite: true }, answered)).toBe(true);
+    expect(await ask(tools, { filename: "a.pdf" }, answered)).toBe(true);
   });
 });
 
@@ -360,6 +441,34 @@ describe("memory tool registration", () => {
     for await (const _chunk of (tools as any).memory_forget.execute({ memoryId: "m1" }, { toolCallId: "call-1", messages: [] })) { /* drain */ }
     expect(seen[0].memoryDecision).toEqual({ v: 1, kind: "forget" });
     expect(seen[0].user).toBe(user);
+  });
+});
+
+describe("project → session sandbox wiring", () => {
+  const sandboxCall = (project: string | undefined, ownerId: number, user: unknown) =>
+    convertExuluToolsToAiSdkTools(
+      [] as never, [], [], [], [], [] as never, user as never, {} as never, "s1", undefined,
+      project, undefined, model, { id: "a1", name: "A", sandbox_enabled: true } as never, undefined, undefined,
+      ["agentic_context_search"], ownerId,
+    );
+
+  beforeEach(() => {
+    (createSessionSandbox as jest.Mock).mockReset().mockResolvedValue({ tools: {}, sessionDir: "/tmp/x" });
+    (resolveSandboxProjectId as jest.Mock).mockReset();
+  });
+
+  it("passes the project id the resolver granted for the session owner", async () => {
+    (resolveSandboxProjectId as jest.Mock).mockResolvedValue("p1");
+    const user = { id: 9, role: { id: "r1" } };
+    await sandboxCall("p1", 3, user);
+    expect((resolveSandboxProjectId as jest.Mock).mock.calls[0][0]).toEqual({ projectId: "p1", ownerId: 3, owner: user });
+    expect((createSessionSandbox as jest.Mock).mock.calls[0][5]).toEqual({ projectId: "p1" });
+  });
+
+  it("passes null when the resolver denies (no access, gone, or failed)", async () => {
+    (resolveSandboxProjectId as jest.Mock).mockResolvedValue(null);
+    await sandboxCall("p1", 3, { id: 3 });
+    expect((createSessionSandbox as jest.Mock).mock.calls[0][5]).toEqual({ projectId: null });
   });
 });
 

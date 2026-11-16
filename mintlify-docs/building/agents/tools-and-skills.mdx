@@ -165,6 +165,18 @@ files in the proposal replace or add, and listed paths are removed. Earlier
 versions stay available on the skill's page.
 </Note>
 
+## Project files
+
+In a session that belongs to a project, the project's shared folder is available to the agent as `project/<name>`. Plain names keep meaning the session's own files.
+
+- **Reading** — `read_session_file`, `parse_document` and `view_document_page` accept `project/<name>` as the filename. They read the folder straight from storage, so this works with or without a sandbox. With a sandbox enabled the folder also appears under `project/` in the working directory, synced in on every turn including deletions.
+- **Read-only** — the agent cannot change the folder through the sandbox: anything it writes under `project/` is not uploaded and is replaced on the next sync.
+- **Writing: `save_to_project`** — the agent's only way to add a file. It takes the `filename` of one flat session file and an optional `overwrite`, and copies it into the folder. It requires approval like the other write tools, and it is registered only when the person speaking in that turn has write access to the project (not the session owner, who may have different rights). If the name already exists nothing is copied; the agent reports the clash and may retry with `overwrite: true` only after the user confirms. The saved file is visible as `project/<name>` from the next turn.
+- **Prompt** — the system prompt lists the project's files with size, age and a `NEW` marker, like the session files, and explains the two scopes. The listing shows the 25 newest files and says how many more exist. If the speaker cannot write, the prompt says so and points to the sidebar instead of the tool.
+- **Limits** — 200 files per project; a promote of several files at once is capped at 20 files and 50 MB in total.
+
+If the session's owner has lost read access to the project, or the project was deleted or detached, the session behaves as if it had no project.
+
 ## Sub-agents as tools
 
 When **sub-agent orchestration** is enabled on this deployment, other agents appear in the Tools & skills section under the **Agents** category. Enabling an agent-as-tool means the current agent can call the sub-agent during a conversation — for example, routing specialized questions to a domain expert agent.

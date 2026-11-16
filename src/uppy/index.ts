@@ -21,6 +21,7 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { STSClient, GetFederationTokenCommand } from "@aws-sdk/client-sts";
 import { randomUUID } from "node:crypto";
+import { isProjectKey } from "../exulu/project-files";
 
 const expiresIn = 60 * 60 * 24 * 1; // S3 signature expires within 1 day.
 
@@ -286,6 +287,9 @@ export const copyS3Object = async (
     Bucket: bucket,
     CopySource: `${bucket}/${encodeS3KeyForCopySource(sourceKey)}`,
     Key: destKey,
+    // Explicit so the origin marker (exulu-origin) survives a copy; promoting a
+    // file into a project must not turn an agent file into a "user" file.
+    MetadataDirective: "COPY",
   });
   await client.send(command);
 };
@@ -366,6 +370,101 @@ export const getS3ObjectEtag = async (
 };
 
 /**
+ * Read the user metadata (e.g. exulu-origin) of an S3 object via HeadObject.
+ * Returns undefined if HeadObject fails, so callers can treat it as "unknown".
+ */
+export const getS3ObjectMetadata = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<Record<string, string> | undefined> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  try {
+    const response = await client.send(
+      new HeadObjectCommand({ Bucket: config.fileUploads.s3Bucket, Key: key }),
+    );
+    return response.Metadata;
+  } catch {
+    return undefined;
+  }
+};
+
+/** True for the error shapes the SDK throws when an object does not exist. */
+export function isS3NotFound(err: unknown): boolean {
+  const e = err as { name?: string; Code?: string; $metadata?: { httpStatusCode?: number } } | null;
+  return (
+    e?.$metadata?.httpStatusCode === 404 ||
+    e?.name === "NotFound" ||
+    e?.name === "NoSuchKey" ||
+    e?.Code === "NotFound" ||
+    e?.Code === "NoSuchKey"
+  );
+}
+
+/**
+ * Like getS3ObjectMetadata, but only a missing object yields undefined; any other failure
+ * (network, throttling, credentials) throws so a caller that memoises the answer does not
+ * cache a transient error as if it were the object's real metadata.
+ */
+export const getS3ObjectMetadataStrict = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<Record<string, string> | undefined> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  try {
+    const response = await client.send(
+      new HeadObjectCommand({ Bucket: config.fileUploads.s3Bucket, Key: key }),
+    );
+    return response.Metadata;
+  } catch (err) {
+    if (isS3NotFound(err)) return undefined;
+    throw err;
+  }
+};
+
+/**
+ * The generic /s3/* routes only check the `user_<id>` segment, so a key without
+ * one (project files) would be served to any authenticated user. Project files
+ * go through the project routes, which check project membership; only API keys
+ * and super admins may touch them here. `key` is the object key WITHOUT bucket.
+ */
+export function mayUseGenericS3Route(
+  key: string,
+  user: { type?: string; super_admin?: boolean },
+  s3prefix?: string | null,
+): boolean {
+  if (user.type === "api" || user.super_admin) return true;
+  return !isProjectKey(key, s3prefix);
+}
+
+/**
+ * STS policy for browser uploads: the caller may only write under their own
+ * prefix (matches addUserPrefixToKey), never another user's, global/ or projects/.
+ */
+export function buildStsPolicy(
+  bucket: string,
+  userId: number | string,
+  s3prefix?: string | null,
+) {
+  const general = s3prefix ? `${s3prefix.replace(/\/+$/, "")}/` : "";
+  return {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Allow",
+        Action: ["s3:PutObject"],
+        Resource: [`arn:aws:s3:::${bucket}/${general}user_${userId}/*`],
+      },
+    ],
+  };
+}
+
+/**
  * Fetch the byte size of an S3 object via HeadObject, without downloading
  * it. Used to enforce a size cap on a copy-only path (session file adopt)
  * that never passes through the presigned-PUT upload flow, so the client's
@@ -439,6 +538,8 @@ export const getS3SignedUploadUrl = async (
   key: string,
   contentType: string,
   config: ExuluConfig,
+  // Defaults to a day; project uploads pass minutes (PROJECT_UPLOAD_URL_TTL_SECONDS).
+  opts: { expiresIn?: number } = {},
 ): Promise<string> => {
   if (!config.fileUploads) {
     throw new Error("File uploads are not configured");
@@ -452,7 +553,7 @@ export const getS3SignedUploadUrl = async (
       Key: key,
       ContentType: contentType,
     }),
-    { expiresIn },
+    { expiresIn: opts.expiresIn ?? expiresIn },
   );
   return url;
 };
@@ -461,20 +562,6 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
   if (!config.fileUploads) {
     throw new Error("File uploads are not configured");
   }
-
-  const policy = {
-    Version: "2012-10-17",
-    Statement: [
-      {
-        Effect: "Allow",
-        Action: ["s3:PutObject"],
-        Resource: [
-          `arn:aws:s3:::${config.fileUploads.s3Bucket}/*`,
-          `arn:aws:s3:::${config.fileUploads.s3Bucket}`,
-        ],
-      },
-    ],
-  };
 
   /**
    * @type {STSClient}
@@ -535,6 +622,11 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     // Bucket should always be the
     // first part of the key.
     let bucket = key.split("/")[0];
+
+    if (!mayUseGenericS3Route(key.replace(`${bucket}/`, ""), user, config.fileUploads.s3prefix)) {
+      res.status(403).json({ error: "Project files cannot be deleted through this route." });
+      return;
+    }
 
     // Only the user themselves, a super admin
     // or an api user can delete files.
@@ -614,6 +706,11 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
       return;
     }
 
+    if (!mayUseGenericS3Route(key, user, config.fileUploads?.s3prefix)) {
+      res.status(403).json({ error: "Project files cannot be downloaded through this route." });
+      return;
+    }
+
     // Only the user themselves, a super admin
     // or an api user can download files.
     let allowed = false;
@@ -689,6 +786,12 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
       return;
     }
 
+    // HeadObject exposes size and metadata of any key, so project keys are closed here too.
+    if (!mayUseGenericS3Route(key, authenticationResult.user, config.fileUploads.s3prefix)) {
+      res.status(403).json({ error: "Project files cannot be read through this route." });
+      return;
+    }
+
     const client = getS3Client(config);
     const command = new HeadObjectCommand({
       Bucket: bucket,
@@ -732,10 +835,11 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
 
     let prefix = `${config.fileUploads.s3prefix ? config.fileUploads.s3prefix.replace(/\/$/, "") + "/" : ""}`;
 
+    // Trailing slash: without it user 1's prefix also matches user_10/, user_100/ …
     if (!req.headers.global) {
-      prefix += `user_${authenticationResult.user.id}`;
+      prefix += `user_${authenticationResult.user.id}/`;
     } else {
-      prefix += "global";
+      prefix += "global/";
     }
 
     console.log("[EXULU] bucket", config.fileUploads.s3Bucket);
@@ -800,10 +904,31 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     res.end();
   });
 
-  app.get("/s3/sts", (req, res, next) => {
+  app.get("/s3/sts", async (req, res, next) => {
     if (!config.fileUploads) {
       throw new Error("File uploads are not configured");
     }
+    // The policy is scoped to the caller's own prefix, so the route must know the caller.
+    const apikey: any = req.headers["exulu-api-key"] || null;
+    const internalkey: any = req.headers["internal-key"] || null;
+    const { db } = await postgresClient();
+    let authtoken: any = null;
+    if (typeof apikey !== "string" && typeof internalkey !== "string") {
+      authtoken = await getToken(req.headers.authorization ?? "");
+    }
+    const authenticationResult = await authentication({ authtoken, apikey, internalkey, db });
+    if (!authenticationResult.user?.id) {
+      res
+        .status(authenticationResult.code || 500)
+        .json({ detail: `${authenticationResult.message}` });
+      return;
+    }
+    const user = authenticationResult.user;
+    const policy = buildStsPolicy(
+      config.fileUploads.s3Bucket,
+      user.type === "api" ? "api" : user.id,
+      config.fileUploads.s3prefix,
+    );
     getSTSClient()
       .send(
         new GetFederationTokenCommand({
@@ -816,10 +941,9 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
         }),
       )
       .then((response) => {
-        // Test creating multipart upload from the server — it works
-        // createMultipartUploadYo(response)
         res.setHeader("Access-Control-Allow-Origin", "*");
-        res.setHeader("Cache-Control", `public,max-age=${expiresIn}`);
+        // Per-user credentials must never sit in a shared cache.
+        res.setHeader("Cache-Control", `private,max-age=${expiresIn}`);
         res.json({
           credentials: response.Credentials,
           bucket: config.fileUploads?.s3Bucket,

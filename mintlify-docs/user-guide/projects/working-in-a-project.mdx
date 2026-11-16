@@ -1,6 +1,6 @@
 ---
 title: "Working in a project"
-description: "Start sessions, pin knowledge files, and configure a project's details, access, and custom instructions."
+description: "Start sessions, pin knowledge, manage shared files, and configure a project's details, access, and custom instructions."
 icon: "layout-panel-top"
 ---
 
@@ -17,7 +17,7 @@ Below the header, a meta row may appear with one or both of the following:
 - **Budget indicator** — a compact usage bar showing how much of the project's budget has been spent, with a percentage label. Click or keyboard-activate it to open a popover with the full detail: amount used, amount remaining, projected spend, and reset date. The indicator appears only when the project has a capped budget set; it is read-only for all users (no editing affordances here). Whether the popover shows exact amounts or percentages depends on the platform's display setting.
 - **Instructions active · View** — a quiet line shown when the project has custom instructions. Click **View** to jump to the project's Settings tab.
 
-The workspace has three URL-backed tabs — switching tabs pushes a history entry, so the browser back button steps between them.
+The workspace has four URL-backed tabs (Sessions, Files, Knowledge and Settings) — switching tabs pushes a history entry, so the browser back button steps between them.
 
 ### Overflow menu (⋯)
 
@@ -45,7 +45,11 @@ Sessions that belong to a project are visible to all project members, regardless
 
 ## Files tab
 
-The Files tab holds up to 15 knowledge items pinned to the project. Every session in the project can access these items without you having to add them manually each time. In addition, when a session belongs to a project, the knowledge search tool automatically includes the project's pinned files as a retrieval source — so agents with knowledge search enabled will draw on project files alongside their other configured sources. See [Knowledge search](/building/agents/knowledge-search) for details on how the project search option works.
+The Files tab manages the project's shared folder: upload documents, preview them, and delete them. Everyone with read access sees the folder; only people with write access get the upload and delete controls. See [Project files](/user-guide/projects/overview#project-files) for how sessions and agents use it.
+
+## Knowledge tab
+
+The Knowledge tab holds up to 15 knowledge items pinned to the project. Every session in the project can access these items without you having to add them manually each time. In addition, when a session belongs to a project, the knowledge search tool automatically includes the project's pinned files as a retrieval source — so agents with knowledge search enabled will draw on project files alongside their other configured sources. See [Knowledge search](/building/agents/knowledge-search) for details on how the project search option works.
 
 The counter in the tab label shows the current count, for example `3/15`. At the limit, the **Add files** button becomes disabled and IMP shows "This project has reached the limit of 15 files. Remove one to add another."
 
@@ -53,7 +57,7 @@ The counter in the tab label shows the current count, for example `3/15`. At the
 
 <Steps>
   <Step title="Open the file picker">
-    Click **Add files** in the Files tab.
+    Click **Add files** in the Knowledge tab.
   </Step>
   <Step title="Choose items">
     Select one or more items from your knowledge contexts. You can also apply a preset or select an entire context.

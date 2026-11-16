@@ -25,11 +25,13 @@ import { createMemoryTools } from "@SRC/exulu/memory/tools";
 import { checkMemoryBase } from "@SRC/exulu/memory/memory-base";
 import { isMemoryToolId, type MemoryDecision } from "@SRC/exulu/memory/decisions";
 import { collectKbWriteTools } from "./context-write-tools";
+import { createSaveToProjectTool } from "./save-to-project-tool";
 import { collectSkillAuthorTools } from "./skill-author-tools";
 import type { SkillDecision } from "@SRC/exulu/skills/decisions";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
+import { resolveSessionProject, type ResolvedSessionProject } from "@SRC/exulu/resolve-session-project";
 import type { RoutineHandleInternal } from "@SRC/exulu/routines/routine-handle";
 import { createRoutineStatusTool } from "./routine-status-tool";
 import { getPresignedUrl } from "@SRC/uppy";
@@ -212,6 +214,11 @@ export const convertExuluToolsToAiSdkTools = async (
    * routine run (routines/routine-handle.ts); undefined otherwise.
    */
   routineHandleFactory?: (actor: { kind: "tool"; id: string } | { kind: "agent" }) => RoutineHandleInternal,
+  /**
+   * The access-checked project of this turn, resolved once by the caller (generate-stream
+   * also needs its name for the prompt). Omit to have it resolved here; null = no project.
+   */
+  resolvedProject?: ResolvedSessionProject | null,
 ): Promise<Record<string, Tool>> => {
   if (!currentTools) return {};
 
@@ -232,6 +239,18 @@ export const convertExuluToolsToAiSdkTools = async (
   // GATED on the agent's `sandbox_enabled` flag (pure opt-in, default off): a
   // knowledge-only agent gets no sandbox and won't be tempted into spurious shell
   // calls. Undefined/false → no sandbox. Skill execution requires this enabled.
+  // One access-checked project id per turn for the sandbox AND the document tools. The
+  // sandbox is one per session, so it follows the session OWNER's access, not the
+  // speaker's. Never the raw `project`: a deleted or inaccessible project must look
+  // like no project everywhere.
+  const turnProject =
+    resolvedProject !== undefined
+      ? resolvedProject
+      : sessionID
+        ? await resolveSessionProject({ projectId: project, ownerId: sessionOwnerId ?? user?.id, owner: user, speaker: user })
+        : null;
+  const sandboxProjectId = turnProject?.id ?? null;
+
   let sharedSessionSandbox:
     | Awaited<ReturnType<typeof createSessionSandbox>>
     | undefined;
@@ -245,6 +264,7 @@ export const convertExuluToolsToAiSdkTools = async (
         // Same agent descriptor the tool-call audit emitter uses below, so a
         // skill.sandbox.created event can be joined to the agent that caused it.
         agent ? { id: agent.id, name: agent.name, slug: (agent as any).slug } : undefined,
+        { projectId: sandboxProjectId },
       );
     } catch (err) {
       console.error(
@@ -337,12 +357,12 @@ export const convertExuluToolsToAiSdkTools = async (
     }
   }
 
-  const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId });
+  const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });
   if (sessionFileReadTool && !disabled.has(sessionFileReadTool.id)) {
     currentTools.push(sessionFileReadTool);
   }
 
-  const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId });
+  const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });
   if (parseDocumentTool && !disabled.has(parseDocumentTool.id)) {
     currentTools.push(parseDocumentTool);
   }
@@ -354,7 +374,28 @@ export const convertExuluToolsToAiSdkTools = async (
     currentTools.push(routineStatusTool);
   }
 
-  const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId });
+  // Project sessions only, and only when the SPEAKER may write to the project (the session
+  // owner may have been granted less than the colleague continuing the session).
+  // Invariant: the speaker's SESSION write access is not re-checked here or in the tool. The
+  // single check is the agent run route in src/exulu/routes.ts (registerAgentRunRoute,
+  // checkRecordAccess(session, "write", user), near line 808), which covers both the streaming
+  // and the sync turn; the other checkRecordAccess(…, "write", …) near line 1245 belongs to the
+  // compaction route, which runs no tools. Routine steps (ee/workers.ts, generateStream near line
+  // 1896) do NOT pass through that check: they run as the routine's identity in its own session.
+  const saveToProjectTool = createSaveToProjectTool({
+    sessionID,
+    user,
+    req,
+    exuluConfig,
+    ownerId: sessionOwnerId,
+    project: turnProject,
+    disabled,
+  });
+  if (saveToProjectTool) {
+    currentTools.push(saveToProjectTool);
+  }
+
+  const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });
   if (viewDocumentPageTool && !disabled.has(viewDocumentPageTool.id)) {
     currentTools.push(viewDocumentPageTool);
   }
@@ -532,11 +573,13 @@ export const convertExuluToolsToAiSdkTools = async (
             ? (input: unknown, opts: { toolCallId: string; messages: unknown[] }) => cur.needsApprovalFn!(input, opts)
             : isMemoryToolId(cur.id)
               ? true
-              : (_input: unknown, opts: { toolCallId: string; messages: unknown[] }) =>
+              : (input: unknown, opts: { toolCallId: string; messages: unknown[] }) =>
                   needsApprovalForCall({
                     toolCallId: opts.toolCallId,
                     messages: opts.messages,
-                    approvedForSession,
+                    // alwaysAskWhen only removes the "allowed for this chat" shortcut for
+                    // that call; an answered approval still reads as true, so no denial loop.
+                    approvedForSession: approvedForSession && !cur.alwaysAskWhen?.(input),
                     requiresApproval: !!cur.needsApproval, // todo make configurable
                   }),
           // Auth-wrapped tools: the model sees scrub text instead of the

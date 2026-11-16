@@ -325,6 +325,12 @@ describe("ownsObjectKey", () => {
     expect(ownsObjectKey("user_26/x.html", { id: 26, type: "api" })).toBe(false);
     expect(ownsObjectKey("shared-artifacts/x/index.html", { id: 7, super_admin: true })).toBe(true);
   });
+  test("project files are refused for users and API keys; only the super-admin bypass reaches them", () => {
+    expect(ownsObjectKey("projects/p1/files/a.pdf", { id: 7 })).toBe(false);
+    expect(ownsObjectKey("imp/projects/p1/files/a.pdf", { id: 7 }, "imp")).toBe(false);
+    expect(ownsObjectKey("imp/projects/p1/files/a.pdf", { id: 26, type: "api" }, "imp")).toBe(false);
+    expect(ownsObjectKey("imp/projects/p1/files/a.pdf", { id: 7, super_admin: true }, "imp")).toBe(true);
+  });
 });
 
 describe("validateUpdateInput / planShareUpdate with s3key", () => {
