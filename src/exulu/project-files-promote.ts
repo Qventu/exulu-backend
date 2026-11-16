@@ -12,7 +12,7 @@ export type PromoteS3 = {
 };
 
 export type PromoteResult = {
-  promoted: { key: string; name: string }[];
+  promoted: { key: string; name: string; sourceKey: string }[];
   rejected: { key: string; reason: string }[];
   clashes: string[];
 };
@@ -76,7 +76,7 @@ export async function promoteSessionFiles(args: {
   for (const a of plan.accepted) {
     try {
       await args.s3.copy(a.sourceKey, a.destKey);
-      promoted.push({ key: a.destKey, name: a.name });
+      promoted.push({ key: a.destKey, name: a.name, sourceKey: a.sourceKey });
     } catch (err) {
       console.error("[PROJECT-FILES] copy failed", a.sourceKey, err);
       rejected.push({ key: a.sourceKey, reason: COPY_FAILED_REASON });
@@ -91,20 +91,23 @@ export type MoveS3 = PromoteS3 & {
 };
 
 export type MoveResult = {
-  /** Names now in the project (their session original is gone unless listed in originalsKept). */
+  /** Names now in the project whose session original is gone. */
   moved: string[];
   /** Names that stayed in the session, with why. Never a file that is in neither place. */
   notMoved: { name: string; reason: string }[];
-  /** Moved names whose session original could not be deleted: they exist in BOTH places. */
+  /** Copied, but the session original could not be deleted: the file exists in BOTH places. */
   originalsKept: string[];
+  /** Copied, and the original deliberately kept because an earlier message refers to its key. */
+  keptForHistory: string[];
 };
 
 /**
  * Move session files into a project: promote (copy) each batch, then delete the session
- * original of each file whose copy succeeded, and only of those. A failed copy leaves the
- * original untouched; a failed delete leaves a duplicate. In no case does a file end up in
- * neither place. `batches` come from planMove (at most 20 keys / 50 MB each); a batch that
- * fails as a whole (a thrown S3 error) leaves all its files in the session.
+ * original of each file whose copy succeeded, and only of those (decided by SOURCE key, so a
+ * name that sanitisation changes is not lost). Every input file ends up in exactly one of
+ * moved / notMoved / originalsKept / keptForHistory; in no case in neither place. `batches`
+ * come from planMove (at most 20 keys / 50 MB each); a batch that fails as a whole (a thrown S3
+ * error) leaves all its files in the session. Keys in `keepOriginalKeys` are copied but never deleted.
  */
 export async function moveSessionFiles(args: {
   projectId: string;
@@ -112,10 +115,10 @@ export async function moveSessionFiles(args: {
   fullSessionPrefix: string;
   batches: { key: string; name: string }[][];
   s3: MoveS3;
+  keepOriginalKeys?: Set<string>;
 }): Promise<MoveResult> {
-  const result: MoveResult = { moved: [], notMoved: [], originalsKept: [] };
+  const result: MoveResult = { moved: [], notMoved: [], originalsKept: [], keptForHistory: [] };
   for (const batch of args.batches) {
-    const nameByKey = new Map(batch.map((f) => [f.key, f.name]));
     let outcome: PromoteResult;
     try {
       outcome = await promoteSessionFiles({
@@ -131,18 +134,23 @@ export async function moveSessionFiles(args: {
       for (const f of batch) result.notMoved.push({ name: f.name, reason: COPY_FAILED_REASON });
       continue;
     }
-    for (const r of outcome.rejected) {
-      result.notMoved.push({ name: nameByKey.get(r.key) ?? r.key, reason: r.reason });
-    }
-    for (const name of outcome.clashes) {
-      result.notMoved.push({ name, reason: "A file with this name is already in the project." });
-    }
-    const promotedNames = new Set(outcome.promoted.map((p) => p.name));
+    const copied = new Set(outcome.promoted.map((p) => p.sourceKey));
+    const rejectedBy = new Map(outcome.rejected.map((r) => [r.key, r.reason]));
     for (const f of batch) {
-      if (!promotedNames.has(f.name)) continue;
-      result.moved.push(f.name);
+      if (!copied.has(f.key.replace(/^\/+/, ""))) {
+        result.notMoved.push({
+          name: f.name,
+          reason: rejectedBy.get(f.key) ?? "A file with this name is already in the project.",
+        });
+        continue;
+      }
+      if (args.keepOriginalKeys?.has(f.key)) {
+        result.keptForHistory.push(f.name);
+        continue;
+      }
       try {
         await args.s3.remove(f.key);
+        result.moved.push(f.name);
       } catch (err) {
         console.error("[PROJECT-FILES] could not delete session original after copy", f.key, err);
         result.originalsKept.push(f.name);

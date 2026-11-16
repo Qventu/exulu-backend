@@ -28,7 +28,7 @@ it("uses the prefix it is given: the session owner's, not the caller's", async (
   const { s3, copies } = fakeS3();
   // Caller is user 2, the session belongs to user 7: the route passes the OWNER's prefix.
   const own = await promoteSessionFiles({ ...base, keys: [`${SESSION}a.pdf`], s3 });
-  expect(own.promoted).toEqual([{ key: "projects/p1/files/a.pdf", name: "a.pdf" }]);
+  expect(own.promoted).toEqual([{ key: "projects/p1/files/a.pdf", name: "a.pdf", sourceKey: `${SESSION}a.pdf` }]);
   const callers = await promoteSessionFiles({ ...base, keys: ["user_2/sessions/s1/a.pdf"], s3 });
   expect(callers.promoted).toEqual([]);
   expect(callers.rejected[0]!.reason).toContain("not a file of this session");
@@ -71,7 +71,7 @@ describe("moveSessionFiles", () => {
       remove: async (k: string) => void order.push(`remove ${k.slice(SESSION.length)}`),
     });
     const r = await moveSessionFiles({ projectId: "p1", fullSessionPrefix: SESSION, batches: [batch], s3 });
-    expect(r).toEqual({ moved: ["a.pdf", "b.pdf"], notMoved: [], originalsKept: [] });
+    expect(r).toEqual({ moved: ["a.pdf", "b.pdf"], notMoved: [], originalsKept: [], keptForHistory: [] });
     expect(order.indexOf("remove a.pdf")).toBeGreaterThan(order.indexOf("copy a.pdf"));
     expect(order.indexOf("remove b.pdf")).toBeGreaterThan(order.indexOf("copy b.pdf"));
   });
@@ -89,8 +89,8 @@ describe("moveSessionFiles", () => {
   it("a failing delete keeps the copy and reports the duplicate", async () => {
     const { s3 } = mk({ remove: async () => { throw new Error("denied"); } });
     const r = await moveSessionFiles({ projectId: "p1", fullSessionPrefix: SESSION, batches: [batch], s3 });
-    expect(r.moved).toEqual(["a.pdf", "b.pdf"]);
     expect(r.originalsKept).toEqual(["a.pdf", "b.pdf"]);
+    expect(r.moved).toEqual([]);
   });
   it("a batch that fails as a whole leaves all its files in the session and later batches still run", async () => {
     let n = 0;
@@ -105,5 +105,26 @@ describe("moveSessionFiles", () => {
     expect(r.notMoved.map((x) => x.name)).toEqual(["a.pdf", "b.pdf"]);
     expect(r.moved).toEqual(["c.pdf"]);
     expect(removed).toEqual([`${SESSION}c.pdf`]);
+  });
+
+  it("decides by source key: a name that sanitisation changes is still copied, deleted and reported once", async () => {
+    const { s3, copies, removed } = mk();
+    const odd = [{ key: `${SESSION}a.pdf `, name: "a.pdf " }, { key: `${SESSION}b.pdf`, name: "b.pdf" }];
+    const r = await moveSessionFiles({ projectId: "p1", fullSessionPrefix: SESSION, batches: [odd], s3 });
+    expect(copies.map((c) => c[1])).toEqual(["projects/p1/files/a.pdf", "projects/p1/files/b.pdf"]);
+    expect(removed).toEqual([`${SESSION}a.pdf `, `${SESSION}b.pdf`]);
+    expect(r.moved).toEqual(["a.pdf ", "b.pdf"]);
+    expect(r.notMoved).toEqual([]);
+  });
+  it("every input file lands in exactly one bucket", async () => {
+    const { s3 } = mk({
+      copy: async (a: string) => { if (a.endsWith("b.pdf")) throw new Error("x"); },
+      remove: async (k: string) => { if (k.endsWith("c.pdf")) throw new Error("y"); },
+    });
+    const files = ["a.pdf", "b.pdf", "c.pdf", "d.pdf"].map((n) => ({ key: `${SESSION}${n}`, name: n }));
+    const r = await moveSessionFiles({ projectId: "p1", fullSessionPrefix: SESSION, batches: [files], s3, keepOriginalKeys: new Set([`${SESSION}d.pdf`]) });
+    const all = [...r.moved, ...r.notMoved.map((x) => x.name), ...r.originalsKept, ...r.keptForHistory].sort();
+    expect(all).toEqual(["a.pdf", "b.pdf", "c.pdf", "d.pdf"]);
+    expect(r.keptForHistory).toEqual(["d.pdf"]);
   });
 });

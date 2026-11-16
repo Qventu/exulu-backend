@@ -1,4 +1,4 @@
-import { createProjectForUser, attachSessionToProject, planMove } from "./project-create";
+import { createProjectForUser, attachSessionToProject, createProjectAndAttach, canWriteSession, planMove } from "./project-create";
 import { RBACResolver } from "@EE/rbac-resolver.ts";
 
 jest.mock("@EE/rbac-resolver.ts", () => ({ RBACResolver: jest.fn() }));
@@ -61,7 +61,7 @@ describe("createProjectForUser", () => {
 });
 
 describe("attachSessionToProject", () => {
-  const session = { id: "s1", created_by: 7, rights_mode: "private", project: null };
+  const session = { id: "s1", user: 7, created_by: 7, rights_mode: "private", project: null };
   const project = { id: "p1", created_by: 7, rights_mode: "private" };
   beforeEach(() => rbac.mockReset().mockResolvedValue({ type: "private", users: [], roles: [], teams: [] }));
 
@@ -73,14 +73,42 @@ describe("attachSessionToProject", () => {
     expect(rbac.mock.calls.map((c) => c[1])).toEqual(["agent_session", "project"]);
   });
   it("refuses a session the user cannot write", async () => {
-    const { db, calls } = fakeDb({ agent_sessions: { ...session, created_by: 99 }, projects: project });
+    const { db, calls } = fakeDb({ agent_sessions: { ...session, user: 99, created_by: 7 }, projects: project });
     await expect(attachSessionToProject(db, { sessionId: "s1", projectId: "p1", user: { id: 7 } })).rejects.toThrow(/write access to this session/);
     expect(calls.updates).toEqual([]);
   });
   it("a read-only session grant is not enough", async () => {
     rbac.mockResolvedValueOnce({ type: "users", users: [{ id: "7", rights: "read" }], roles: [], teams: [] });
-    const { db } = fakeDb({ agent_sessions: { ...session, created_by: 99, rights_mode: "users" }, projects: project });
+    const { db } = fakeDb({ agent_sessions: { ...session, user: 99, created_by: 99, rights_mode: "users" }, projects: project });
     await expect(attachSessionToProject(db, { sessionId: "s1", projectId: "p1", user: { id: 7 } })).rejects.toThrow(/write access/);
+  });
+  it("the owner is session.user, not created_by: the two columns differ", async () => {
+    const row = { ...session, user: 7, created_by: 99 };
+    await attachSessionToProject(fakeDb({ agent_sessions: row, projects: project }).db, { sessionId: "s1", projectId: "p1", user: { id: 7 } });
+    await expect(
+      attachSessionToProject(fakeDb({ agent_sessions: row, projects: { ...project, created_by: 99, rights_mode: "public" } }).db, { sessionId: "s1", projectId: "p1", user: { id: 99 } }),
+    ).rejects.toThrow(/write access to this session/);
+  });
+  it("a write grantee may attach", async () => {
+    rbac.mockResolvedValueOnce({ type: "users", users: [{ id: "7", rights: "write" }], roles: [], teams: [] });
+    const { db } = fakeDb({ agent_sessions: { ...session, user: 99, created_by: 99, rights_mode: "users" }, projects: project });
+    await attachSessionToProject(db, { sessionId: "s1", projectId: "p1", user: { id: 7 } });
+  });
+  it("a super admin who is not the owner is refused (no bypass)", async () => {
+    const { db } = fakeDb({ agent_sessions: { ...session, user: 99, created_by: 99 }, projects: project });
+    await expect(attachSessionToProject(db, { sessionId: "s1", projectId: "p1", user: { id: 7, super_admin: true } })).rejects.toThrow(/write access to this session/);
+  });
+  it("without the RBAC licence (resolver says public) a non-owner is refused", async () => {
+    rbac.mockResolvedValueOnce({ type: "public", users: [], roles: [], teams: [] });
+    const { db } = fakeDb({ agent_sessions: { ...session, user: 99, created_by: 99, rights_mode: "public" }, projects: project });
+    await expect(attachSessionToProject(db, { sessionId: "s1", projectId: "p1", user: { id: 7 } })).rejects.toThrow(/write access to this session/);
+  });
+  it("canWriteSession: role and team grants, admin-mode API keys", () => {
+    const s = { user: 99 };
+    expect(canWriteSession(s, { type: "roles", roles: [{ id: "r1", rights: "write" }] }, { id: 7, role: { id: "r1" } })).toBe(true);
+    expect(canWriteSession(s, { type: "teams", teams: [{ id: "t1", rights: "read" }] }, { id: 7, team: "t1" })).toBe(false);
+    expect(canWriteSession(s, { type: "private" }, { id: 7, type: "api" })).toBe(true);
+    expect(canWriteSession(s, { type: "private" }, { id: 7, type: "api", scope_mode: "agents" })).toBe(false);
   });
   it("refuses a project the user cannot read", async () => {
     const { db, calls } = fakeDb({ agent_sessions: session, projects: { ...project, created_by: 99 } });
@@ -98,6 +126,45 @@ describe("attachSessionToProject", () => {
   it("refuses unknown session or project", async () => {
     await expect(attachSessionToProject(fakeDb({ projects: project }).db, { sessionId: "s1", projectId: "p1", user: { id: 7 } })).rejects.toThrow(/Session not found/);
     await expect(attachSessionToProject(fakeDb({ agent_sessions: session }).db, { sessionId: "s1", projectId: "p1", user: { id: 7 } })).rejects.toThrow(/Project not found/);
+  });
+});
+
+describe("createProjectAndAttach (one transaction)", () => {
+  const mkTx = (updated: number) => {
+    const committed: any[] = [];
+    const db: any = {
+      transaction: async (fn: (trx: any) => Promise<unknown>) => {
+        const staged: any[] = [];
+        const trx: any = (table: string) => ({
+          insert: (row: any) => ({ returning: async () => { staged.push(row); return [{ id: row.id, name: row.name }]; } }),
+          where: () => ({ whereNull: () => ({ update: async () => updated }) }),
+        });
+        trx.from = (table: string) => ({
+          where: () => ({
+            first: async () =>
+              table === "agent_sessions"
+                ? { id: "s1", user: 7, created_by: 7, rights_mode: "private", project: null }
+                : { id: staged[0]?.id, created_by: 7, rights_mode: "private" },
+          }),
+        });
+        const out = await fn(trx);
+        committed.push(...staged); // only reached when fn did not throw
+        return out;
+      },
+    };
+    return { db, committed };
+  };
+  beforeEach(() => rbac.mockReset().mockResolvedValue({ type: "private", users: [], roles: [], teams: [] }));
+  it("commits the project when the attach succeeds", async () => {
+    const { db, committed } = mkTx(1);
+    const out = await createProjectAndAttach(db, { id: 7 }, { sessionId: "s1", name: "Alpha" });
+    expect(committed).toHaveLength(1);
+    expect(committed[0].id).toBe(out.id);
+  });
+  it("an attach that affects 0 rows rolls the insert back: no project row remains", async () => {
+    const { db, committed } = mkTx(0);
+    await expect(createProjectAndAttach(db, { id: 7 }, { sessionId: "s1", name: "Alpha" })).rejects.toThrow(/already belongs/);
+    expect(committed).toEqual([]);
   });
 });
 

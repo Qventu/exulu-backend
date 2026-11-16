@@ -9,14 +9,14 @@ import { PROJECT_DIR } from "@SRC/exulu/project-files";
 import {
   MAX_PROJECT_DESCRIPTION_LENGTH,
   MAX_PROJECT_NAME_LENGTH,
-  attachSessionToProject,
-  createProjectForUser,
+  createProjectAndAttach,
   planMove,
   isDefaultMoveCandidate,
   type MoveCandidate,
 } from "@SRC/exulu/project-create";
 import { moveSessionFiles, type MoveResult, type MoveS3 } from "@SRC/exulu/project-files-promote";
 import { createMoveS3 } from "@SRC/exulu/project-files-s3";
+import { parseStoredFileUrl } from "@SRC/exulu/stored-file-url";
 import { promptSafeProjectName } from "@SRC/exulu/session-file-listing";
 import { listS3ObjectsByPrefix } from "@SRC/uppy";
 import type { TurnProject } from "@SRC/exulu/turn-project";
@@ -86,10 +86,10 @@ export const CREATE_PROJECT_PROMPT =
 type Deps = {
   /** The session row (project, user) or undefined. */
   loadSession: (id: string) => Promise<{ project?: string | null; user?: number | string | null } | undefined>;
-  create: typeof createProjectForUser;
-  attach: typeof attachSessionToProject;
-  /** Remove a project created a moment ago whose session could not be attached. */
-  discardProject: (id: string) => Promise<void>;
+  /** Creates the project and attaches the session in one transaction. */
+  createAndAttach: typeof createProjectAndAttach;
+  /** Full S3 keys that stored messages of this session refer to (file parts): never deleted. */
+  referencedKeys: (sessionId: string) => Promise<Set<string>>;
   listSessionFiles: (prefix: string) => Promise<MoveCandidate[]>;
   move: typeof moveSessionFiles;
   s3: MoveS3;
@@ -121,6 +121,11 @@ export function formatCreateProjectResult(args: {
         .slice(0, MAX_LISTED_NAMES)
         .map((s) => `${s.name} (${s.reason})`)
         .join("; ")}${notMoved.length > MAX_LISTED_NAMES ? ` (+${notMoved.length - MAX_LISTED_NAMES} more)` : ""}.`,
+    );
+  }
+  if (moved.keptForHistory.length > 0) {
+    lines.push(
+      `Copied into the project and also kept in the session, because an earlier message in this conversation refers to them: ${listNames(moved.keptForHistory)}.`,
     );
   }
   if (moved.originalsKept.length > 0) {
@@ -196,11 +201,25 @@ export const createCreateProjectTool = ({
       const { db } = await postgresClient();
       return db.from("agent_sessions").where({ id }).first();
     },
-    create: createProjectForUser,
-    attach: attachSessionToProject,
-    discardProject: async (id) => {
+    createAndAttach: createProjectAndAttach,
+    referencedKeys: async (id) => {
       const { db } = await postgresClient();
-      await db("projects").where({ id }).del();
+      const rows: { content: string }[] = await db.from("agent_messages").where({ session: id }).select("content");
+      const keys = new Set<string>();
+      for (const row of rows) {
+        let message: { parts?: { type?: string; url?: string }[] };
+        try {
+          message = JSON.parse(row.content);
+        } catch {
+          continue;
+        }
+        for (const part of message.parts ?? []) {
+          if (part?.type !== "file") continue;
+          const at = parseStoredFileUrl(part.url, { endpoint: uploads.s3endpoint, bucket: uploads.s3Bucket });
+          if (at) keys.add(at.key);
+        }
+      }
+      return keys;
     },
     listSessionFiles: async (prefix) => {
       const objects = await listS3ObjectsByPrefix(prefix, exuluConfig);
@@ -241,32 +260,35 @@ export const createCreateProjectTool = ({
 
     let created: { id: string; name: string };
     try {
-      created = await resolvedDeps.create(await resolvedDeps.db(), user, { name, description });
+      created = await resolvedDeps.createAndAttach(await resolvedDeps.db(), user, { sessionId: sessionID, name, description });
     } catch (err) {
-      console.error("[PROJECT-CREATE] create failed", err);
+      console.error("[PROJECT-CREATE] create/attach failed", err);
       const message = err instanceof Error ? err.message : "";
       // Validation messages are ours (fixed text); anything else stays in the log.
       const ours = /^Project (name|description) must be/.test(message);
-      return { result: ours ? message : "Creating the project failed. Try again; if it keeps failing, tell the user." };
-    }
-
-    try {
-      await resolvedDeps.attach(await resolvedDeps.db(), { sessionId: sessionID, projectId: created.id, user });
-    } catch (err) {
-      console.error("[PROJECT-CREATE] attach failed", err);
-      try {
-        await resolvedDeps.discardProject(created.id);
-      } catch (cleanup) {
-        console.error("[PROJECT-CREATE] could not discard the unattached project", created.id, cleanup);
-      }
-      return { result: "The project could not be attached to this conversation, so nothing was created or moved." };
+      return {
+        result: ours
+          ? message
+          : "The project could not be created and attached to this conversation, so nothing was created or moved.",
+      };
     }
 
     // From here the project exists and is attached: the document tools of this turn
     // resolve project/<name> against it. The prompt of this turn is not rebuilt.
     if (turnProject) turnProject.current = { id: created.id, name: created.name, speakerCanWrite: true };
 
-    let moved: MoveResult = { moved: [], notMoved: [], originalsKept: [] };
+    // A stored message that refers to a session file by key must keep working when the history is
+    // replayed (the document would become an error text, an image a 404): copy such files only.
+    // When the lookup fails, assume every file is referenced.
+    let keepOriginalKeys: Set<string>;
+    try {
+      keepOriginalKeys = await resolvedDeps.referencedKeys(sessionID);
+    } catch (err) {
+      console.error("[PROJECT-CREATE] could not read the session's messages", err);
+      keepOriginalKeys = new Set(plan.batches.flat().map((f) => f.key));
+    }
+
+    let moved: MoveResult = { moved: [], notMoved: [], originalsKept: [], keptForHistory: [] };
     try {
       moved = await resolvedDeps.move({
         projectId: created.id,
@@ -274,6 +296,7 @@ export const createCreateProjectTool = ({
         fullSessionPrefix: ownerPrefix,
         batches: plan.batches,
         s3: resolvedDeps.s3,
+        keepOriginalKeys,
       });
     } catch (err) {
       console.error("[PROJECT-CREATE] moving files failed", err);
@@ -281,6 +304,7 @@ export const createCreateProjectTool = ({
         moved: [],
         notMoved: plan.batches.flat().map((f) => ({ name: f.name, reason: "Copying the file into the project failed." })),
         originalsKept: [],
+        keptForHistory: [],
       };
     }
 

@@ -3,7 +3,7 @@ import { RBACResolver } from "@EE/rbac-resolver.ts";
 import { isIgnoredArtifactPath } from "@EE/invoke-skills/artifact-filter.ts";
 import { coreSchemas } from "@SRC/postgres/core-schema";
 import { prepareItemWrite } from "./item-write";
-import { hasProjectAccess } from "./project-access";
+import { hasProjectAccess, sameEntityId } from "./project-access";
 import { MAX_PROJECT_FILES, MAX_PROMOTE_KEYS } from "./project-files";
 import { MAX_ADOPT_UPLOAD_BYTES } from "./session-file-adopt";
 import { sanitizeFilename } from "./session-files";
@@ -56,13 +56,43 @@ export async function createProjectForUser(
   return { id: String(created.id), name: String(created.name ?? name) };
 }
 
+type SessionUser = Actor & { role?: unknown; team?: unknown };
+const bareId = (v: unknown): unknown => (typeof v === "object" && v ? (v as { id?: unknown }).id : v);
+
 /**
- * Set `agent_sessions.project`. Refuses unless the user may write the session and read the
- * project, and unless the session has no project yet (the update is guarded in SQL, so two
- * racing calls cannot both win). RBAC rows are keyed by the SINGULAR entity name: "agent_session"
- * for sessions (what applyAccessControl and routines/run-session.ts use), "project" for projects.
- * `hasProjectAccess` is used for both because it compares RBAC subject ids (strings) with
- * user.id (a number) as strings; checkRecordAccess does not.
+ * May `user` change this session (attach it to a project)? Sessions have their own rule, not
+ * the project one: no super-admin bypass and no allow-all when the RBAC licence is absent
+ * (RBACResolver then returns type "public" with no grants, so only the owner passes), the way
+ * applyAccessControl treats agent_sessions. The OWNER is `session.user`, the same column
+ * resolveSessionProject / the file prefix use; `created_by` plays no part. Otherwise a WRITE
+ * grant matching the session's rights mode (users/roles/teams), or an admin-mode API key.
+ */
+export function canWriteSession(
+  session: { user?: number | string | null },
+  rbac: { type: string; users?: { id: unknown; rights: string }[]; roles?: { id: unknown; rights: string }[]; teams?: { id: unknown; rights: string }[] },
+  user: SessionUser,
+): boolean {
+  if (sameEntityId(session.user, user.id)) return true;
+  if (user.type === "api" && (!user.scope_mode || user.scope_mode === "admin")) return true;
+  const grant = (list: { id: unknown; rights: string }[] | undefined, subject: unknown) =>
+    subject != null && (list ?? []).some((g) => sameEntityId(g.id, subject) && g.rights === "write");
+  switch (rbac.type) {
+    case "users":
+      return grant(rbac.users, user.id);
+    case "roles":
+      return grant(rbac.roles, bareId(user.role));
+    case "teams":
+      return grant(rbac.teams, bareId(user.team));
+    default:
+      return false;
+  }
+}
+
+/**
+ * Set `agent_sessions.project`. Refuses unless the user may write the session (canWriteSession)
+ * and read the project, and unless the session has no project yet (the update is guarded in SQL,
+ * so two racing calls cannot both win). RBAC rows are keyed by the SINGULAR entity name:
+ * "agent_session" for sessions, "project" for projects.
  */
 export async function attachSessionToProject(
   db: Db,
@@ -73,7 +103,7 @@ export async function attachSessionToProject(
   if (!session) throw new Error("Session not found.");
   if (session.project) throw new Error("This session already belongs to a project.");
   const sessionRbac = await RBACResolver(db, "agent_session", session.id, session.rights_mode || "private");
-  if (!hasProjectAccess({ project: session, rbac: sessionRbac, user: user as never, want: "write" })) {
+  if (!canWriteSession(session, sessionRbac, user)) {
     throw new Error("No write access to this session.");
   }
   const project = await db.from("projects").where({ id: projectId }).first();
@@ -84,6 +114,22 @@ export async function attachSessionToProject(
   }
   const updated = await db("agent_sessions").where({ id: sessionId }).whereNull("project").update({ project: projectId });
   if (!updated) throw new Error("This session already belongs to a project.");
+}
+
+/**
+ * Create the project and attach the session in ONE transaction: an attach that fails or loses
+ * the race rolls the insert back, so no orphan project remains and nothing needs compensating.
+ */
+export async function createProjectAndAttach(
+  db: Db,
+  user: Actor,
+  input: { sessionId: string; name: string; description?: string },
+): Promise<{ id: string; name: string }> {
+  return db.transaction(async (trx: Db) => {
+    const created = await createProjectForUser(trx, user, { name: input.name, description: input.description });
+    await attachSessionToProject(trx, { sessionId: input.sessionId, projectId: created.id, user });
+    return created;
+  });
 }
 
 export type MoveCandidate = { key: string; name: string; size: number };
@@ -112,7 +158,7 @@ export function planMove(args: {
 }): { batches: { key: string; name: string }[][]; skipped: MoveSkip[] } {
   const skipped: MoveSkip[] = [];
   let pool: MoveCandidate[];
-  if (args.requested && args.requested.length > 0) {
+  if (args.requested) {
     const byName = new Map(args.files.map((f) => [f.name, f]));
     pool = [];
     const seen = new Set<string>();

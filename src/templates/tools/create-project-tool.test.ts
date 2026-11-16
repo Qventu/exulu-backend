@@ -38,8 +38,6 @@ const make = (over: { deps?: Record<string, unknown>; files?: { name: string; si
     remove: async (k: string) => void log.push(`remove ${k.slice(PREFIX.length)}`),
   };
   const create = jest.fn(async (_db: unknown, _u: unknown, i: { name: string }) => ({ id: "proj-1", name: i.name }));
-  const attach = jest.fn(async () => undefined);
-  const discardProject = jest.fn(async () => undefined);
   const turnProject = createTurnProject(null);
   const tool = createCreateProjectTool({
     ...base,
@@ -47,9 +45,8 @@ const make = (over: { deps?: Record<string, unknown>; files?: { name: string; si
     ...over.extra,
     deps: {
       loadSession: async () => (over.session === undefined ? { project: null, user: 7 } : (over.session as never)),
-      create: create as never,
-      attach: attach as never,
-      discardProject,
+      createAndAttach: create as never,
+      referencedKeys: async () => new Set<string>(),
       listSessionFiles: async () => files,
       move: moveSessionFiles,
       s3,
@@ -57,7 +54,7 @@ const make = (over: { deps?: Record<string, unknown>; files?: { name: string; si
       ...over.deps,
     },
   })!;
-  return { tool, create, attach, discardProject, turnProject, log };
+  return { tool, create, turnProject, log };
 };
 
 describe("opt-in switch", () => {
@@ -105,12 +102,44 @@ describe("registration", () => {
 });
 
 describe("execute", () => {
+  it("30 files, the 17th copy fails: 29 moved and gone from the session, 1 stays and is named", async () => {
+    const files = Array.from({ length: 30 }, (_, i) => ({ name: `f${String(i + 1).padStart(2, "0")}.txt` }));
+    const removed: string[] = [];
+    const m = make({
+      files,
+      deps: {
+        s3: {
+          listProjectNames: async () => [],
+          sizeOf: async () => 10,
+          copy: async (a: string) => { if (a.endsWith("f17.txt")) throw new Error("boom"); },
+          remove: async (k: string) => void removed.push(k.slice(PREFIX.length)),
+        },
+      },
+    });
+    const { result } = await run(m.tool, { name: "Alpha" });
+    expect(result).toContain("Moved 29 files");
+    expect(removed).toHaveLength(29);
+    expect(removed).not.toContain("f17.txt");
+    expect(result).toMatch(/Not moved .*f17\.txt/);
+  });
+
+  it("copies but keeps the original of a file that a stored message refers to", async () => {
+    const m = make({ deps: { referencedKeys: async () => new Set([`${PREFIX}a.pdf`]) } });
+    const { result } = await run(m.tool, { name: "Alpha" });
+    expect(m.log).toEqual(["copy a.pdf", "copy b.docx", "remove b.docx"]);
+    expect(result).toMatch(/also kept in the session.*a\.pdf/);
+  });
+  it("when the message lookup fails, no original is deleted", async () => {
+    const m = make({ deps: { referencedKeys: async () => { throw new Error("db"); } } });
+    await run(m.tool, { name: "Alpha" });
+    expect(m.log.filter((l) => l.startsWith("remove"))).toEqual([]);
+  });
+
   it("creates, attaches, copies then deletes each original, and reports everything required", async () => {
-    const { tool, create, attach, log, turnProject } = make();
+    const { tool, create, log, turnProject } = make();
     const { result } = await run(tool, { name: "Alpha", description: "d" });
     expect(create).toHaveBeenCalledTimes(1);
-    expect(create.mock.calls[0]![2]).toEqual({ name: "Alpha", description: "d" });
-    expect(attach).toHaveBeenCalledWith({}, { sessionId: "s1", projectId: "proj-1", user: base.user });
+    expect(create.mock.calls[0]![2]).toEqual({ sessionId: "s1", name: "Alpha", description: "d" });
     expect(log).toEqual(["copy a.pdf", "copy b.docx", "remove a.pdf", "remove b.docx"]);
     expect(result).toContain('"Alpha"');
     expect(result).toContain("proj-1");
@@ -154,12 +183,11 @@ describe("execute", () => {
     expect(result).toContain("1 other session file");
   });
 
-  it("an attach failure discards the new project, moves nothing and leaks nothing", async () => {
-    const { tool, discardProject, log, turnProject } = make({
-      deps: { attach: jest.fn(async () => { throw new Error("pg: relation secret_table"); }) },
+  it("a failed create-and-attach moves nothing, leaves the holder empty and leaks nothing", async () => {
+    const { tool, log, turnProject } = make({
+      deps: { createAndAttach: jest.fn(async () => { throw new Error("pg: relation secret_table"); }) },
     });
     const { result } = await run(tool, { name: "Alpha" });
-    expect(discardProject).toHaveBeenCalledWith("proj-1");
     expect(log).toEqual([]);
     expect(turnProject.current).toBeNull();
     expect(result).not.toContain("secret_table");
@@ -167,11 +195,10 @@ describe("execute", () => {
   });
 
   it("a create failure leaks nothing; a validation message is passed on", async () => {
-    const boom = make({ deps: { create: jest.fn(async () => { throw new Error("pg: password for user exulu"); }) } });
+    const boom = make({ deps: { createAndAttach: jest.fn(async () => { throw new Error("pg: password for user exulu"); }) } });
     const r1 = await run(boom.tool, { name: "Alpha" });
     expect(r1.result).not.toContain("password");
-    expect(boom.attach).not.toHaveBeenCalled();
-    const bad = make({ deps: { create: jest.fn(async () => { throw new Error("Project name must be 1 to 120 characters."); }) } });
+    const bad = make({ deps: { createAndAttach: jest.fn(async () => { throw new Error("Project name must be 1 to 120 characters."); }) } });
     expect((await run(bad.tool, { name: "" })).result).toContain("Project name must be");
   });
 
