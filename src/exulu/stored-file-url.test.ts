@@ -122,3 +122,35 @@ describe("mayResignStoredFileKey", () => {
     expect(mayResignStoredFileKey("imp/user_11/a.png", { s3prefix: "imp" })).toBe(false);
   });
 });
+
+describe("parseStoredFileUrl — host and protocol are matched exactly", () => {
+  const aws = { bucket: "algi" };
+  it("refuses a bucket whose name only starts like <bucket>.s3", () => {
+    expect(parseStoredFileUrl("https://algi.s3x.amazonaws.com/user_1/a.pdf", aws)).toBeUndefined();
+    expect(parseStoredFileUrl("https://algi.s3evil.amazonaws.com/user_1/a.pdf", aws)).toBeUndefined();
+    expect(parseStoredFileUrl("https://algi.s3.eu-central-1.evil.amazonaws.com.example.org/a", aws)).toBeUndefined();
+  });
+  it("accepts the AWS virtual-host forms", () => {
+    expect(parseStoredFileUrl("https://algi.s3.amazonaws.com/user_1/a.pdf", aws)?.key).toBe("user_1/a.pdf");
+    expect(parseStoredFileUrl("https://algi.s3.eu-central-1.amazonaws.com/user_1/a.pdf", aws)?.key).toBe("user_1/a.pdf");
+    expect(parseStoredFileUrl("https://algi.s3-eu-west-1.amazonaws.com/user_1/a.pdf", aws)?.key).toBe("user_1/a.pdf");
+  });
+  it("requires https for AWS and the endpoint's protocol for a custom endpoint", () => {
+    expect(parseStoredFileUrl("http://algi.s3.eu-central-1.amazonaws.com/user_1/a.pdf", aws)).toBeUndefined();
+    expect(parseStoredFileUrl("http://minio.api.example.com/algi/user_1/a.pdf", minio)).toBeUndefined();
+    expect(parseStoredFileUrl("http://localhost:9000/algi/a.pdf", { endpoint: "http://localhost:9000", bucket: "algi" })?.key).toBe("a.pdf");
+  });
+  it("accepts AWS path-style URLs for the configured bucket (dotted bucket names)", () => {
+    const dotted = { bucket: "files.example.com" };
+    expect(parseStoredFileUrl("https://s3.eu-central-1.amazonaws.com/files.example.com/user_1/a.pdf", dotted)).toEqual({
+      bucket: "files.example.com",
+      key: "user_1/a.pdf",
+    });
+    expect(parseStoredFileUrl("https://s3.amazonaws.com/files.example.com/user_1/a.pdf", dotted)?.key).toBe("user_1/a.pdf");
+    expect(parseStoredFileUrl("https://s3.amazonaws.com/other/user_1/a.pdf", dotted)).toBeUndefined();
+    expect(parseStoredFileUrl("https://s3.evil.example.org/files.example.com/a.pdf", dotted)).toBeUndefined();
+  });
+  it("regex-escapes the bucket name", () => {
+    expect(parseStoredFileUrl("https://filesxexample.s3.amazonaws.com/a.pdf", { bucket: "files.example" })).toBeUndefined();
+  });
+});

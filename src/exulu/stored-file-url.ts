@@ -14,6 +14,7 @@ export type StoreIdentity = {
 };
 
 const stripTrailingSlash = (s: string) => s.replace(/\/+$/, "");
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function decodeKey(rawPath: string): string {
   const key = rawPath.replace(/^\/+/, "");
@@ -39,8 +40,6 @@ export function parseStoredFileUrl(
   } catch {
     return undefined;
   }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
-
   if (store.endpoint) {
     let endpoint: URL;
     try {
@@ -48,7 +47,9 @@ export function parseStoredFileUrl(
     } catch {
       return undefined;
     }
-    if (parsed.host !== endpoint.host) return undefined;
+    // Same protocol as the configured endpoint: an http: URL to an https: store is
+    // not something the store hands out.
+    if (parsed.protocol !== endpoint.protocol || parsed.host !== endpoint.host) return undefined;
     const base = stripTrailingSlash(endpoint.pathname);
     const prefix = `${base}/${store.bucket}/`;
     if (!parsed.pathname.startsWith(prefix)) return undefined;
@@ -56,12 +57,24 @@ export function parseStoredFileUrl(
     return key ? { bucket: store.bucket, key } : undefined;
   }
 
-  // AWS virtual-host style: <bucket>.s3[.<region>].amazonaws.com/<key>
-  if (!parsed.host.startsWith(`${store.bucket}.s3`) || !parsed.host.endsWith(".amazonaws.com")) {
-    return undefined;
+  // AWS: https only, and the host anchored exactly (a bucket called "<bucket>.s3x"
+  // or a look-alike domain must not match).
+  if (parsed.protocol !== "https:") return undefined;
+  const region = "([.-][a-z0-9-]+)?";
+  // Virtual-host style: <bucket>.s3[.<region>|-<region>].amazonaws.com/<key>
+  if (new RegExp(`^${escapeRegExp(store.bucket)}\\.s3${region}\\.amazonaws\\.com$`).test(parsed.host)) {
+    const key = decodeKey(parsed.pathname);
+    return key ? { bucket: store.bucket, key } : undefined;
   }
-  const key = decodeKey(parsed.pathname);
-  return key ? { bucket: store.bucket, key } : undefined;
+  // Path style: s3[.<region>].amazonaws.com/<bucket>/<key> — what the SDK emits for
+  // dotted bucket names.
+  if (new RegExp(`^s3${region}\\.amazonaws\\.com$`).test(parsed.host)) {
+    const prefix = `/${store.bucket}/`;
+    if (!parsed.pathname.startsWith(prefix)) return undefined;
+    const key = decodeKey(parsed.pathname.slice(prefix.length));
+    return key ? { bucket: store.bucket, key } : undefined;
+  }
+  return undefined;
 }
 
 /**
