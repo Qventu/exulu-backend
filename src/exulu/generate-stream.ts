@@ -61,7 +61,8 @@ import { randomUUID } from "node:crypto";
   * - Document files (PDF, DOCX, etc.) -> text parts with extracted content using officeparser
   * - Image files -> image parts (which ARE supported by Responses API)
   */
-const processFilePartsInMessages = async (
+/** Exported for tests (generate-stream.file-parts.test.ts). */
+export const processFilePartsInMessages = async (
     messages: UIMessage[],
     offloadCtx: {
         contextWindow?: number;
