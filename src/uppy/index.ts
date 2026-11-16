@@ -695,8 +695,9 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     // Bucket should always be the
     // first part of the key.
     // The bucket is caller-supplied on purpose and not pinned to fileUploads.s3Bucket:
-    // deployments keep knowledge-base source documents in a second bucket and read
-    // them through this route. Follow-up: an allowlist of readable buckets in config.
+    // deployments keep knowledge-base source documents in a second bucket, which the
+    // generic routes accept (delete included, for keys under the caller's own prefix).
+    // Follow-up: an allowlist of buckets in config.
     let bucket = key.split("/")[0];
 
     if (!mayUseGenericS3Route(key.replace(`${bucket}/`, ""), user, config.fileUploads.s3prefix)) {
