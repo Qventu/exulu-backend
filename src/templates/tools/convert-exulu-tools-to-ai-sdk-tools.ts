@@ -25,6 +25,8 @@ import { createMemoryTools } from "@SRC/exulu/memory/tools";
 import { checkMemoryBase } from "@SRC/exulu/memory/memory-base";
 import { isMemoryToolId, type MemoryDecision } from "@SRC/exulu/memory/decisions";
 import { collectKbWriteTools } from "./context-write-tools";
+import { createTurnProject } from "@SRC/exulu/turn-project";
+import { createCreateProjectTool } from "./create-project-tool";
 import { createSaveToProjectTool } from "./save-to-project-tool";
 import { collectSkillAuthorTools } from "./skill-author-tools";
 import type { SkillDecision } from "@SRC/exulu/skills/decisions";
@@ -258,6 +260,9 @@ export const convertExuluToolsToAiSdkTools = async (
         ? await resolveSessionProject({ projectId: project, ownerId: sessionOwnerId ?? user?.id, owner: user, speaker: user })
         : null;
   const sandboxProjectId = turnProject?.id ?? null;
+  // One mutable holder per turn, shared by the file tools and the project tools: create_project
+  // sets it, so project/<name> resolves against the new project later in the same turn.
+  const turnProjectHolder = createTurnProject(turnProject);
 
   let sharedSessionSandbox:
     | Awaited<ReturnType<typeof createSessionSandbox>>
@@ -365,12 +370,12 @@ export const convertExuluToolsToAiSdkTools = async (
     }
   }
 
-  const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });
+  const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId, turnProject: turnProjectHolder });
   if (sessionFileReadTool && !disabled.has(sessionFileReadTool.id)) {
     currentTools.push(sessionFileReadTool);
   }
 
-  const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });
+  const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId, turnProject: turnProjectHolder });
   if (parseDocumentTool && !disabled.has(parseDocumentTool.id)) {
     currentTools.push(parseDocumentTool);
   }
@@ -398,12 +403,31 @@ export const convertExuluToolsToAiSdkTools = async (
     ownerId: sessionOwnerId,
     project: turnProject,
     disabled,
+    turnProject: turnProjectHolder,
   });
   if (saveToProjectTool) {
     currentTools.push(saveToProjectTool);
   }
 
-  const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });
+  // Opt-in per agent (an entry with id "create_project" in agent.tools), session owner only, only
+  // while the session has no project. The same predicate decides the prompt sentence.
+  const createProjectTool = createCreateProjectTool({
+    sessionID,
+    user,
+    req,
+    exuluConfig,
+    ownerId: sessionOwnerId,
+    agentTools: agent?.tools,
+    project: turnProject,
+    sessionProjectId: project,
+    disabled,
+    turnProject: turnProjectHolder,
+  });
+  if (createProjectTool) {
+    currentTools.push(createProjectTool);
+  }
+
+  const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId, turnProject: turnProjectHolder });
   if (viewDocumentPageTool && !disabled.has(viewDocumentPageTool.id)) {
     currentTools.push(viewDocumentPageTool);
   }

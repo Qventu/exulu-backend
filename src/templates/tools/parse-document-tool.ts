@@ -1,3 +1,4 @@
+import { currentProjectId, type TurnProject } from "@SRC/exulu/turn-project";
 import { z } from "zod";
 import { extname } from "node:path";
 import { parseOfficeAsync } from "officeparser";
@@ -143,6 +144,7 @@ export const createParseDocumentTool = ({
   exuluConfig,
   ownerId,
   projectId,
+  turnProject,
 }: {
   sessionID?: string;
   user?: User;
@@ -151,6 +153,8 @@ export const createParseDocumentTool = ({
   ownerId?: number | string;
   /** The access-checked project id (never the raw session.project); null/undefined = no project files. */
   projectId?: string | null;
+  /** The turn's project holder; when given it wins over `projectId` and is read per call (create_project may set it mid-turn). */
+  turnProject?: TurnProject;
 }): ExuluTool | undefined => {
   if (!sessionID || !exuluConfig?.fileUploads?.s3Bucket) return undefined;
 
@@ -169,7 +173,7 @@ export const createParseDocumentTool = ({
       filename,
       ownerId: ownerId ?? user?.id ?? "api",
       sessionId: sessionID,
-      projectId: projectId ?? null,
+      projectId: currentProjectId(turnProject, projectId),
       s3prefix: exuluConfig.fileUploads!.s3prefix,
     });
     if ("error" in resolvedKey) return { error: resolvedKey.error };

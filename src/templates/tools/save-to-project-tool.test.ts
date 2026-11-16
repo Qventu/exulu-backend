@@ -148,3 +148,16 @@ describe("hardening", () => {
     expect(tool.alwaysAskWhen?.({ filename: "a" })).toBe(false);
   });
 });
+
+describe("turn project holder", () => {
+  it("promotes into the holder's project at call time", async () => {
+    const promote = jest.fn(async () => ({ promoted: [{ key: "k", name: "a.pdf" }], rejected: [], clashes: [] }) as PromoteResult);
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { createTurnProject } = require("@SRC/exulu/turn-project") as typeof import("@SRC/exulu/turn-project");
+    const holder = createTurnProject(base.project);
+    const tool = createSaveToProjectTool({ ...base, turnProject: holder, deps: { promote, s3: {} as never, projectModified: async () => undefined } })!;
+    holder.current = { id: "p-new", name: "New", speakerCanWrite: true };
+    await run(tool, { filename: "a.pdf" });
+    expect((promote.mock.calls[0] as unknown as [{ projectId: string }])[0].projectId).toBe("p-new");
+  });
+});

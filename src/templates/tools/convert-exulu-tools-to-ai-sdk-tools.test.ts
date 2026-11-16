@@ -200,12 +200,14 @@ describe("document tool registration", () => {
       user: { id: 7 },
       exuluConfig: { fileUploads: { s3Bucket: "b" } },
       projectId: null,
+      turnProject: { current: null },
     });
     expect(createViewDocumentPageTool).toHaveBeenCalledWith({
       sessionID: "session-1",
       user: { id: 7 },
       exuluConfig: { fileUploads: { s3Bucket: "b" } },
       projectId: null,
+      turnProject: { current: null },
     });
   });
 });

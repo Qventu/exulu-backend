@@ -4,6 +4,7 @@ import { dropEmptyMessages } from "./stored-messages";
 import { mayResignStoredFileKey, resolveFreshFileUrl } from "./stored-file-url";
 import { loadFilePartBytes } from "./file-part-fetch";
 import { canRegisterSaveToProject } from "@SRC/templates/tools/save-to-project-tool";
+import { canRegisterCreateProject, CREATE_PROJECT_PROMPT } from "@SRC/templates/tools/create-project-tool";
 import { loadSessionFileListing, sessionFilesScopeSentence } from "./session-file-listing";
 import { resolveSessionProject, type ResolvedSessionProject } from "./resolve-session-project";
 import { getPresignedUrl } from "@SRC/uppy";
@@ -564,6 +565,9 @@ export const generateSync = async ({
         });
         if (listing) system += "\n\n" + listing;
     }
+    if (canRegisterCreateProject({ sessionID: session, exuluConfig, agentTools: agent?.tools, project: resolvedProject, sessionProjectId: project, ownerId: sessionOwnerId, req, user, disabled: disabledTools })) {
+        system += "\n\n" + CREATE_PROJECT_PROMPT;
+    }
 
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
     'Inform the user that the action was not performed.`
@@ -1027,6 +1031,9 @@ ${skillsList}
             project: resolvedProject,
         });
         if (listing) system += "\n\n" + listing;
+    }
+    if (canRegisterCreateProject({ sessionID: session, exuluConfig, agentTools: agent?.tools, project: resolvedProject, sessionProjectId: project, ownerId: sessionOwnerId, req, user, disabled: disabledTools })) {
+        system += "\n\n" + CREATE_PROJECT_PROMPT;
     }
 
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
