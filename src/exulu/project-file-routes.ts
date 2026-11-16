@@ -8,7 +8,7 @@ import type { Express, Request, Response } from "express";
 import type { ProjectRight } from "./project-access.ts";
 import { decideUploadSign, listFilesWithOrigin } from "./project-file-handlers.ts";
 import { projectFilePrefix } from "./project-files.ts";
-import { promoteSessionFiles, type PromoteS3 } from "./project-files-promote.ts";
+import { promoteSessionFiles, COPY_FAILED_REASON, type PromoteS3 } from "./project-files-promote.ts";
 import { sanitizeFilename } from "./session-files.ts";
 import type { FileOrigin } from "./file-origin.ts";
 
@@ -205,7 +205,11 @@ export function registerProjectFileRoutes(app: Express, deps: ProjectFileRouteDe
       });
       // Nothing was copied on a clash; the client confirms with the user and retries
       // with overwrite.
-      res.status(result.clashes.length > 0 ? 409 : 200).json(result);
+      // Every attempted copy failed (and none landed): that is a server failure, the body
+      // still says which. A partial success stays 200 so the client keeps what was copied.
+      const copyFailed = result.rejected.some((r) => r.reason === COPY_FAILED_REASON);
+      const status = result.clashes.length > 0 ? 409 : copyFailed && result.promoted.length === 0 ? 500 : 200;
+      res.status(status).json(result);
     } catch (err) {
       console.error("[PROJECT-FILES] promote failed", err);
       res.status(500).json({ detail: "Failed to copy files into the project." });

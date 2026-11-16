@@ -1,6 +1,8 @@
 import { planAdoptSizeCheck, MAX_ADOPT_UPLOAD_BYTES } from "./session-file-adopt.ts";
 import { planPromote, projectFilePrefix } from "./project-files.ts";
 
+export const COPY_FAILED_REASON = "Copying the file into the project failed.";
+
 export type PromoteS3 = {
   /** Names (not keys) of the files currently in the project folder. */
   listProjectNames: (projectPrefix: string) => Promise<string[]>;
@@ -77,7 +79,7 @@ export async function promoteSessionFiles(args: {
       promoted.push({ key: a.destKey, name: a.name });
     } catch (err) {
       console.error("[PROJECT-FILES] copy failed", a.sourceKey, err);
-      rejected.push({ key: a.sourceKey, reason: "Copying the file into the project failed." });
+      rejected.push({ key: a.sourceKey, reason: COPY_FAILED_REASON });
     }
   }
   return { promoted, rejected, clashes: [] };

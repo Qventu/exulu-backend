@@ -46,6 +46,12 @@ export class ExuluTool {
    * the boolean and never applies the "Allow for this chat" shortcut.
    */
   public needsApprovalFn?: (input: unknown, options: { toolCallId: string; messages: unknown[] }) => Promise<boolean>;
+  /**
+   * Calls for which approval is ALWAYS asked, even when the user allowed the tool for this
+   * chat (e.g. save_to_project with overwrite: true). Only narrows the shortcut: a call whose
+   * approval was already answered is still honoured by the approval wiring.
+   */
+  public alwaysAskWhen?: (input: unknown) => boolean;
   public authentication?: ExuluAuthConfig;
   public config: {
     name: string;
@@ -65,6 +71,7 @@ export class ExuluTool {
     config,
     needsApproval,
     needsApprovalFn,
+    alwaysAskWhen,
     authentication,
   }: {
     id: string;
@@ -84,6 +91,7 @@ export class ExuluTool {
     // approval-gate a write the caller may actually make). See the
     // needsApprovalFn property doc above.
     needsApprovalFn?: (input: unknown, options: { toolCallId: string; messages: unknown[] }) => Promise<boolean>;
+    alwaysAskWhen?: (input: unknown) => boolean;
     // When set, Exulu wraps execute with the appropriate authentication flow:
     // - oauth: 3-legged OAuth 2.0 (execute runs with a valid access token
     //   for the calling (toolId, userId); short-circuits with an authorization
@@ -127,6 +135,7 @@ export class ExuluTool {
     this.config = config;
     this.needsApproval = needsApproval ?? true;
     this.needsApprovalFn = needsApprovalFn;
+    this.alwaysAskWhen = alwaysAskWhen;
     this.category = category || "default";
     this.name = name;
     this.description = description;

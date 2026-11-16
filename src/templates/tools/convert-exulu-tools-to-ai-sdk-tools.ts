@@ -362,6 +362,9 @@ export const convertExuluToolsToAiSdkTools = async (
 
   // Project sessions only, and only when the SPEAKER may write to the project (the session
   // owner may have been granted less than the colleague continuing the session).
+  // Invariant: the speaker's SESSION write access is not re-checked here or in the tool. Both
+  // chat entry points in src/exulu/routes.ts (checkRecordAccess(session, "write", user), near lines
+  // 808 and 1245) refuse the turn unless the speaker has write access to the session.
   const saveToProjectTool = createSaveToProjectTool({
     sessionID,
     user,
@@ -369,8 +372,9 @@ export const convertExuluToolsToAiSdkTools = async (
     exuluConfig,
     ownerId: sessionOwnerId,
     project: turnProject,
+    disabled,
   });
-  if (saveToProjectTool && !disabled.has(saveToProjectTool.id)) {
+  if (saveToProjectTool) {
     currentTools.push(saveToProjectTool);
   }
 
@@ -552,11 +556,13 @@ export const convertExuluToolsToAiSdkTools = async (
             ? (input: unknown, opts: { toolCallId: string; messages: unknown[] }) => cur.needsApprovalFn!(input, opts)
             : isMemoryToolId(cur.id)
               ? true
-              : (_input: unknown, opts: { toolCallId: string; messages: unknown[] }) =>
+              : (input: unknown, opts: { toolCallId: string; messages: unknown[] }) =>
                   needsApprovalForCall({
                     toolCallId: opts.toolCallId,
                     messages: opts.messages,
-                    approvedForSession,
+                    // alwaysAskWhen only removes the "allowed for this chat" shortcut for
+                    // that call; an answered approval still reads as true, so no denial loop.
+                    approvedForSession: approvedForSession && !cur.alwaysAskWhen?.(input),
                     requiresApproval: !!cur.needsApproval, // todo make configurable
                   }),
           // Auth-wrapped tools: the model sees scrub text instead of the

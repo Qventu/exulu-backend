@@ -229,6 +229,16 @@ describe("project file routes", () => {
     expect(res.body.rejected[0].key).toBe(b);
   });
 
+  it("promote: every copy failing answers 500 with the body; a partial success stays 200", async () => {
+    const { app, put } = setup({ failCopyOf: "a.pdf" });
+    const a = `${sessionPrefix(1, "s-user1")}a.pdf`;
+    put(a);
+    const res = await as(request(app).post("/projects/p1/files/promote").send({ sessionId: "s-user1", keys: [a] }), 1);
+    expect(res.status).toBe(500);
+    expect(res.body.promoted).toEqual([]);
+    expect(res.body.rejected).toHaveLength(1);
+  });
+
   it("promote: with an s3prefix the destination and the owner's session prefix both carry it", async () => {
     const { app, put, copies } = setup({ s3prefix: "exulu" });
     const src = `exulu/${sessionPrefix(1, "s-user1")}a.pdf`;

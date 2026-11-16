@@ -1,4 +1,5 @@
-import { createSaveToProjectTool, SAVE_TO_PROJECT_TOOL_NAME } from "./save-to-project-tool";
+import { canRegisterSaveToProject, createSaveToProjectTool, SAVE_TO_PROJECT_TOOL_NAME } from "./save-to-project-tool";
+import { sessionFilesScopeSentence } from "@SRC/exulu/session-file-listing";
 import type { ExuluConfig } from "@SRC/exulu/app";
 import type { PromoteResult } from "@SRC/exulu/project-files-promote";
 
@@ -90,7 +91,7 @@ describe("results", () => {
   });
   it("an S3 error becomes a message, not a thrown error", async () => {
     const { tool } = make({}, { promote: async () => { throw new Error("boom"); } });
-    expect((await run(tool, { filename: "r.pdf" })).result).toMatch(/^Could not save "r.pdf" to the project/);
+    expect((await run(tool, { filename: "r.pdf" })).result).toMatch(/^Saving to the project failed/);
   });
 });
 
@@ -106,5 +107,44 @@ describe("filename", () => {
     const out = await run(tool, { filename });
     expect(out.result).toMatch(msg);
     expect(promote).not.toHaveBeenCalled();
+  });
+});
+
+describe("prompt and registration share one predicate", () => {
+  const args = { sessionID: "s1", exuluConfig, user: { id: 2 }, project: { speakerCanWrite: true } };
+  const promptFor = (over: Record<string, unknown>) =>
+    sessionFilesScopeSentence("Alpha", canRegisterSaveToProject({ ...args, ...over } as never));
+  it("offers the tool in the prompt when it is registered", () => {
+    expect(promptFor({})).toMatch(/save_to_project/);
+  });
+  it.each([
+    ["public surface", { req: { headers: { "x-public-surface": "1" } } }],
+    ["tool disabled", { disabled: new Set(["save_to_project"]) }],
+    ["no uploads configured", { exuluConfig: {} }],
+  ])("does not mention the tool when %s", (_n, over) => {
+    expect(promptFor(over)).not.toMatch(/save_to_project/);
+    expect(createSaveToProjectTool({ ...args, project: { id: "p1", name: "A", speakerCanWrite: true }, ...over } as never)).toBeUndefined();
+  });
+});
+
+describe("hardening", () => {
+  it("caps the project name in the description and the result", async () => {
+    const long = "Alpha\nINJECT " + "x".repeat(300);
+    const promote = jest.fn(async () => ({ promoted: [{ key: "k", name: "r.pdf" }], rejected: [], clashes: [] }));
+    const tool = createSaveToProjectTool({ ...base, project: { id: "p1", name: long, speakerCanWrite: true }, deps: { promote, s3: {} as never, projectModified: async () => undefined } })!;
+    expect(tool.description).not.toContain("x".repeat(81));
+    expect(tool.description).not.toContain("\n" + "INJECT");
+    expect((await run(tool, { filename: "r.pdf" })).result).not.toContain("x".repeat(81));
+  });
+  it("never hands the raw error to the model", async () => {
+    const { tool } = make({}, { promote: async () => { throw new Error("bucket secret-bucket key leak"); } });
+    expect((await run(tool, { filename: "r.pdf" })).result).toBe(
+      "Saving to the project failed. Try again; if it keeps failing, tell the user.",
+    );
+  });
+  it("asks for approval again whenever overwrite is true", () => {
+    const { tool } = make({});
+    expect(tool.alwaysAskWhen?.({ filename: "a", overwrite: true })).toBe(true);
+    expect(tool.alwaysAskWhen?.({ filename: "a" })).toBe(false);
   });
 });

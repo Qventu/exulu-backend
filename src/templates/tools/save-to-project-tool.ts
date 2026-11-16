@@ -10,11 +10,33 @@ import {
   type PromoteResult,
   type PromoteS3,
 } from "@SRC/exulu/project-files-promote";
+import { promptSafeProjectName } from "@SRC/exulu/session-file-listing";
 import { createPromoteS3 } from "@SRC/exulu/project-files-s3";
 import { listS3ObjectsByPrefix } from "@SRC/uppy";
 import type { ResolvedSessionProject } from "@SRC/exulu/resolve-session-project";
 
 export const SAVE_TO_PROJECT_TOOL_NAME = "save_to_project";
+const SAVE_TO_PROJECT_TOOL_ID = "save_to_project";
+
+/**
+ * The one answer to "is save_to_project offered this turn?", shared by the tool factory and
+ * the system prompt so the prompt never names a tool the model does not have.
+ */
+export function canRegisterSaveToProject(args: {
+  sessionID?: string;
+  exuluConfig?: ExuluConfig;
+  project?: { speakerCanWrite?: boolean } | null;
+  req?: { headers?: Record<string, unknown> };
+  user?: { id?: unknown } | null;
+  disabled?: Set<string> | string[];
+}): boolean {
+  if (!args.sessionID || !args.exuluConfig?.fileUploads?.s3Bucket) return false;
+  if (!args.project?.speakerCanWrite) return false;
+  // Guests and the public surface never write, whatever the project's rights say.
+  if (treatAsGuest(args.req, args.user)) return false;
+  const disabled = args.disabled instanceof Set ? args.disabled : new Set(args.disabled ?? []);
+  return !disabled.has(SAVE_TO_PROJECT_TOOL_ID);
+}
 
 type Deps = {
   promote: typeof promoteSessionFiles;
@@ -38,6 +60,7 @@ export const createSaveToProjectTool = ({
   exuluConfig,
   ownerId,
   project,
+  disabled,
   deps,
 }: {
   sessionID?: string;
@@ -47,14 +70,15 @@ export const createSaveToProjectTool = ({
   /** Session owner — session files are namespaced by owner, not by the current speaker. */
   ownerId?: number | string;
   project?: ResolvedSessionProject | null;
+  disabled?: Set<string> | string[];
   deps?: Deps;
 }): ExuluTool | undefined => {
-  if (!sessionID || !exuluConfig?.fileUploads?.s3Bucket) return undefined;
-  if (!project?.speakerCanWrite) return undefined;
-  // Guests and the public surface never write, whatever the project's rights say.
-  if (treatAsGuest(req, user)) return undefined;
+  if (!canRegisterSaveToProject({ sessionID, exuluConfig, project, req, user, disabled })) return undefined;
+  if (!sessionID || !exuluConfig || !project) return undefined;
 
   const uploads = exuluConfig.fileUploads;
+  if (!uploads) return undefined;
+  const projectLabel = promptSafeProjectName(project.name);
   const resolvedDeps: Deps = deps ?? {
     promote: promoteSessionFiles,
     s3: createPromoteS3(exuluConfig),
@@ -93,13 +117,14 @@ export const createSaveToProjectTool = ({
       });
     } catch (err) {
       console.error("[PROJECT-FILES] save_to_project failed", err);
-      return { result: `Could not save "${name}" to the project: ${err instanceof Error ? err.message : "unknown error"}` };
+      // The raw error (bucket names, keys) stays in the log, not in the model's context.
+      return { result: "Saving to the project failed. Try again; if it keeps failing, tell the user." };
     }
 
     if (outcome.promoted.length > 0) {
       return {
         result:
-          `Saved "${name}" to project ${project.name}. ` +
+          `Saved "${name}" to project ${projectLabel}. ` +
           `It will be visible to you as ${PROJECT_DIR}/${name} from the next turn.`,
       };
     }
@@ -129,8 +154,10 @@ export const createSaveToProjectTool = ({
     id: "save_to_project",
     name: SAVE_TO_PROJECT_TOOL_NAME,
     needsApproval: true,
+    // Replacing a shared file always needs a fresh yes, "allow for this chat" or not.
+    alwaysAskWhen: (input) => (input as { overwrite?: unknown } | undefined)?.overwrite === true,
     description:
-      `Copy one file from this session's files into the project's shared folder (${project.name}), where ` +
+      `Copy one file from this session's files into the project's shared folder (${projectLabel}), where ` +
       "everyone on the project can read it. The `project/` directory is read-only for you, so this is the only " +
       "way to add a file to the project. Pass the bare name of the session file. If the name already exists " +
       "in the project the call changes nothing and tells you; call again with overwrite: true only after the " +

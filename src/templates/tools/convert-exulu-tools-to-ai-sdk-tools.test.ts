@@ -252,6 +252,36 @@ describe("save_to_project registration", () => {
   });
 });
 
+describe("save_to_project approval", () => {
+  const project = { id: "p1", name: "Alpha", speakerCanWrite: true };
+  const build = (approved: string[]) =>
+    convertExuluToolsToAiSdkTools(
+      [], [], approved, [], [], undefined, { id: 7 } as never, { fileUploads: { s3Bucket: "b" } } as never,
+      "session-1", undefined, "raw-project", undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, project as never,
+    );
+  const ask = async (tools: any, input: unknown, messages: unknown[] = []) =>
+    tools.save_to_project.needsApproval(input, { toolCallId: "c1", messages });
+  const answered = [
+    { role: "assistant", content: [{ type: "tool-approval-request", approvalId: "a1", toolCallId: "c1" }] },
+    { role: "tool", content: [{ type: "tool-approval-response", approvalId: "a1", approved: true }] },
+  ];
+  it("allowed for this chat: a plain save is not asked again, an overwrite always is", async () => {
+    const tools = await build(["tool-save_to_project"]);
+    expect(await ask(tools, { filename: "a.pdf" })).toBe(false);
+    expect(await ask(tools, { filename: "a.pdf", overwrite: true })).toBe(true);
+  });
+  it("not allowed for the chat: every call is asked", async () => {
+    const tools = await build([]);
+    expect(await ask(tools, { filename: "a.pdf" })).toBe(true);
+  });
+  it("an already-answered overwrite call keeps needing approval so the SDK honours the answer", async () => {
+    const tools = await build(["tool-save_to_project"]);
+    expect(await ask(tools, { filename: "a.pdf", overwrite: true }, answered)).toBe(true);
+    expect(await ask(tools, { filename: "a.pdf" }, answered)).toBe(true);
+  });
+});
+
 describe("knowledge base write tool injection", () => {
   const kbContext = {
     id: "products",
