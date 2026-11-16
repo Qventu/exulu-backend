@@ -398,3 +398,29 @@ describe("routine handle in the execute context", () => {
     expect(execute.mock.calls[0][0].routine).toBeUndefined();
   });
 });
+
+describe("set_routine_status injection", () => {
+  const handleWith = (statuses: unknown[]) => ({
+    id: "wf-1", name: "R", statuses,
+    runs: { current: { id: "jr-1", status: null, update: jest.fn(), updateWithResult: jest.fn() } },
+  });
+  const convert = (factory?: unknown, disabledTools?: string[]) =>
+    convertExuluToolsToAiSdkTools(
+      [] as never, [], [], [], [], [] as never, undefined, undefined, undefined, undefined,
+      undefined, undefined, model, undefined, undefined, undefined, disabledTools, undefined, undefined, undefined,
+      factory as never,
+    );
+  const hasStatusTool = (tools: Record<string, unknown>) => Object.keys(tools).some((name) => /set_routine_status/i.test(name));
+
+  it("is offered in a routine run whose routine has statuses, built with the agent as actor", async () => {
+    const factory = jest.fn(() => handleWith([{ key: "neu", label: "Neu" }]));
+    expect(hasStatusTool(await convert(factory))).toBe(true);
+    expect(factory).toHaveBeenCalledWith({ kind: "agent" });
+  });
+
+  it("is not offered outside a routine run, without statuses, or when disabled", async () => {
+    expect(hasStatusTool(await convert(undefined))).toBe(false);
+    expect(hasStatusTool(await convert(() => handleWith([])))).toBe(false);
+    expect(hasStatusTool(await convert(() => handleWith([{ key: "neu", label: "Neu" }]), ["set_routine_status"]))).toBe(false);
+  });
+});
