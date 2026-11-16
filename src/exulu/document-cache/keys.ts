@@ -11,8 +11,10 @@ export const DERIVED_ROOT = "derived";
 /** Bump when extraction output changes in a way the settings do not show. */
 const EXTRACTOR_VERSION = 1;
 
-const generalPrefix = (s3prefix?: string | null) =>
-  s3prefix ? `${s3prefix.replace(/\/+$/, "")}/` : "";
+const generalPrefix = (s3prefix?: string | null) => {
+  const trimmed = (s3prefix ?? "").replace(/^\/+|\/+$/g, "");
+  return trimmed ? `${trimmed}/` : "";
+};
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 

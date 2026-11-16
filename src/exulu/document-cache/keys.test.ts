@@ -27,6 +27,9 @@ describe("keys", () => {
     expect(isDerivedKey("/derived/x")).toBe(true);
     expect(isDerivedKey("pre/derived/x", "pre")).toBe(true);
     expect(isDerivedKey("pre/derived/x", "pre/")).toBe(true);
+    expect(isDerivedKey("/pre/derived/x", "/pre")).toBe(true);
+    expect(isDerivedKey("pre/derived/x", "/pre/")).toBe(true);
+    expect(contentKey(sha, "fp1", "/pre/")).toBe(`pre/derived/content/${sha}/fp1.md`);
     expect(isDerivedKey("user_1/derived/x")).toBe(false);
     expect(isDerivedKey("derivedx/y")).toBe(false);
     expect(isDerivedKey("pre/user_1/a", "pre")).toBe(false);
