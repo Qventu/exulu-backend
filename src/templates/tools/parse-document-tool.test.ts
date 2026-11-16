@@ -214,3 +214,25 @@ it("addresses the session file under the session owner's prefix when an owner is
   await (tool.tool!.execute as (i: unknown) => Promise<ParseResult>)({ filename: "Anfrage 04072.pdf" });
   expect(getPresignedUrl).toHaveBeenCalledWith("bucket", "exulu/user_11/sessions/s1/Anfrage 04072.pdf", exuluConfig);
 });
+
+describe("project files", () => {
+  const runWith = (projectId: string | null, input: Record<string, unknown>): Promise<ParseResult> => {
+    const tool = createParseDocumentTool({ sessionID: "s1", user, exuluConfig, projectId })!;
+    return (tool.tool!.execute as (i: unknown) => Promise<ParseResult>)(input);
+  };
+  it("reads project/<name> from the project key", async () => {
+    pdfToText.mockResolvedValue("a page body with plenty of extractable text for the detector");
+    const result = await runWith("p1", { filename: "project/a.pdf" });
+    expect(result.error).toBeUndefined();
+    expect(getPresignedUrl).toHaveBeenCalledWith("bucket", "exulu/projects/p1/files/a.pdf", exuluConfig);
+  });
+  it("refuses project/<name> without a resolved project", async () => {
+    const result = await runWith(null, { filename: "project/a.pdf" });
+    expect(result.error).toBe("This session has no project files.");
+    expect(getPresignedUrl).not.toHaveBeenCalled();
+  });
+  it("tells the model how project files are addressed", () => {
+    const tool = createParseDocumentTool({ sessionID: "s1", user, exuluConfig })!;
+    expect(tool.description).toMatch(/project\/<name>.*read-only/);
+  });
+});

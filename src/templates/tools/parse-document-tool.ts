@@ -6,7 +6,7 @@ import { getPresignedUrl } from "@SRC/uppy";
 import type { ExuluConfig } from "@SRC/exulu/app";
 import type { User } from "@EXULU_TYPES/models/user";
 import { convertLegacyOfficeToModern, isLegacyOfficeFormat, pdfToText } from "./document-render-helpers";
-import { sessionFilePrefix } from "@SRC/exulu/session-files";
+import { resolveFileKey } from "./resolve-file-key";
 import { extractDocument } from "@SRC/exulu/attachment-text";
 
 const DEFAULT_LIMIT = 250;
@@ -104,12 +104,15 @@ export const createParseDocumentTool = ({
   user,
   exuluConfig,
   ownerId,
+  projectId,
 }: {
   sessionID?: string;
   user?: User;
   exuluConfig?: ExuluConfig;
   /** Session owner — files are namespaced by owner, not by the current speaker. */
   ownerId?: number | string;
+  /** The access-checked project id (never the raw session.project); null/undefined = no project files. */
+  projectId?: string | null;
 }): ExuluTool | undefined => {
   if (!sessionID || !exuluConfig?.fileUploads?.s3Bucket) return undefined;
 
@@ -124,12 +127,16 @@ export const createParseDocumentTool = ({
     offset?: number;
     limit?: number;
   }) => {
-    const safeName = String(filename ?? "").trim();
-    if (!safeName || safeName.includes("..") || safeName.includes("/") || safeName.includes("\\")) {
-      return {
-        error: "Invalid filename — pass the bare file name exactly as listed in the session files (no paths).",
-      };
-    }
+    const resolvedKey = resolveFileKey({
+      filename,
+      ownerId: ownerId ?? user?.id ?? "api",
+      sessionId: sessionID,
+      projectId: projectId ?? null,
+      s3prefix: exuluConfig.fileUploads!.s3prefix,
+    });
+    if ("error" in resolvedKey) return { error: resolvedKey.error };
+    const key = resolvedKey.key;
+    const safeName = String(filename).trim();
     const ext = extname(safeName).toLowerCase();
     if (ext !== ".pdf" && !OFFICE_EXTENSIONS.has(ext)) {
       return {
@@ -142,7 +149,6 @@ export const createParseDocumentTool = ({
     }
 
     const uploads = exuluConfig.fileUploads!;
-    const key = `${sessionFilePrefix(ownerId ?? user?.id ?? "api", sessionID, uploads.s3prefix)}${safeName}`;
     try {
       const url = await getPresignedUrl(uploads.s3Bucket!, key, exuluConfig);
       const res = await fetch(url);
@@ -247,7 +253,8 @@ export const createParseDocumentTool = ({
       "Extract the text of an uploaded PDF or Office document from this session's files, with " +
       '"--- page N ---" markers for PDFs so you can locate content by page. Free and fast (no OCR): ' +
       "works only on documents with a real text layer. To SEE a page or an image inside a document, " +
-      "use view_document_page.",
+      "use view_document_page." +
+      " Files of the session's project are addressed as `project/<name>` and are read-only.",
     inputSchema: z.object({
       filename: z.string().describe('Exact session file name, e.g. "report.pdf"'),
       pages: z.string().optional().describe('PDF page or range to extract, e.g. "2" or "1-5" (default: all pages) (PDF only)'),

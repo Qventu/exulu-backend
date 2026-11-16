@@ -102,7 +102,12 @@ import { transcribeAudio,
 import { transcriptionClient } from "./transcription/client.ts";
 import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts";
 import { registerTranscriptExportRoute } from "./transcription/export-route.ts";
+import { registerProjectFileRoutes, registerProjectFileRoutesUnconfigured } from "./project-file-routes.ts";
+import { listFilesWithOrigin, makeLoadAuthedProject } from "./project-file-handlers.ts";
+import { hasProjectAccess } from "./project-access.ts";
+import { createPromoteS3, getOriginResolver } from "./project-files-s3.ts";
 import { registerViewerIdentityRoutes } from "./viewer-identity-routes.ts";
+import { registerCreateShareRoute } from "./shared-artifact-create-route.ts";
 import { registerClaimCheckRoutes } from "@EE/claim-check/routes";
 import { claimCheckRateLimiter } from "@EE/claim-check/rate-limit";
 import { runClaimCheck } from "@EE/claim-check/run";
@@ -189,8 +194,6 @@ import { handleRBACUpdate } from "@EE/rbac-update.ts";
 import {
   getSharedArtifactByName,
   normalizeS3Key,
-  slugifyShareName,
-  validateCreateInput,
   hashSharePassword,
   verifySharePassword,
   isExpired,
@@ -1811,6 +1814,22 @@ export const createExpressRoutes = async (
     }
     return { user: authResult.user, session, db } as const;
   };
+
+  const projectRbac = async (project: any) => {
+    const { db } = await postgresClient();
+    // The rbac table stores the SINGULAR entity name for projects ("project"); the
+    // plural loadAuthedSession passes for sessions would match nothing here.
+    return RBACResolver(db, "project", project.id, project.rights_mode || "private");
+  };
+
+  const loadAuthedProject = makeLoadAuthedProject({
+    authenticate: (req) => requestValidators.authenticate(req),
+    getProject: async (id) => {
+      const { db } = await postgresClient();
+      return db.from("projects").where({ id }).first();
+    },
+    getRbac: projectRbac,
+  });
 
   /**
    * Resolve a saved style by id and verify the calling user has read access
@@ -4792,26 +4811,12 @@ export const createExpressRoutes = async (
     }
 
     const bucket = config.fileUploads.s3Bucket;
-    const files = await Promise.all(
-      objects
-        // Skip the directory marker (key ending with /).
-        .filter((obj) => !obj.key.endsWith("/"))
-        .map(async (obj) => {
-          const name = obj.key.split("/").pop() ?? obj.key;
-          const presignedUrl = await getPresignedUrl(bucket, obj.key, config);
-          return {
-            key: obj.key,
-            name,
-            size: obj.size,
-            lastModified: obj.lastModified.toISOString(),
-            contentType: inferContentType(name),
-            presignedUrl,
-          };
-        }),
-    );
-
-    // Most-recent first.
-    files.sort((a, b) => b.lastModified.localeCompare(a.lastModified));
+    const files = await listFilesWithOrigin({
+      objects,
+      presign: (key) => getPresignedUrl(bucket, key, config),
+      resolveOrigin: getOriginResolver(config),
+      inferContentType,
+    });
 
     res.json({ files });
   });
@@ -5119,6 +5124,33 @@ export const createExpressRoutes = async (
       res.json({ adopted, rejected: [] });
     },
   );
+
+  // ─── Project Files ───────────────────────────────────────────────────────────
+  if (config.fileUploads) {
+    const fileConfig = config;
+    registerProjectFileRoutes(app, {
+      s3prefix: config.fileUploads.s3prefix,
+      loadAuthedProject,
+      canWrite: async (user, project) =>
+        hasProjectAccess({ project, rbac: await projectRbac(project), user, want: "write" }),
+      loadAuthedSession,
+      buildSessionPrefixes,
+      s3: {
+        ...createPromoteS3(fileConfig),
+        list: (prefix) => listS3ObjectsByPrefix(prefix, fileConfig),
+        presign: (key) => getPresignedUrl(fileConfig.fileUploads!.s3Bucket, key, fileConfig),
+        signUpload: (key, contentType, expiresIn) => getS3SignedUploadUrl(key, contentType, fileConfig, { expiresIn }),
+        remove: (key) => deleteS3Object(key, fileConfig),
+        etag: (key) => getS3ObjectEtag(key, fileConfig),
+      },
+      resolveOrigin: getOriginResolver(fileConfig),
+      inferContentType,
+      previewPdf: (key, etag) => getPdfPreviewBytes({ sourceKey: key, etag, config: fileConfig }),
+      isPreviewError: (err) => err instanceof PreviewRenderError,
+    });
+  } else {
+    registerProjectFileRoutesUnconfigured(app);
+  }
 
   // ─── End Session Files ────────────────────────────────────────────────────────
 
@@ -5548,58 +5580,15 @@ export const createExpressRoutes = async (
     res.json({ agent_slots: readAgentSlots(row.agent_slots) });
   });
 
-  // Create a share link. Authed as the real user; RBAC scoping for regular mode.
-  app.post("/shared-artifacts", async (req: Request, res: Response) => {
-    const { db } = await postgresClient();
-    const auth = await requestValidators.authenticate(req);
-    if (!auth.user?.id) {
-      res.status(401).json({ detail: "Authentication required." });
-      return;
-    }
-    const now = new Date();
-    const valid = validateCreateInput(req.body, now);
-    if (!valid.ok) {
-      res.status(400).json({ detail: valid.message });
-      return;
-    }
-    const bucket = config.fileUploads?.s3Bucket ?? "";
-    const s3key = normalizeS3Key(req.body.s3key, bucket);
-    const name = slugifyShareName(req.body.name);
-    if (!name) {
-      res.status(400).json({ detail: "name must contain url-safe characters." });
-      return;
-    }
-    const existing = await getSharedArtifactByName(db, name);
-    if (existing) {
-      res.status(409).json({ detail: "That share name is already taken." });
-      return;
-    }
-    const auth_mode = req.body.auth_mode as "public" | "password" | "regular";
-    const password_hash =
-      auth_mode === "password" ? await hashSharePassword(req.body.password) : null;
-    // "public" is safe as a sentinel for non-regular rows because public/password
-    // content requests are gated upstream by internal-key and never reach
-    // checkRecordAccess; only regular rows go through RBAC evaluation.
-    const rights_mode =
-      auth_mode === "regular" ? (req.body.rights_mode ?? "private") : "public";
-
-    const [row] = await db("shared_artifacts")
-      .insert({
-        name,
-        s3key,
-        auth_mode,
-        password_hash,
-        expires_at: req.body.expires_at ?? null,
-        content_type: req.body.content_type ?? null,
-        rights_mode,
-        created_by: auth.user.id,
-      })
-      .returning("*");
-
-    if (auth_mode === "regular" && req.body.rbac) {
-      await handleRBACUpdate(db, "shared_artifact", row.id, req.body.rbac, []);
-    }
-    res.status(201).json({ name: row.name });
+  // POST /shared-artifacts lives in shared-artifact-create-route.ts so its
+  // contract (a share may only point at the caller's own upload) is testable
+  // with supertest and no Postgres. See shared-artifact-create-route.test.ts.
+  registerCreateShareRoute(app, {
+    authenticate: (req) => requestValidators.authenticate(req),
+    getDb: async () => (await postgresClient()).db,
+    bucket: config.fileUploads?.s3Bucket ?? "",
+    s3prefix: config.fileUploads?.s3prefix,
+    handleRBACUpdate,
   });
 
   // Resolve the gate. internal-key only; never returns the hash or bytes.

@@ -1,8 +1,11 @@
 import type { User } from "@EXULU_TYPES/models/user";
 import { classifyFilePart } from "./file-part";
 import { dropEmptyMessages } from "./stored-messages";
-import { resolveFreshFileUrl } from "./stored-file-url";
-import { loadSessionFileListing } from "./session-file-listing";
+import { mayResignStoredFileKey, resolveFreshFileUrl } from "./stored-file-url";
+import { loadFilePartBytes } from "./file-part-fetch";
+import { canRegisterSaveToProject } from "@SRC/templates/tools/save-to-project-tool";
+import { loadSessionFileListing, sessionFilesScopeSentence } from "./session-file-listing";
+import { resolveSessionProject, type ResolvedSessionProject } from "./resolve-session-project";
 import { getPresignedUrl } from "@SRC/uppy";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import type { ExuluAgentToolConfig } from "@EXULU_TYPES/models/exulu-agent-tool-config.ts";
@@ -58,12 +61,16 @@ import { randomUUID } from "node:crypto";
   * - Document files (PDF, DOCX, etc.) -> text parts with extracted content using officeparser
   * - Image files -> image parts (which ARE supported by Responses API)
   */
-const processFilePartsInMessages = async (
+/** Exported for tests (generate-stream.file-parts.test.ts). */
+export const processFilePartsInMessages = async (
     messages: UIMessage[],
     offloadCtx: {
         contextWindow?: number;
         sessionID?: string;
+        /** The speaker of this turn. */
         user?: User;
+        /** The session's owner; differs from `user` in a shared session. */
+        sessionOwnerId?: number | string;
         exuluConfig?: ExuluConfig;
     },
 ): Promise<UIMessage[]> => {
@@ -85,12 +92,21 @@ const processFilePartsInMessages = async (
                     // Stored URLs are presigned and expire after a day; re-sign so a
                     // continued session (approval, follow-up, later routine step) can
                     // still fetch the file. The refreshed URL is what gets persisted.
+                    // The URL is user input, so only the session's own files (owner,
+                    // speaker, global/) are re-signed: a hand-made URL to a project file
+                    // or another user's file must not come back as a working capability.
                     const uploads = offloadCtx.exuluConfig?.fileUploads;
                     const url = uploads?.s3Bucket
                         ? await resolveFreshFileUrl(part.url, {
                               endpoint: uploads.s3endpoint,
                               bucket: uploads.s3Bucket,
                               sign: (bucket, key) => getPresignedUrl(bucket, key, offloadCtx.exuluConfig!),
+                              mayResign: (key) =>
+                                  mayResignStoredFileKey(key, {
+                                      s3prefix: uploads.s3prefix,
+                                      ownerId: offloadCtx.sessionOwnerId ?? offloadCtx.user?.id,
+                                      speaker: offloadCtx.user,
+                                  }),
                           })
                         : part.url;
 
@@ -113,19 +129,19 @@ const processFilePartsInMessages = async (
                     // processor when configured, officeparser otherwise — attachment-text.ts).
                     console.log(`[EXULU] Converting file part to text: ${filename}`);
                     try {
-                        // Fetch the file content from the URL
-                        const response = await fetch(url);
-                        if (!response.ok) {
-                            console.error(
-                                `[EXULU] Failed to fetch file: ${filename}, status: ${response.status} `,
-                            );
-                            return {
-                                type: "text",
-                                text: `[Error: Could not load file ${filename}]`,
-                            };
+                        // Only data: URLs and the workspace's own storage are loaded (with
+                        // timeout, byte cap, no redirects): the URL is user input and guest
+                        // chats reach this, so it must not become a server-side fetch proxy.
+                        const loaded = await loadFilePartBytes(part.url, filename, {
+                            store: uploads?.s3Bucket
+                                ? { endpoint: uploads.s3endpoint, bucket: uploads.s3Bucket }
+                                : undefined,
+                            fetchUrl: url,
+                        });
+                        if (!loaded.ok) {
+                            return { type: "text", text: loaded.error };
                         }
-
-                        const bytes = Buffer.from(await response.arrayBuffer());
+                        const bytes = loaded.bytes;
 
                         const extracted = await extractDocument({
                             bytes,
@@ -315,11 +331,20 @@ export const generateSync = async ({
     let sessionItems: string[] | undefined;
     let sessionOwnerId: number | string | undefined;
     let lastTurnAt: Date | undefined;
+    // Access-checked project of this turn (null = none/detached/deleted/no access). Resolved
+    // once and shared by the sandbox, the document tools and the prompt.
+    let resolvedProject: ResolvedSessionProject | null = null;
     if (session) {
         const sessionData = await getSession({ sessionID: session });
         sessionItems = sessionData.session_items;
         project = sessionData.project;
         sessionOwnerId = sessionData.user ?? undefined;
+        resolvedProject = await resolveSessionProject({
+            projectId: project,
+            ownerId: sessionOwnerId ?? user?.id,
+            owner: user,
+            speaker: user,
+        });
     }
 
     const model = languageModel;
@@ -442,6 +467,10 @@ export const generateSync = async ({
         contextWindow,
         disabledTools,
         sessionOwnerId,
+        undefined,
+        undefined,
+        undefined, // routineHandleFactory: the sync path is never part of a routine run
+        resolvedProject,
     );
 
     // The retrieval budget matches tool calls by their REGISTERED key
@@ -523,8 +552,7 @@ export const generateSync = async ({
         The user can upload files to this session through a side panel in the chat UI. Any such
         file appears in your working directory by its original filename — list them with \`ls\` or
         read them with the readFile tool. Files you produce yourself (via writeFile or via shell
-        commands like \`node create_doc.js\`) live in the same place. These files are scoped to
-        this single session; they are NOT visible in other sessions, projects, or knowledge bases.
+        commands like \`node create_doc.js\`) live in the same place. ${sessionFilesScopeSentence(resolvedProject?.name, canRegisterSaveToProject({ sessionID: session, exuluConfig, project: resolvedProject, req, user, disabled: disabledTools }))}
       `
     if (session) {
         const listing = await loadSessionFileListing({
@@ -532,6 +560,7 @@ export const generateSync = async ({
             ownerId: sessionOwnerId ?? user?.id ?? "api",
             exuluConfig,
             lastTurnAt,
+            project: resolvedProject,
         });
         if (listing) system += "\n\n" + listing;
     }
@@ -783,12 +812,21 @@ export const generateStream = async ({
     let sessionOwnerId: number | string | undefined;
     let sessionMetadata: unknown;
     let lastTurnAt: Date | undefined;
+    // Access-checked project of this turn (null = none/detached/deleted/no access). Resolved
+    // once and shared by the sandbox, the document tools and the prompt.
+    let resolvedProject: ResolvedSessionProject | null = null;
     if (session) {
         const sessionData = await getSession({ sessionID: session });
         project = sessionData.project;
         sessionItems = sessionData.session_items;
         sessionOwnerId = sessionData.user ?? undefined;
         sessionMetadata = sessionData.metadata;
+        resolvedProject = await resolveSessionProject({
+            projectId: project,
+            ownerId: sessionOwnerId ?? user?.id,
+            owner: user,
+            speaker: user,
+        });
 
         console.log("[EXULU] loading previous messages from session: " + session);
         const previousMessages = await getAgentMessages({
@@ -861,6 +899,7 @@ export const generateStream = async ({
         contextWindow,
         sessionID: session,
         user,
+        sessionOwnerId,
         exuluConfig,
     });
 
@@ -971,8 +1010,7 @@ ${skillsList}
         The user can upload files to this session through a side panel in the chat UI. Any such
         file appears in your working directory by its original filename — list them with \`ls\` or
         read them with the readFile tool. Files you produce yourself (via writeFile or via shell
-        commands like \`node create_doc.js\`) live in the same place. These files are scoped to
-        this single session; they are NOT visible in other sessions, projects, or knowledge bases.
+        commands like \`node create_doc.js\`) live in the same place. ${sessionFilesScopeSentence(resolvedProject?.name, canRegisterSaveToProject({ sessionID: session, exuluConfig, project: resolvedProject, req, user, disabled: disabledTools }))}
 
         Note on large outputs: oversized tool outputs and large uploaded documents are automatically
         truncated in the conversation; the FULL content is saved as a session file (named in the
@@ -985,6 +1023,7 @@ ${skillsList}
             ownerId: sessionOwnerId ?? user?.id ?? "api",
             exuluConfig,
             lastTurnAt,
+            project: resolvedProject,
         });
         if (listing) system += "\n\n" + listing;
     }
@@ -1036,6 +1075,7 @@ ${skillsList}
         memoryDecisions,
         skillDecisions,
         routineHandleFactory,
+        resolvedProject,
     )
     console.log("[EXULU] Converted tools", Object.keys(tools));
 

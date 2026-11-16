@@ -2,7 +2,7 @@ import {
     SandboxManager,
     type SandboxRuntimeConfig,
 } from '@anthropic-ai/sandbox-runtime'
-import { mkdir, rm, writeFile, readFile as fsReadFile, readdir, stat } from 'node:fs/promises'
+import { mkdir, rm, readdir, stat, lstat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, dirname, resolve, relative, posix } from 'node:path'
 import { exec, spawn } from 'node:child_process'
@@ -23,6 +23,10 @@ import { z } from "zod";
 import { type Variable } from "@EXULU_TYPES/models/variable";
 import CryptoJS from "crypto-js";
 import { postgresClient } from "@SRC/postgres/client";
+import { PROJECT_DIR } from "@SRC/exulu/project-files.ts";
+import { ORIGIN_METADATA_KEY } from "@SRC/exulu/file-origin.ts";
+import { syncProjectDir, clearProjectSyncMarker } from "./project-sync";
+import { readRegularFileInside, writeFileInside, ensureRealDirectory, removeEntryInside, UnsafeSessionPathError } from "./safe-fs";
 
 /**
  * Load the variables an administrator has explicitly granted to the skill
@@ -212,10 +216,20 @@ export interface SessionSandboxHandle {
     cleanup: () => Promise<void>
 }
 
+/**
+ * Per-sandbox, mutable: the cached sandbox outlives a turn, and the session's
+ * project can change between turns (detach, re-attach, access revoked). The
+ * write-back closures read it at call time, so it must not be captured once.
+ */
+interface ProjectState {
+    projectId: string | null
+}
+
 interface CachedSandbox {
     handle: SessionSandboxHandle
     /** skill id -> installed version */
     installedSkills: Map<string, number>
+    projectState: ProjectState
 }
 
 const sandboxCache = new Map<string, CachedSandbox>()
@@ -248,6 +262,11 @@ async function downloadSkill(
         );
     }
 
+    // The agent can replace skills/ or skills/<name> with a link; make both real
+    // directories again (a link is unlinked, never followed) before writing.
+    const sessionDir = dirname(skillsDirectory)
+    await ensureRealDirectory(sessionDir, `skills/${skill.name}`)
+
     for (const file of files) {
         // Extract the path relative to the version prefix, accounting for any S3 general prefix
         const prefixIndex = file.key.indexOf(versionPrefix)
@@ -257,28 +276,70 @@ async function downloadSkill(
 
         if (!relativePath) continue // skip directory markers
 
-        const localPath = join(skillsDirectory, skill.name, relativePath)
-        await mkdir(dirname(localPath), { recursive: true })
-
         // Binary-safe download — skill bundles can ship images, fonts, and
         // other non-text assets alongside the SKILL.md / scripts.
         const bytes = await getS3ObjectBytes(file.key, config)
-        await writeFile(localPath, bytes)
+        try {
+            await writeFileInside(sessionDir, `skills/${skill.name}/${relativePath}`, bytes)
+        } catch (err) {
+            if (!(err instanceof UnsafeSessionPathError)) throw err
+            console.error(`[SKILLS] Skipping skill file ${file.key}: ${err.message}`)
+        }
     }
+}
+
+/**
+ * Remove an installed skill's folder before it is reinstalled. skills/ itself is
+ * made a real directory first, so the removal never runs through a link.
+ */
+async function removeInstalledSkill(skillsDirectory: string, skillName: string): Promise<void> {
+    const sessionDir = dirname(skillsDirectory)
+    await ensureRealDirectory(sessionDir, 'skills')
+    await removeEntryInside(sessionDir, `skills/${skillName}`)
 }
 
 /**
  * A file written inside the sandbox qualifies as a session artifact iff it lives
  * under sessionDir but NOT under sessionDir/skills/. Skill source files are
  * authored elsewhere and should never be mirrored back to the per-session
- * artifact tree.
+ * artifact tree. In a project session `project/` is the read-only copy of the
+ * project's shared files and is never written back either; without a project
+ * the name has no special meaning.
  */
-function isArtifactPath(absPath: string, sessionDir: string): boolean {
+export function isArtifactPath(
+    absPath: string,
+    sessionDir: string,
+    opts: { hasProject?: boolean } = {},
+): boolean {
     const resolved = resolve(absPath)
     const rel = relative(sessionDir, resolved)
     if (!rel || rel.startsWith('..')) return false
     const first = rel.split('/')[0]
+    if (opts.hasProject && first === PROJECT_DIR) return false
     return first !== 'skills'
+}
+
+/**
+ * Upload a file the agent produced in its sandbox. The origin marker is what the
+ * file lists use to badge agent-made files; only this path sets it, so user
+ * uploads (which go through other uploadFile callers) stay unmarked.
+ */
+export async function uploadAgentArtifact(
+    content: Buffer,
+    s3Key: string,
+    config: ExuluConfig,
+    userId: number | string | undefined,
+): Promise<string> {
+    return uploadFile(
+        content,
+        s3Key,
+        config,
+        { metadata: { [ORIGIN_METADATA_KEY]: 'agent' } },
+        // uploadFile's user param is typed as number, but the
+        // addUserPrefixToKey helper it delegates to accepts
+        // number | string at runtime — pass through as-is.
+        userId as unknown as number,
+    )
 }
 
 function artifactS3Key(sessionId: string, relPath: string): string {
@@ -330,7 +391,7 @@ async function restoreArtifactsFromS3(
     sessionId: string,
     userId: number | string,
     config: ExuluConfig,
-    opts: { onlyMissing?: boolean } = {},
+    opts: { onlyMissing?: boolean; skipProjectDir?: boolean } = {},
 ): Promise<void> {
     const userPrefix = `user_${userId}/sessions/${sessionId}/`
     let objects: S3FileObject[]
@@ -359,12 +420,19 @@ async function restoreArtifactsFromS3(
         const relativePath = idx >= 0 ? obj.key.slice(idx + userPrefix.length) : ''
         if (!relativePath) continue // directory marker or unexpected key shape
         if (isIgnoredArtifactPath(relativePath)) continue // never pull dependency trees back
+        // In a project session project/ belongs to the project sync; a session file
+        // under that name (written before the session joined a project) would
+        // otherwise be pulled in and removed again on every turn.
+        if (opts.skipProjectDir && relativePath.split('/')[0] === PROJECT_DIR) continue
 
         const localPath = join(sessionDir, relativePath)
         if (opts.onlyMissing) {
             let localSize: number | undefined
             try {
-                localSize = (await stat(localPath)).size
+                // lstat: a link the agent planted counts as missing (the write below
+                // replaces it) instead of reporting the size of whatever it points at.
+                const st = await lstat(localPath)
+                localSize = st.isFile() ? st.size : undefined
             } catch {
                 localSize = undefined
             }
@@ -375,8 +443,8 @@ async function restoreArtifactsFromS3(
             // and other binary formats (from user uploads as well as agent
             // bash-produced files). Reading as utf-8 would corrupt these.
             const bytes = await getS3ObjectBytes(obj.key, config)
-            await mkdir(dirname(localPath), { recursive: true })
-            await writeFile(localPath, bytes)
+            // Never writeFile into the agent-writable tree: it would follow links.
+            await writeFileInside(sessionDir, relativePath, bytes)
         } catch (err) {
             console.error(
                 `[SKILLS] Failed to restore artifact ${obj.key} -> ${localPath}; continuing.`,
@@ -425,11 +493,9 @@ export async function downloadKeyIntoSandbox(opts: {
     const relativePath = fullS3Key.slice(idx + userPrefix.length)
     if (!relativePath) return { written: false } // directory marker
 
-    const localPath = join(sessionDir, relativePath)
-
     const bytes = await getS3ObjectBytes(fullS3Key, config)
-    await mkdir(dirname(localPath), { recursive: true })
-    await writeFile(localPath, bytes)
+    // Refuses ".." in the key suffix and never writes through an agent-planted link.
+    const localPath = await writeFileInside(sessionDir, relativePath, bytes)
 
     return { written: true, localPath }
 }
@@ -481,7 +547,7 @@ export async function refreshSessionSkills(
     const skillsDirectory = join(cached.handle.sessionDir, 'skills')
     let refreshed = 0
     for (const skill of skills) {
-        await rm(join(skillsDirectory, skill.name), { recursive: true, force: true })
+        await removeInstalledSkill(skillsDirectory, skill.name)
         await downloadSkill(skill, skillsDirectory, config)
         cached.installedSkills.set(skill.id, skill.current_version)
         refreshed++
@@ -500,10 +566,29 @@ export async function createSessionSandbox(
      * callers outside the agent loop are unaffected.
      */
     agent?: { id?: string; name?: string; slug?: string },
+    opts: {
+        /**
+         * The session's project, already checked by the caller (session owner has
+         * read access); null/absent = no project. Applied on every call, cache hit
+         * included, because it can change between turns.
+         */
+        projectId?: string | null
+    } = {},
 ): Promise<SessionSandboxHandle> {
     const cached = sandboxCache.get(sessionId)
+    const projectId = opts.projectId ?? null
+
+    // After the session restore, so project/ wins over anything else of that name.
+    const syncProject = async (dir: string) => {
+        try {
+            await syncProjectDir({ sessionDir: dir, projectId, config })
+        } catch (err) {
+            console.error(`[SKILLS] Failed to sync project files into session ${sessionId}; continuing.`, err)
+        }
+    }
 
     if (cached) {
+        cached.projectState.projectId = projectId
         const skillsDirectory = join(cached.handle.sessionDir, 'skills')
 
         for (const skill of skills) {
@@ -512,7 +597,7 @@ export async function createSessionSandbox(
 
             if (installedVersion !== undefined) {
                 // Different version installed — remove old files to avoid stale state
-                await rm(join(skillsDirectory, skill.name), { recursive: true, force: true })
+                await removeInstalledSkill(skillsDirectory, skill.name)
             }
 
             await downloadSkill(skill, skillsDirectory, config)
@@ -524,11 +609,15 @@ export async function createSessionSandbox(
         // `ls` never sees them although the system prompt promises it will.
         if (userId && config.fileUploads) {
             try {
-                await restoreArtifactsFromS3(cached.handle.sessionDir, sessionId, userId, config, { onlyMissing: true })
+                await restoreArtifactsFromS3(cached.handle.sessionDir, sessionId, userId, config, {
+                    onlyMissing: true,
+                    skipProjectDir: projectId !== null,
+                })
             } catch (err) {
                 console.error(`[SKILLS] Failed to re-sync S3 session files for session ${sessionId}; continuing.`, err)
             }
         }
+        await syncProject(cached.handle.sessionDir)
         return cached.handle
     }
 
@@ -566,8 +655,14 @@ export async function createSessionSandbox(
     // unsaved-to-S3 writes from a prior process.
     if (userId && config.fileUploads) {
         // Cold start restores everything; a surviving on-disk dir only fetches what changed.
-        await restoreArtifactsFromS3(sessionDir, sessionId, userId, config, { onlyMissing: dirExisted })
+        await restoreArtifactsFromS3(sessionDir, sessionId, userId, config, {
+            onlyMissing: dirExisted,
+            skipProjectDir: projectId !== null,
+        })
     }
+    await syncProject(sessionDir)
+
+    const projectState: ProjectState = { projectId }
 
     // Probe whether bwrap can actually create namespaces on this host. On a
     // failure, either throw (strict mode) or degrade to direct exec.
@@ -839,27 +934,27 @@ export async function createSessionSandbox(
      * bash wrapper (which scans for files the agent created via shell
      * commands like `node create_doc.js`).
      */
+    // Callers read this ONCE at the start of a tool call and pass it down: a
+    // concurrent detach can flip projectState mid-command, before its sync has
+    // removed project/, and a flag re-read in between would upload the project
+    // copy to the session as agent files. The reverse (an attach mid-command,
+    // whose sync writes project/ while the command runs) is covered by also
+    // checking the flag after the command: project/ is skipped if EITHER says so.
+    const hasProjectNow = () => projectState.projectId !== null
+
     async function persistArtifactToS3(
         absPath: string,
         content: Buffer,
+        hasProject: boolean,
     ): Promise<{ key?: string; url?: string }> {
-        if (!persistenceEnabled || !isArtifactPath(absPath, sessionDir)) {
+        if (!persistenceEnabled || !isArtifactPath(absPath, sessionDir, { hasProject })) {
             return {}
         }
         const rel = relative(sessionDir, resolve(absPath))
         const s3Key = artifactS3Key(sessionId, rel)
         const out: { key?: string; url?: string } = {}
         try {
-            const fullKey = await uploadFile(
-                content,
-                s3Key,
-                config,
-                {},
-                // uploadFile's user param is typed as number, but the
-                // addUserPrefixToKey helper it delegates to accepts
-                // number | string at runtime — pass through as-is.
-                userId as unknown as number,
-            )
+            const fullKey = await uploadAgentArtifact(content, s3Key, config, userId)
             out.key = fullKey
             // uploadFile returns "<bucket>/<key>" — split to call
             // getPresignedUrl, which expects bucket and key separately.
@@ -887,6 +982,7 @@ export async function createSessionSandbox(
 
     async function writeFilesInternal(
         files: Array<{ path: string; content: string | Buffer }>,
+        hasProject: boolean = hasProjectNow(),
     ): Promise<WriteResult[]> {
         const results: WriteResult[] = []
 
@@ -916,6 +1012,7 @@ export async function createSessionSandbox(
             const persisted = await persistArtifactToS3(
                 file.path,
                 Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content),
+                hasProject || hasProjectNow(),
             )
             if (persisted.key) result.key = persisted.key
             if (persisted.url) result.url = persisted.url
@@ -933,9 +1030,10 @@ export async function createSessionSandbox(
      * does. The skills/ subdir is excluded — those are source-of-truth from
      * S3 and shouldn't round-trip back as artifacts.
      */
-    async function snapshotSessionArtifacts(): Promise<Map<string, number>> {
+    async function snapshotSessionArtifacts(hasProject: boolean): Promise<Map<string, number>> {
         const map = new Map<string, number>()
         const skillsDir = join(sessionDir, 'skills')
+        const projectDir = hasProject ? join(sessionDir, PROJECT_DIR) : null
         const walk = async (dir: string): Promise<void> => {
             let entries
             try {
@@ -946,6 +1044,7 @@ export async function createSessionSandbox(
             for (const entry of entries) {
                 const full = join(dir, entry.name)
                 if (full === skillsDir) continue
+                if (projectDir !== null && full === projectDir) continue
                 if (isIgnoredArtifactPath(relative(sessionDir, full))) continue
                 if (entry.isDirectory()) {
                     await walk(full)
@@ -992,8 +1091,9 @@ export async function createSessionSandbox(
             content: z.string().describe('The content to write to the file'),
         }),
         execute: async ({ path, content }) => {
+            const hasProject = hasProjectNow()
             const resolvedPath = resolveSessionPath(path, sessionDir)
-            const results = await writeFilesInternal([{ path: resolvedPath, content }])
+            const results = await writeFilesInternal([{ path: resolvedPath, content }], hasProject)
             const result = results[0]
             if (!result) {
                 // writeFilesInternal always returns one entry per input file;
@@ -1062,8 +1162,10 @@ export async function createSessionSandbox(
             command: z.string().describe('The bash command to execute.'),
         }),
         execute: async (args, opts) => {
+            // Fixed for this command: both snapshots and the persist check use it.
+            const hasProject = hasProjectNow()
             const before = persistenceEnabled
-                ? await snapshotSessionArtifacts()
+                ? await snapshotSessionArtifacts(hasProject)
                 : null
             // Defer to bash-tool's bash tool so we keep its truncation, cwd
             // pinning, and any future bash-tool behaviour for free.
@@ -1085,7 +1187,9 @@ export async function createSessionSandbox(
                 url?: string
             }> = []
             if (persistenceEnabled && before) {
-                const after = await snapshotSessionArtifacts()
+                // Read once more after the command (see hasProjectNow).
+                const skipProject = hasProject || hasProjectNow()
+                const after = await snapshotSessionArtifacts(skipProject)
                 const changedPaths: string[] = []
                 for (const [path, mtime] of after) {
                     const beforeMtime = before.get(path)
@@ -1095,8 +1199,12 @@ export async function createSessionSandbox(
                 }
                 for (const path of changedPaths) {
                     try {
-                        const content = await fsReadFile(path)
-                        const persisted = await persistArtifactToS3(path, content)
+                        // Never fsReadFile here: the agent may have swapped the file (or a
+                        // parent directory) for a link to something the sandbox denies,
+                        // and this read runs with the backend's rights.
+                        const content = await readRegularFileInside(sessionDir, path)
+                        if (content === null) continue
+                        const persisted = await persistArtifactToS3(path, content, skipProject)
                         artifacts.push({
                             path,
                             relativePath: relative(sessionDir, path),
@@ -1153,10 +1261,11 @@ export async function createSessionSandbox(
                 await SandboxManager.reset()
             }
             await rm(sessionDir, { recursive: true, force: true })
+            await clearProjectSyncMarker(sessionDir)
         },
     }
 
-    sandboxCache.set(sessionId, { handle, installedSkills })
+    sandboxCache.set(sessionId, { handle, installedSkills, projectState })
 
     return handle
 }

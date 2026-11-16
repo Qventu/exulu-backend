@@ -21,6 +21,7 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { STSClient, GetFederationTokenCommand } from "@aws-sdk/client-sts";
 import { randomUUID } from "node:crypto";
+import { isProjectKey } from "../exulu/project-files";
 
 const expiresIn = 60 * 60 * 24 * 1; // S3 signature expires within 1 day.
 
@@ -286,6 +287,9 @@ export const copyS3Object = async (
     Bucket: bucket,
     CopySource: `${bucket}/${encodeS3KeyForCopySource(sourceKey)}`,
     Key: destKey,
+    // Explicit so the origin marker (exulu-origin) survives a copy; promoting a
+    // file into a project must not turn an agent file into a "user" file.
+    MetadataDirective: "COPY",
   });
   await client.send(command);
 };
@@ -366,6 +370,174 @@ export const getS3ObjectEtag = async (
 };
 
 /**
+ * Read the user metadata (e.g. exulu-origin) of an S3 object via HeadObject.
+ * Returns undefined if HeadObject fails, so callers can treat it as "unknown".
+ */
+export const getS3ObjectMetadata = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<Record<string, string> | undefined> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  try {
+    const response = await client.send(
+      new HeadObjectCommand({ Bucket: config.fileUploads.s3Bucket, Key: key }),
+    );
+    return response.Metadata;
+  } catch {
+    return undefined;
+  }
+};
+
+/** True for the error shapes the SDK throws when an object does not exist. */
+export function isS3NotFound(err: unknown): boolean {
+  const e = err as { name?: string; Code?: string; $metadata?: { httpStatusCode?: number } } | null;
+  return (
+    e?.$metadata?.httpStatusCode === 404 ||
+    e?.name === "NotFound" ||
+    e?.name === "NoSuchKey" ||
+    e?.Code === "NotFound" ||
+    e?.Code === "NoSuchKey"
+  );
+}
+
+/**
+ * Like getS3ObjectMetadata, but only a missing object yields undefined; any other failure
+ * (network, throttling, credentials) throws so a caller that memoises the answer does not
+ * cache a transient error as if it were the object's real metadata.
+ */
+export const getS3ObjectMetadataStrict = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<Record<string, string> | undefined> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  try {
+    const response = await client.send(
+      new HeadObjectCommand({ Bucket: config.fileUploads.s3Bucket, Key: key }),
+    );
+    return response.Metadata;
+  } catch (err) {
+    if (isS3NotFound(err)) return undefined;
+    throw err;
+  }
+};
+
+/**
+ * The generic /s3/* routes only check the `user_<id>` segment, so a key without
+ * one (project files) would be served to any authenticated user. Project files
+ * go through the project routes, which check project membership; only API keys
+ * and super admins may touch them here. `key` is the object key WITHOUT bucket.
+ */
+export function mayUseGenericS3Route(
+  key: string,
+  user: { type?: string; super_admin?: boolean },
+  s3prefix?: string | null,
+): boolean {
+  if (user.type === "api" || user.super_admin) return true;
+  return !isProjectKey(key, s3prefix);
+}
+
+/**
+ * Directory segments of a generic S3 key (WITHOUT bucket), or null when the key
+ * has an empty, `.` or `..` segment: such keys could dodge the ownership check
+ * below and never come from an upload path. The general prefix's own segments
+ * are dropped when the key starts with it.
+ */
+function genericKeyDirectories(key: string, s3prefix?: string | null): string[] | null {
+  // No leading-slash stripping: "/user_2/x" is a different object than "user_2/x"
+  // and no upload path produces one.
+  const segments = key.split("/");
+  if (segments.some((s) => s === "" || s === "." || s === "..")) return null;
+  const general = (s3prefix ?? "").replace(/^\/+|\/+$/g, "");
+  const prefixSegments = general ? general.split("/") : [];
+  const hasPrefix = prefixSegments.length > 0 && prefixSegments.every((p, i) => segments[i] === p);
+  return segments.slice(hasPrefix ? prefixSegments.length : 0, -1);
+}
+
+/**
+ * Ownership rule of the generic read routes (`GET /s3/download`, `POST /s3/object`):
+ * API users and super admins read anything; everyone else a key in which every
+ * DIRECTORY segment starting with `user_` is their own `user_<id>` (keys without
+ * one, e.g. `global/`, `items/`, are readable). The file name is exempt, so
+ * `items/report_user_1.pdf` is readable while `user_2/x/user_1/y` is not.
+ * Empty, `.` and `..` segments are refused. `key` is WITHOUT the bucket.
+ */
+export function mayReadGenericS3Key(
+  key: string,
+  user: { id?: number | string; type?: string; super_admin?: boolean },
+  s3prefix?: string | null,
+): boolean {
+  if (user.type === "api" || user.super_admin) return true;
+  const directories = genericKeyDirectories(key, s3prefix);
+  if (directories === null) return false;
+  return directories.every((d) => !d.startsWith("user_") || d === `user_${user.id}`);
+}
+
+/**
+ * `/s3/delete`: the read rule above AND the key must lie under the caller's own
+ * `user_<id>/` segment (a global or item key is not the caller's to delete).
+ */
+export function mayDeleteGenericS3Key(
+  key: string,
+  user: { id?: number | string; type?: string; super_admin?: boolean },
+  s3prefix?: string | null,
+): boolean {
+  if (user.type === "api" || user.super_admin) return true;
+  if (!mayReadGenericS3Key(key, user, s3prefix)) return false;
+  return (genericKeyDirectories(key, s3prefix) ?? []).includes(`user_${user.id}`);
+}
+
+/**
+ * Whether a multipart key (as `POST /s3/multipart` returned it: general prefix +
+ * `user_<id>/` or `global/` + name) belongs to the caller. The follow-up multipart
+ * routes take the key from the query string, so without this any caller could sign
+ * parts for, complete or abort uploads at arbitrary keys. `user_api/` is the shared
+ * prefix of API users (see addUserPrefixToKey's call sites).
+ */
+export function multipartKeyBelongsTo(
+  key: string,
+  user: { id?: number | string; type?: string },
+  s3prefix?: string | null,
+): boolean {
+  if (!key || key.split("/").includes("..")) return false;
+  let rest = key;
+  const general = (s3prefix ?? "").replace(/\/+$/, "");
+  if (general) {
+    if (!rest.startsWith(`${general}/`)) return false;
+    rest = rest.slice(general.length + 1);
+  }
+  const own = user.type === "api" ? "user_api/" : `user_${user.id}/`;
+  return rest.startsWith(own) || rest.startsWith("global/");
+}
+
+/**
+ * STS policy for browser uploads: the caller may only write under their own
+ * prefix (matches addUserPrefixToKey), never another user's, global/ or projects/.
+ */
+export function buildStsPolicy(
+  bucket: string,
+  userId: number | string,
+  s3prefix?: string | null,
+) {
+  const general = s3prefix ? `${s3prefix.replace(/\/+$/, "")}/` : "";
+  return {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Allow",
+        Action: ["s3:PutObject"],
+        Resource: [`arn:aws:s3:::${bucket}/${general}user_${userId}/*`],
+      },
+    ],
+  };
+}
+
+/**
  * Fetch the byte size of an S3 object via HeadObject, without downloading
  * it. Used to enforce a size cap on a copy-only path (session file adopt)
  * that never passes through the presigned-PUT upload flow, so the client's
@@ -439,6 +611,8 @@ export const getS3SignedUploadUrl = async (
   key: string,
   contentType: string,
   config: ExuluConfig,
+  // Defaults to a day; project uploads pass minutes (PROJECT_UPLOAD_URL_TTL_SECONDS).
+  opts: { expiresIn?: number } = {},
 ): Promise<string> => {
   if (!config.fileUploads) {
     throw new Error("File uploads are not configured");
@@ -452,7 +626,7 @@ export const getS3SignedUploadUrl = async (
       Key: key,
       ContentType: contentType,
     }),
-    { expiresIn },
+    { expiresIn: opts.expiresIn ?? expiresIn },
   );
   return url;
 };
@@ -461,20 +635,6 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
   if (!config.fileUploads) {
     throw new Error("File uploads are not configured");
   }
-
-  const policy = {
-    Version: "2012-10-17",
-    Statement: [
-      {
-        Effect: "Allow",
-        Action: ["s3:PutObject"],
-        Resource: [
-          `arn:aws:s3:::${config.fileUploads.s3Bucket}/*`,
-          `arn:aws:s3:::${config.fileUploads.s3Bucket}`,
-        ],
-      },
-    ],
-  };
 
   /**
    * @type {STSClient}
@@ -534,11 +694,20 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
 
     // Bucket should always be the
     // first part of the key.
+    // The bucket is caller-supplied on purpose and not pinned to fileUploads.s3Bucket:
+    // deployments keep knowledge-base source documents in a second bucket, which the
+    // generic routes accept (delete included, for keys under the caller's own prefix).
+    // Follow-up: an allowlist of buckets in config.
     let bucket = key.split("/")[0];
+
+    if (!mayUseGenericS3Route(key.replace(`${bucket}/`, ""), user, config.fileUploads.s3prefix)) {
+      res.status(403).json({ error: "Project files cannot be deleted through this route." });
+      return;
+    }
 
     // Only the user themselves, a super admin
     // or an api user can delete files.
-    if (user.type !== "api" && !key.includes(`/user_${user.id}/`) && !user.super_admin) {
+    if (!mayDeleteGenericS3Key(key.slice((bucket ?? "").length + 1), user, config.fileUploads.s3prefix)) {
       res.status(405).json({
         error: "Not allowed to access the files in the folder based on authenticated user.",
       });
@@ -591,6 +760,9 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
       return;
     }
 
+    // The bucket is caller-supplied on purpose and not pinned to fileUploads.s3Bucket:
+    // deployments keep knowledge-base source documents in a second bucket and read
+    // them through this route. Follow-up: an allowlist of readable buckets in config.
     let bucket = key.split("/")[0];
 
     console.log("[EXULU] bucket", bucket);
@@ -614,19 +786,14 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
       return;
     }
 
-    // Only the user themselves, a super admin
-    // or an api user can download files.
-    let allowed = false;
-    if (
-      user.type === "api" ||
-      user.super_admin ||
-      !key.includes(`user_`) ||
-      key.includes(`user_${user.id}/`)
-    ) {
-      allowed = true;
+    if (!mayUseGenericS3Route(key, user, config.fileUploads?.s3prefix)) {
+      res.status(403).json({ error: "Project files cannot be downloaded through this route." });
+      return;
     }
 
-    if (!allowed) {
+    // Only the user themselves, a super admin
+    // or an api user can download files.
+    if (!mayReadGenericS3Key(key, user, config.fileUploads?.s3prefix)) {
       res
         .status(405)
         .json({ error: "Not allowed to access the file based on authenticated user." });
@@ -670,11 +837,21 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
       return;
     }
 
-    let { key } = req.body;
+    let { key } = req.body ?? {};
 
+    // Type-check before any string operation: a non-string key used to throw in
+    // .split and surface as a 500.
+    if (typeof key !== "string" || key.trim() === "") {
+      res.status(400).json({ error: "Missing or invalid `key` in the request body." });
+      return;
+    }
+
+    // The bucket is caller-supplied on purpose and not pinned to fileUploads.s3Bucket:
+    // deployments keep knowledge-base source documents in a second bucket and read
+    // them through this route. Follow-up: an allowlist of readable buckets in config.
     let bucket = key.split("/")[0];
 
-    if (!bucket || typeof bucket !== "string" || bucket.trim() === "") {
+    if (!bucket || bucket.trim() === "") {
       res.status(400).json({
         error:
           "Missing or invalid `bucket` (should be the first part of the key before the first slash).",
@@ -684,8 +861,23 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
 
     key = key.split("/").slice(1).join("/");
 
-    if (!key || typeof key !== "string" || key.trim() === "") {
-      res.status(400).json({ error: "Missing or invalid `key` query parameter." });
+    if (!key || key.trim() === "") {
+      res.status(400).json({ error: "Missing or invalid `key` in the request body." });
+      return;
+    }
+
+    const user = authenticationResult.user;
+
+    // HeadObject exposes size and metadata of any key, so project keys are closed here too.
+    if (!mayUseGenericS3Route(key, user, config.fileUploads.s3prefix)) {
+      res.status(403).json({ error: "Project files cannot be read through this route." });
+      return;
+    }
+
+    // Same ownership rule as GET /s3/download: another user's metadata (original
+    // file names, sizes) is not the caller's to read.
+    if (!mayReadGenericS3Key(key, user, config.fileUploads?.s3prefix)) {
+      res.status(403).json({ error: "Not allowed to access the file based on authenticated user." });
       return;
     }
 
@@ -695,10 +887,26 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
       Key: key,
     });
 
-    const response = await client.send(command);
+    let response;
+    try {
+      response = await client.send(command);
+    } catch (err: any) {
+      if (err?.name === "NotFound" || err?.name === "NoSuchKey" || err?.$metadata?.httpStatusCode === 404) {
+        res.status(404).json({ error: "Object not found." });
+        return;
+      }
+      throw err;
+    }
 
-    res.json(response);
-    res.end();
+    // Only what the file card needs; the raw HeadObject output also carries
+    // request ids, encryption and version details.
+    res.json({
+      ContentLength: response.ContentLength,
+      ContentType: response.ContentType,
+      LastModified: response.LastModified,
+      ETag: response.ETag,
+      Metadata: response.Metadata,
+    });
   });
 
   app.get("/s3/list", async (req, res) => {
@@ -732,10 +940,11 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
 
     let prefix = `${config.fileUploads.s3prefix ? config.fileUploads.s3prefix.replace(/\/$/, "") + "/" : ""}`;
 
+    // Trailing slash: without it user 1's prefix also matches user_10/, user_100/ …
     if (!req.headers.global) {
-      prefix += `user_${authenticationResult.user.id}`;
+      prefix += `user_${authenticationResult.user.id}/`;
     } else {
-      prefix += "global";
+      prefix += "global/";
     }
 
     console.log("[EXULU] bucket", config.fileUploads.s3Bucket);
@@ -800,10 +1009,31 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     res.end();
   });
 
-  app.get("/s3/sts", (req, res, next) => {
+  app.get("/s3/sts", async (req, res, next) => {
     if (!config.fileUploads) {
       throw new Error("File uploads are not configured");
     }
+    // The policy is scoped to the caller's own prefix, so the route must know the caller.
+    const apikey: any = req.headers["exulu-api-key"] || null;
+    const internalkey: any = req.headers["internal-key"] || null;
+    const { db } = await postgresClient();
+    let authtoken: any = null;
+    if (typeof apikey !== "string" && typeof internalkey !== "string") {
+      authtoken = await getToken(req.headers.authorization ?? "");
+    }
+    const authenticationResult = await authentication({ authtoken, apikey, internalkey, db });
+    if (!authenticationResult.user?.id) {
+      res
+        .status(authenticationResult.code || 500)
+        .json({ detail: `${authenticationResult.message}` });
+      return;
+    }
+    const user = authenticationResult.user;
+    const policy = buildStsPolicy(
+      config.fileUploads.s3Bucket,
+      user.type === "api" ? "api" : user.id,
+      config.fileUploads.s3prefix,
+    );
     getSTSClient()
       .send(
         new GetFederationTokenCommand({
@@ -816,10 +1046,9 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
         }),
       )
       .then((response) => {
-        // Test creating multipart upload from the server — it works
-        // createMultipartUploadYo(response)
         res.setHeader("Access-Control-Allow-Origin", "*");
-        res.setHeader("Cache-Control", `public,max-age=${expiresIn}`);
+        // Per-user credentials must never sit in a shared cache.
+        res.setHeader("Cache-Control", `private,max-age=${expiresIn}`);
         res.json({
           credentials: response.Credentials,
           bucket: config.fileUploads?.s3Bucket,
@@ -1002,18 +1231,51 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     });
   });
 
+  /**
+   * Authentication (same as `POST /s3/multipart`) plus "the query key is one the
+   * create route could have minted for this caller". Answers the request itself and
+   * returns null on failure; otherwise the validated key.
+   */
+  const authorizeMultipartKey = async (req: any, res: any): Promise<string | null> => {
+    const apikey: any = req.headers["exulu-api-key"] || null;
+    const { db } = await postgresClient();
+    let authtoken: any = null;
+    if (typeof apikey !== "string") {
+      authtoken = await getToken(req.headers.authorization ?? "");
+    }
+    const authenticationResult = await authentication({ authtoken, apikey, db });
+    if (!authenticationResult.user?.id) {
+      res
+        .status(authenticationResult.code || 500)
+        .json({ detail: `${authenticationResult.message}` });
+      return null;
+    }
+    const { key } = req.query;
+    if (typeof key !== "string") {
+      res.status(400).json({
+        error:
+          's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
+      });
+      return null;
+    }
+    if (!multipartKeyBelongsTo(key, authenticationResult.user, config.fileUploads?.s3prefix)) {
+      res.status(403).json({ error: "s3: this upload does not belong to the authenticated user." });
+      return null;
+    }
+    return key;
+  };
+
   function validatePartNumber(partNumber) {
     // eslint-disable-next-line no-param-reassign
     partNumber = Number(partNumber);
     return Number.isInteger(partNumber) && partNumber >= 1 && partNumber <= 10_000;
   }
 
-  app.get("/s3/multipart/:uploadId/:partNumber", (req, res, next) => {
+  app.get("/s3/multipart/:uploadId/:partNumber", async (req, res, next) => {
     if (!config.fileUploads) {
       throw new Error("File uploads are not configured");
     }
     const { uploadId, partNumber } = req.params;
-    const { key } = req.query;
 
     if (!validatePartNumber(partNumber)) {
       return res
@@ -1021,12 +1283,8 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
         .json({ error: "s3: the part number must be an integer between 1 and 10000." });
     }
 
-    if (typeof key !== "string") {
-      return res.status(400).json({
-        error:
-          's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
-      });
-    }
+    const key = await authorizeMultipartKey(req, res);
+    if (key === null) return;
 
     return getSignedUrl(
       getS3Client(config),
@@ -1044,18 +1302,13 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     }, next);
   });
 
-  app.get("/s3/multipart/:uploadId", (req, res, next) => {
+  app.get("/s3/multipart/:uploadId", async (req, res, next) => {
+    const authorizedKey = await authorizeMultipartKey(req, res);
+    if (authorizedKey === null) return;
+    // Narrowed copy: the closure below does not see the null check.
+    const key: string = authorizedKey;
     const client = getS3Client(config);
     const { uploadId } = req.params;
-    const { key } = req.query;
-
-    if (typeof key !== "string") {
-      res.status(400).json({
-        error:
-          's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
-      });
-      return;
-    }
 
     const parts: any[] = [];
 
@@ -1066,7 +1319,7 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
       client.send(
         new ListPartsCommand({
           Bucket: config.fileUploads.s3Bucket,
-          Key: key as string,
+          Key: key,
           UploadId: uploadId,
           PartNumberMarker: startAt,
         }),
@@ -1096,21 +1349,15 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     );
   }
 
-  app.post("/s3/multipart/:uploadId/complete", (req, res, next) => {
+  app.post("/s3/multipart/:uploadId/complete", async (req, res, next) => {
     if (!config.fileUploads) {
       throw new Error("File uploads are not configured");
     }
+    const key = await authorizeMultipartKey(req, res);
+    if (key === null) return;
     const client = getS3Client(config);
     const { uploadId } = req.params;
-    const { key } = req.query;
     const { parts } = req.body;
-
-    if (typeof key !== "string") {
-      return res.status(400).json({
-        error:
-          's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
-      });
-    }
 
     if (!Array.isArray(parts) || !parts.every(isValidPart)) {
       return res
@@ -1141,21 +1388,15 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     );
   });
 
-  app.delete("/s3/multipart/:uploadId", (req, res, next) => {
+  app.delete("/s3/multipart/:uploadId", async (req, res, next) => {
     if (!config.fileUploads) {
       throw new Error("File uploads are not configured");
     }
+    const key = await authorizeMultipartKey(req, res);
+    if (key === null) return;
 
     const client = getS3Client(config);
     const { uploadId } = req.params;
-    const { key } = req.query;
-
-    if (typeof key !== "string") {
-      return res.status(400).json({
-        error:
-          's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
-      });
-    }
 
     return client.send(
       new AbortMultipartUploadCommand({

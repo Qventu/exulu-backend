@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { sessionFilePrefix } from "@SRC/exulu/session-files";
+import { resolveFileKey } from "./resolve-file-key";
 import { extname } from "node:path";
 import { ExuluTool } from "@SRC/exulu/tool";
 import { getS3ObjectBytes, getS3ObjectEtag } from "@SRC/uppy";
@@ -39,12 +39,15 @@ export const createViewDocumentPageTool = ({
   user,
   exuluConfig,
   ownerId,
+  projectId,
 }: {
   sessionID?: string;
   user?: User;
   exuluConfig?: ExuluConfig;
   /** Session owner — files are namespaced by owner, not by the current speaker. */
   ownerId?: number | string;
+  /** The access-checked project id (never the raw session.project); null/undefined = no project files. */
+  projectId?: string | null;
 }): ExuluTool | undefined => {
   if (!sessionID || !exuluConfig?.fileUploads?.s3Bucket) return undefined;
 
@@ -54,12 +57,16 @@ export const createViewDocumentPageTool = ({
     { filename, page, model }: { filename: string; page?: number; model?: unknown },
     options?: { toolCallId?: string },
   ) => {
-    const safeName = String(filename ?? "").trim();
-    if (!safeName || safeName.includes("..") || safeName.includes("/") || safeName.includes("\\")) {
-      return {
-        error: "Invalid filename — pass the bare file name exactly as listed in the session files (no paths).",
-      };
-    }
+    const resolvedKey = resolveFileKey({
+      filename,
+      ownerId: ownerId ?? user?.id ?? "api",
+      sessionId: sessionID,
+      projectId: projectId ?? null,
+      s3prefix: exuluConfig.fileUploads!.s3prefix,
+    });
+    if ("error" in resolvedKey) return { error: resolvedKey.error };
+    const key = resolvedKey.key;
+    const safeName = String(filename).trim();
     const ext = extname(safeName).toLowerCase();
     const isImage = ext in IMAGE_MEDIA_TYPES;
     const isPdf = ext === ".pdf";
@@ -90,8 +97,6 @@ export const createViewDocumentPageTool = ({
       }
     }
 
-    const uploads = exuluConfig.fileUploads!;
-    const key = `${sessionFilePrefix(ownerId ?? user?.id ?? "api", sessionID, uploads.s3prefix)}${safeName}`;
     const pageNumber = page ?? 1;
 
     try {
@@ -159,7 +164,8 @@ export const createViewDocumentPageTool = ({
       "LOOK at a page of an uploaded PDF/Office document, or at an uploaded image, from this session's " +
       "files. The rendered image is attached as a user message directly after this tool result so you " +
       "can visually analyze photos, charts, scans, and layouts. Use parse_document first to find which " +
-      "page you need. Requires a vision-capable model.",
+      "page you need. Requires a vision-capable model." +
+      " Files of the session's project are addressed as `project/<name>` and are read-only.",
     inputSchema: z.object({
       filename: z.string().describe('Exact session file name, e.g. "report.pdf" or "screenshot.png"'),
       page: z.number().int().min(1).optional().describe("Page number to render (default 1; ignored for image files)"),
