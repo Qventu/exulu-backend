@@ -12,7 +12,16 @@ type Grant = { id: string | number; rights: string };
 export function hasProjectAccess(args: {
   project: { created_by?: number | string | null; rights_mode?: string | null };
   rbac: { type: string; users?: Grant[]; roles?: Grant[] };
-  user: { id: number | string; role?: string | number | null; super_admin?: boolean; type?: string };
+  /**
+   * `role` is a bare id on rows read from the users table, but authentication
+   * (src/auth/auth.ts) replaces it with the hydrated role row; both are accepted.
+   */
+  user: {
+    id: number | string;
+    role?: string | number | { id?: string | number | null } | null;
+    super_admin?: boolean;
+    type?: string;
+  };
   want: ProjectRight;
 }): boolean {
   const { project, rbac, user, want } = args;
@@ -28,6 +37,7 @@ export function hasProjectAccess(args: {
   );
   if (byUser) return true;
 
-  if (user.role == null) return false;
-  return (rbac.roles ?? []).some((g) => String(g.id) === String(user.role) && satisfies(g.rights));
+  const roleId = typeof user.role === "object" && user.role ? user.role.id : user.role;
+  if (roleId == null) return false;
+  return (rbac.roles ?? []).some((g) => String(g.id) === String(roleId) && satisfies(g.rights));
 }

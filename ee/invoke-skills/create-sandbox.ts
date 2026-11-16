@@ -915,14 +915,18 @@ export async function createSessionSandbox(
      * bash wrapper (which scans for files the agent created via shell
      * commands like `node create_doc.js`).
      */
+    // Callers read this ONCE per tool call and pass it down: a concurrent turn
+    // (e.g. a detach) can flip projectState mid-command, before its sync has
+    // removed project/, and a flag re-read in between would upload the project
+    // copy to the session as agent files.
+    const hasProjectNow = () => projectState.projectId !== null
+
     async function persistArtifactToS3(
         absPath: string,
         content: Buffer,
+        hasProject: boolean,
     ): Promise<{ key?: string; url?: string }> {
-        if (
-            !persistenceEnabled ||
-            !isArtifactPath(absPath, sessionDir, { hasProject: projectState.projectId !== null })
-        ) {
+        if (!persistenceEnabled || !isArtifactPath(absPath, sessionDir, { hasProject })) {
             return {}
         }
         const rel = relative(sessionDir, resolve(absPath))
@@ -957,6 +961,7 @@ export async function createSessionSandbox(
 
     async function writeFilesInternal(
         files: Array<{ path: string; content: string | Buffer }>,
+        hasProject: boolean = hasProjectNow(),
     ): Promise<WriteResult[]> {
         const results: WriteResult[] = []
 
@@ -986,6 +991,7 @@ export async function createSessionSandbox(
             const persisted = await persistArtifactToS3(
                 file.path,
                 Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content),
+                hasProject,
             )
             if (persisted.key) result.key = persisted.key
             if (persisted.url) result.url = persisted.url
@@ -1003,11 +1009,10 @@ export async function createSessionSandbox(
      * does. The skills/ subdir is excluded — those are source-of-truth from
      * S3 and shouldn't round-trip back as artifacts.
      */
-    async function snapshotSessionArtifacts(): Promise<Map<string, number>> {
+    async function snapshotSessionArtifacts(hasProject: boolean): Promise<Map<string, number>> {
         const map = new Map<string, number>()
         const skillsDir = join(sessionDir, 'skills')
-        // Read at call time: the session's project can change between turns.
-        const projectDir = projectState.projectId !== null ? join(sessionDir, PROJECT_DIR) : null
+        const projectDir = hasProject ? join(sessionDir, PROJECT_DIR) : null
         const walk = async (dir: string): Promise<void> => {
             let entries
             try {
@@ -1065,8 +1070,9 @@ export async function createSessionSandbox(
             content: z.string().describe('The content to write to the file'),
         }),
         execute: async ({ path, content }) => {
+            const hasProject = hasProjectNow()
             const resolvedPath = resolveSessionPath(path, sessionDir)
-            const results = await writeFilesInternal([{ path: resolvedPath, content }])
+            const results = await writeFilesInternal([{ path: resolvedPath, content }], hasProject)
             const result = results[0]
             if (!result) {
                 // writeFilesInternal always returns one entry per input file;
@@ -1135,8 +1141,10 @@ export async function createSessionSandbox(
             command: z.string().describe('The bash command to execute.'),
         }),
         execute: async (args, opts) => {
+            // Fixed for this command: both snapshots and the persist check use it.
+            const hasProject = hasProjectNow()
             const before = persistenceEnabled
-                ? await snapshotSessionArtifacts()
+                ? await snapshotSessionArtifacts(hasProject)
                 : null
             // Defer to bash-tool's bash tool so we keep its truncation, cwd
             // pinning, and any future bash-tool behaviour for free.
@@ -1158,7 +1166,7 @@ export async function createSessionSandbox(
                 url?: string
             }> = []
             if (persistenceEnabled && before) {
-                const after = await snapshotSessionArtifacts()
+                const after = await snapshotSessionArtifacts(hasProject)
                 const changedPaths: string[] = []
                 for (const [path, mtime] of after) {
                     const beforeMtime = before.get(path)
@@ -1169,7 +1177,7 @@ export async function createSessionSandbox(
                 for (const path of changedPaths) {
                     try {
                         const content = await fsReadFile(path)
-                        const persisted = await persistArtifactToS3(path, content)
+                        const persisted = await persistArtifactToS3(path, content, hasProject)
                         artifacts.push({
                             path,
                             relativePath: relative(sessionDir, path),

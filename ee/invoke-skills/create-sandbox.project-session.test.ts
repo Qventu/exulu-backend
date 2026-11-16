@@ -124,6 +124,33 @@ describe("session sandbox with a project", () => {
   });
 });
 
+describe("project flag is fixed for the duration of one bash command", () => {
+  it("a detach that lands mid-command does not upload the project copy as agent files", async () => {
+    remote({ "brief.txt": "shared" });
+    const id = sid();
+    const h = await open(id, "p1");
+    upload.mockClear();
+
+    // The detach turn's session restore hangs until we let it go: by then it has
+    // already flipped the project state, but its sync has not removed project/ yet.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    list.mockImplementation(async (prefix: string) => {
+      if (!prefix.startsWith("projects/")) await gate;
+      return [];
+    });
+
+    const bash = run(h, "sleep 0.4 && echo z > out.txt");
+    await new Promise((r) => setTimeout(r, 100)); // before-snapshot taken
+    const detach = open(id, null);
+    await bash;
+    release();
+    await detach;
+
+    expect(uploadedKeys()).toEqual([`sessions/${id}/out.txt`]);
+  });
+});
+
 describe("session sandbox without a project", () => {
   it("project/ is an ordinary folder whose files are uploaded to the session", async () => {
     const id = sid();

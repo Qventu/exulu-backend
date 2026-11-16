@@ -1,4 +1,5 @@
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 import { listS3ObjectsByPrefix, getS3ObjectBytes } from '@SRC/uppy/index.ts'
 import { PROJECT_DIR, projectFilePrefix } from '@SRC/exulu/project-files.ts'
@@ -101,6 +102,12 @@ export async function syncProjectDir(args: {
         return
     }
 
+    // The agent controls everything inside the session dir and may have replaced
+    // project/ with a symlink (to /app, /, another session …) or a file. Everything
+    // below runs as the backend process user, so it must never follow that link:
+    // drop the link itself (rm on a link removes the link, not its target).
+    const existing = await lstat(dir).catch(() => null)
+    if (existing && !existing.isDirectory()) await rm(dir, { force: true })
     await mkdir(dir, { recursive: true })
     await mkdir(dirname(projectSyncMarkerPath(sessionDir)), { recursive: true })
     // Written before the downloads, so a crash halfway still lets a later detach clean up.
@@ -130,7 +137,18 @@ export async function syncProjectDir(args: {
     for (const name of plan.download) {
         try {
             const bytes = await getS3ObjectBytes(keys.get(name)!, config)
-            await writeFile(join(dir, name), bytes)
+            // A link planted at project/<name> after the scan must not be written
+            // through: write a fresh file exclusively ('wx' fails on any existing
+            // entry, links included) and rename it over the name, which replaces
+            // the link itself.
+            const tmp = join(dir, `.sync-${randomBytes(6).toString('hex')}.tmp`)
+            try {
+                await writeFile(tmp, bytes, { flag: 'wx' })
+                await rename(tmp, join(dir, name))
+            } catch (err) {
+                await rm(tmp, { force: true }).catch(() => {})
+                throw err
+            }
         } catch (err) {
             console.error(`[SKILLS] Failed to sync project file ${name} (project ${projectId}); continuing.`, err)
             // A stale local copy of a changed file is worse than none.
@@ -140,7 +158,7 @@ export async function syncProjectDir(args: {
 }
 
 type ProjectRow = { id: string; created_by?: number | string | null; rights_mode?: string | null }
-type OwnerLike = { id: number | string; role?: unknown; super_admin?: boolean; type?: string }
+type OwnerLike = Parameters<typeof hasProjectAccess>[0]['user']
 
 /**
  * The project id the session's sandbox may show: only when the session OWNER can
@@ -164,15 +182,7 @@ export async function resolveSandboxProjectId(
         const owner = args.owner && String(args.owner.id) === String(ownerId) ? args.owner : await deps.getUser(ownerId)
         if (!owner) return null
         const rbac = await deps.getRbac(project)
-        // Authenticated users carry a hydrated role object, rows from the users
-        // table a bare role id; hasProjectAccess compares ids.
-        const role = owner.role && typeof owner.role === 'object' ? (owner.role as { id?: string }).id : owner.role
-        const allowed = hasProjectAccess({
-            project,
-            rbac,
-            user: { id: owner.id, role: role as string | number | null | undefined, super_admin: owner.super_admin, type: owner.type },
-            want: 'read',
-        })
+        const allowed = hasProjectAccess({ project, rbac, user: owner, want: 'read' })
         return allowed ? String(project.id) : null
     } catch (err) {
         console.error(`[SKILLS] Failed to resolve project ${projectId} for the session sandbox; continuing without project files.`, err)

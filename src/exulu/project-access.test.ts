@@ -36,6 +36,15 @@ describe("hasProjectAccess", () => {
     expect(check({ id: 50, role: "r1" }, "read")).toBe(true);
     expect(check({ id: 50, role: "r1" }, "write")).toBe(false);
   });
+  test("role grant matches a hydrated role object (what authentication puts on user.role)", () => {
+    expect(check({ id: 50, role: { id: "r1", name: "Team" } }, "read")).toBe(true);
+    expect(check({ id: 50, role: { id: "r1", name: "Team" } }, "write")).toBe(false);
+    expect(check({ id: 50, role: { id: "r2", name: "Other" } }, "read")).toBe(false);
+  });
+  test("role grant matches a plain numeric role id", () => {
+    const r = { type: "roles", users: [], roles: [{ id: "5", rights: "write" }] };
+    expect(check({ id: 50, role: 5 }, "write", { rbac: r })).toBe(true);
+  });
   test("outsider fails both", () => {
     expect(check({ id: 50 }, "read")).toBe(false);
     expect(check({ id: 50 }, "write")).toBe(false);

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, lstat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -145,6 +145,54 @@ describe("syncProjectDir", () => {
     bytes.mockResolvedValue(Buffer.from("k"));
     await syncProjectDir({ sessionDir, projectId: "p1", config });
     expect(await readdir(join(sessionDir, "project"))).toEqual(["ok.txt"]);
+  });
+
+  it("a project symlink is replaced by a real directory and its target is left untouched", async () => {
+    const victim = join(root, "victim");
+    await mkdir(join(victim, "sub"), { recursive: true });
+    await writeFile(join(victim, "keep.txt"), "victim");
+    await writeFile(join(victim, "sub", "deep.txt"), "deep");
+    // a first sync writes the marker, so the next one is the "marker matches" case
+    list.mockResolvedValue([remoteObj("a.txt", 1)]);
+    bytes.mockResolvedValue(Buffer.from("A"));
+    await syncProjectDir({ sessionDir, projectId: "p1", config });
+    await rm(join(sessionDir, "project"), { recursive: true, force: true });
+    await symlink(victim, join(sessionDir, "project"));
+
+    await syncProjectDir({ sessionDir, projectId: "p1", config });
+
+    expect(await readFile(join(victim, "keep.txt"), "utf8")).toBe("victim");
+    expect(await readFile(join(victim, "sub", "deep.txt"), "utf8")).toBe("deep");
+    expect((await readdir(victim)).sort()).toEqual(["keep.txt", "sub"]);
+    const st = await lstat(join(sessionDir, "project"));
+    expect(st.isSymbolicLink()).toBe(false);
+    expect(st.isDirectory()).toBe(true);
+    expect(await readFile(join(sessionDir, "project", "a.txt"), "utf8")).toBe("A");
+  });
+
+  it("a regular file named project is replaced by the directory", async () => {
+    await writeFile(join(sessionDir, "project"), "not a dir");
+    list.mockResolvedValue([remoteObj("a.txt", 1)]);
+    bytes.mockResolvedValue(Buffer.from("A"));
+    await syncProjectDir({ sessionDir, projectId: "p1", config });
+    expect((await lstat(join(sessionDir, "project"))).isDirectory()).toBe(true);
+    expect(await readFile(join(sessionDir, "project", "a.txt"), "utf8")).toBe("A");
+  });
+
+  it("a symlink planted at a download name after the scan is not written through", async () => {
+    const victim = join(root, "victim.txt");
+    await writeFile(victim, "victim");
+    list.mockResolvedValue([remoteObj("a.txt", 1)]);
+    // Plant the link while the bytes are being fetched, i.e. after readdir/plan.
+    bytes.mockImplementation(async () => {
+      await symlink(victim, join(sessionDir, "project", "a.txt"));
+      return Buffer.from("A");
+    });
+    await syncProjectDir({ sessionDir, projectId: "p1", config });
+    expect(await readFile(victim, "utf8")).toBe("victim");
+    expect((await lstat(join(sessionDir, "project", "a.txt"))).isSymbolicLink()).toBe(false);
+    expect(await readFile(join(sessionDir, "project", "a.txt"), "utf8")).toBe("A");
+    expect((await readdir(join(sessionDir, "project"))).sort()).toEqual(["a.txt"]);
   });
 
   it("keeps the marker outside the session directory, so the sandbox cannot write it", () => {
