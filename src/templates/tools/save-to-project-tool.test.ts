@@ -113,7 +113,7 @@ describe("filename", () => {
 describe("prompt and registration share one predicate", () => {
   const args = { sessionID: "s1", exuluConfig, user: { id: 2 }, project: { speakerCanWrite: true } };
   const promptFor = (over: Record<string, unknown>) =>
-    sessionFilesScopeSentence("Alpha", canRegisterSaveToProject({ ...args, ...over } as never));
+    sessionFilesScopeSentence({ id: "p-1", name: "Alpha" }, canRegisterSaveToProject({ ...args, ...over } as never));
   it("offers the tool in the prompt when it is registered", () => {
     expect(promptFor({})).toMatch(/save_to_project/);
   });
