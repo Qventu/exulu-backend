@@ -362,3 +362,39 @@ describe("memory tool registration", () => {
     expect(seen[0].user).toBe(user);
   });
 });
+
+describe("routine handle in the execute context", () => {
+  const drainAll = async (gen: AsyncGenerator<unknown>) => {
+    for await (const _ of gen) void _;
+  };
+  const toolEntry = () => {
+    const execute = jest.fn(async (_inputs: Record<string, unknown>) => "ok");
+    return {
+      execute,
+      entry: { id: "generate_offer_xml", name: "Offer", description: "d", type: "utility", category: "erp", config: [], tool: { execute } } as never,
+    };
+  };
+  const convert = (entry: unknown, factory?: unknown) =>
+    convertExuluToolsToAiSdkTools(
+      [entry] as never, [], [], [], [], [] as never, undefined, undefined, undefined, undefined,
+      undefined, undefined, model, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      factory as never,
+    );
+
+  it("passes routine, built for the executing tool's id, when the turn is part of a routine run", async () => {
+    const handle = { id: "wf-1", name: "R", statuses: [], runs: { current: { id: "jr-1", status: null, update: jest.fn() } } };
+    const factory = jest.fn(() => handle);
+    const { execute, entry } = toolEntry();
+    const tools = await convert(entry, factory);
+    await drainAll((tools as Record<string, { execute: (i: unknown, o: unknown) => AsyncGenerator<unknown> }>).Offer.execute({}, {}));
+    expect(factory).toHaveBeenCalledWith({ kind: "tool", id: "generate_offer_xml" });
+    expect(execute.mock.calls[0][0].routine).toBe(handle);
+  });
+
+  it("passes routine: undefined outside a routine run", async () => {
+    const { execute, entry } = toolEntry();
+    const tools = await convert(entry);
+    await drainAll((tools as Record<string, { execute: (i: unknown, o: unknown) => AsyncGenerator<unknown> }>).Offer.execute({}, {}));
+    expect(execute.mock.calls[0][0].routine).toBeUndefined();
+  });
+});

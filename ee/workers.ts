@@ -611,6 +611,7 @@ export const createWorkers = async (
                       variables: data.inputs,
                       // Tag LLM spend to this routine (cron + ad-hoc share this path).
                       routine: { id: workflow.id, name: workflow.name },
+                      jobResultId,
                       sessionId,
                       resumeFromIndex,
                       // Approval-gated tools pause unless the routine opted
@@ -1689,6 +1690,7 @@ export const processUiMessagesFlow = async ({
   config,
   variables,
   routine,
+  jobResultId,
   sessionId,
   resumeFromIndex,
   respectToolApprovals,
@@ -1708,6 +1710,12 @@ export const processUiMessagesFlow = async ({
    * callers leave this undefined — they have no routine context.
    */
   routine?: { id: string; name: string };
+  /**
+   * The job_results row of this run. Tools then receive a `routine` object
+   * (routine.runs.current.update) and writes count as coming from the
+   * worker's run (spec 2026-11-16-routine-work-status-design).
+   */
+  jobResultId?: string;
   /**
    * Session-backed runs (spec §5.1): persist each step's messages to
    * agent_messages at the step boundary, pass the session to generateStream
@@ -1909,6 +1917,7 @@ export const processUiMessagesFlow = async ({
               currentTools: enabledTools,
               currentSkills: enabledSkills,
               allExuluTools: tools,
+              routineRun: jobResultId ? { jobResultId } : undefined,
               languageModel: resolvedLanguageModel,
               toolConfigs: agent.tools,
               exuluConfig: config,

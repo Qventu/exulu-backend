@@ -1,4 +1,4 @@
-import { defaultWorkStatusColumns, loadRunBySession, loadRunWorkStatus, loadRoutineWorkStatusConfig, setRunWorkStatus } from "./work-status-store";
+import { defaultWorkStatusColumns, loadRunWorkStatus, loadRoutineWorkStatusConfig, setRunWorkStatus } from "./work-status-store";
 
 const CONFIG = { statuses: [{ key: "neu", label: "Neu" }, { key: "erledigt", label: "Erledigt", done: true }], default: "neu" };
 
@@ -31,11 +31,6 @@ describe("work-status-store reads", () => {
     const b = makeDb({ job_results: [run({ work_status_updated_by: { kind: "user", id: 14 } })] });
     expect((await loadRunWorkStatus(b.db, "jr-1"))?.work_status_updated_by).toEqual({ kind: "user", id: 14 });
     expect(await loadRunWorkStatus(a.db, "nope")).toBeUndefined();
-  });
-  it("loadRunBySession returns the newest routine run of the session and ignores rows without a workflow", async () => {
-    const { db } = makeDb({ job_results: [run({ id: "old", createdAt: 1 }), run({ id: "new", createdAt: 5 }), run({ id: "eval", workflow: null, createdAt: 9 })] });
-    expect((await loadRunBySession(db, "sess-1"))?.id).toBe("new");
-    expect(await loadRunBySession(db, "other")).toBeUndefined();
   });
   it("loadRoutineWorkStatusConfig returns the parsed config, also for a routine without one", async () => {
     const { db } = makeDb({ workflow_templates: [routine, { id: "wf-2", name: "Ohne", work_statuses: null }] });

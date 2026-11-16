@@ -46,13 +46,6 @@ export async function loadRunWorkStatus(db: any, jobResultId: string): Promise<R
   return mapRow(await db("job_results").where({ id: jobResultId }).first());
 }
 
-/** The newest routine run of a session (job_results rows of evals etc. carry no workflow). */
-export async function loadRunBySession(db: any, sessionId: string): Promise<RunWorkStatusRow | undefined> {
-  return mapRow(
-    await db("job_results").where({ session: sessionId }).whereNotNull("workflow").orderBy("createdAt", "desc").first(),
-  );
-}
-
 export async function loadRoutineWorkStatusConfig(
   db: any,
   workflowId: string,
