@@ -470,7 +470,7 @@ If the page contains a flow-chart, schematic, technical drawing or control board
 /**
  * Reconstructs table headers across pages sequentially after parallel VLM processing
  */
-function reconstructTableHeaders(
+export function reconstructTableHeaders(
   document: ProcessedDocument,
   validationResults: Map<number, VLMValidationResult>,
   verbose: boolean = false
@@ -479,6 +479,11 @@ function reconstructTableHeaders(
 
   for (const page of document) {
     const validation = validationResults.get(page.page);
+    if (page.vlm_failed) {
+      // Nothing is known about this page's table, so headers carried from before it must not reach later pages.
+      lastTableHeaders = undefined;
+      continue;
+    }
     if (!validation) continue;
 
     const tableInfo = validation.current_page_table;

@@ -11,9 +11,9 @@ export type StoreIo = {
   putText(key: string, text: string, metadata: Record<string, string>): Promise<void>;
 };
 
-export type Extracted = { text: string; totalPages?: number; storable: boolean };
+export type Extracted = { text: string; totalPages?: number; storable: boolean; degradedPages?: number[] };
 
-export type ReadThroughResult = { text: string; totalPages?: number; fromStore: boolean };
+export type ReadThroughResult = { text: string; totalPages?: number; fromStore: boolean; degradedPages?: number[] };
 
 type InFlight = { promise: Promise<ReadThroughResult>; listeners: Set<ProgressFn> };
 const inFlight = new Map<string, InFlight>();
@@ -143,7 +143,12 @@ export async function readThroughDocument(args: {
         warn("could not store extracted text", err);
       }
     }
-    return { text: extracted.text, totalPages: extracted.totalPages, fromStore: false };
+    return {
+      text: extracted.text,
+      totalPages: extracted.totalPages,
+      fromStore: false,
+      ...(extracted.degradedPages?.length ? { degradedPages: extracted.degradedPages } : {}),
+    };
   })().finally(() => {
     inFlight.delete(flightKey);
   });

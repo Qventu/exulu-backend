@@ -130,3 +130,28 @@ describe("vision failures", () => {
     await expect(documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config: mistral() })).rejects.toThrow("vision outage");
   });
 });
+
+describe("reconstructTableHeaders", () => {
+  const { reconstructTableHeaders } = require("./doc_processor") as typeof import("./doc_processor");
+  const tableOn = (headers: string[], is_continuation: boolean) =>
+    ({ needs_correction: false, confidence: "high", reasoning: "", current_page_table: { headers, is_continuation } }) as never;
+  const build = () => [
+    { page: 1, content: "| a | b |\n| - | - |\n| 1 | 2 |" },
+    { page: 2, content: "| 3 | 4 |", vlm_failed: true as boolean | undefined },
+    { page: 3, content: "| 5 | 6 |" },
+  ];
+  const results = () => new Map([[1, tableOn(["a", "b"], false)], [3, tableOn(["x", "y"], true)]]);
+
+  it("does not hand headers from before a failed page to a later continuation", () => {
+    const doc = build();
+    reconstructTableHeaders(doc, results());
+    expect(doc[2].content).toBe("| 5 | 6 |");
+  });
+
+  it("without a failed page the headers carry across as before", () => {
+    const doc = build();
+    doc[1].vlm_failed = undefined;
+    reconstructTableHeaders(doc, results());
+    expect(doc[2].content).toBe("| a | b |\n| --- | --- |\n| 5 | 6 |");
+  });
+});

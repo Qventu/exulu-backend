@@ -304,21 +304,43 @@ describe("stored text", () => {
       expect(await run({ filename: "report.pdf" })).toEqual({ error: "[Document too long: ...]" });
     });
 
-    it("appends the unverified-pages note and does not store a result with degraded pages", async () => {
-      extractDocument.mockResolvedValue({
-        engine: "document-processor",
-        text: "",
-        pages: [{ page: 1, text: "alpha" }, { page: 2, text: "beta" }, { page: 3, text: "gamma" }],
-        degradedPages: [2, 3],
+    describe("unverified pages", () => {
+      const NOTE = (list: string) => `[Note: figures and tables on page(s) ${list} could not be verified; the text for those pages is OCR only.]`;
+      const pagesOf = (n: number) => Array.from({ length: n }, (_, i) => ({ page: i + 1, text: `body ${i + 1}` }));
+      const degraded = (n: number, degradedPages: number[]) =>
+        extractDocument.mockResolvedValue({ engine: "document-processor", text: "", pages: pagesOf(n), degradedPages });
+
+      it("names the degraded page inside the requested range, as the last line, and does not store", async () => {
+        degraded(3, [2]);
+        const r = await run({ filename: "report.pdf", pages: "2" });
+        expect(r.content).toBe(`--- page 2 ---\nbody 2\n${NOTE("2")}`);
+        expect(r.totalLines).toBe(2);
+        expect(r.linesReturned).toBe(2);
+        await run({ filename: "report.pdf", pages: "2" });
+        expect(extractDocument).toHaveBeenCalledTimes(2);
+        expect(uppy.putS3ObjectTextExact).not.toHaveBeenCalled();
       });
-      const first = await run({ filename: "report.pdf" });
-      await run({ filename: "report.pdf" });
-      expect(first.content).toBe(
-        "--- page 1 ---\nalpha\n--- page 2 ---\nbeta\n--- page 3 ---\ngamma\n" +
-        "[Note: figures and tables on page(s) 2, 3 could not be verified; the text for those pages is OCR only.]",
-      );
-      expect(extractDocument).toHaveBeenCalledTimes(2);
-      expect(uppy.putS3ObjectTextExact).not.toHaveBeenCalled();
+
+      it("adds no note when the degraded page is outside the range", async () => {
+        degraded(6, [2]);
+        const r = await run({ filename: "report.pdf", pages: "5" });
+        expect(r.content).toBe("--- page 5 ---\nbody 5");
+      });
+
+      it("keeps the note when the degraded page lies far beyond the first slice", async () => {
+        degraded(300, [250]);
+        const r = await run({ filename: "report.pdf", offset: 1 });
+        expect(r.content.endsWith(`\n${NOTE("250")}`)).toBe(true);
+        expect(r.content).not.toContain("--- page 250 ---");
+        expect(r.linesReturned).toBe(250);
+        expect(r.totalLines).toBe(600);
+      });
+
+      it("collapses consecutive pages into ranges", async () => {
+        degraded(45, [40, 7, 8, 9, 10, 11, 12]);
+        const r = await run({ filename: "report.pdf", limit: 1 });
+        expect(r.content.endsWith(`\n${NOTE("7-12, 40")}`)).toBe(true);
+      });
     });
 
     it("does not store the officeparser fallback", async () => {

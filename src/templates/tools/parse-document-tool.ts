@@ -59,6 +59,19 @@ class ExtractionRefusal extends Error {}
  * Keeps the pages in `range` of a text with `--- page N ---` markers, exactly as the
  * extraction would have joined them. Text without markers is returned whole.
  */
+/** [7,8,9,10,11,12,40] -> "7-12, 40" */
+export function collapsePageList(pages: number[]): string {
+  const sorted = [...new Set(pages)].sort((a, b) => a - b);
+  const parts: string[] = [];
+  for (let i = 0; i < sorted.length; ) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1]! === sorted[j]! + 1) j++;
+    parts.push(j > i ? `${sorted[i]}-${sorted[j]}` : String(sorted[i]));
+    i = j + 1;
+  }
+  return parts.join(", ");
+}
+
 export function selectPages(fullText: string, range: [number, number]): string {
   const parts = fullText.split(/^(?=--- page \d+ ---$)/m);
   if (parts.length < 2 && !/^--- page \d+ ---$/m.test(fullText)) return fullText;
@@ -213,19 +226,17 @@ export const createParseDocumentTool = ({
           }
           if (extracted.engine === "document-processor") {
             const multiPage = extracted.pages.length > 1;
-            const body = extracted.pages
-              .map(({ page, text }) => (multiPage ? `--- page ${page} ---\n${text.trim()}` : text.trim()))
-              .join("\n");
             const degraded = extracted.degradedPages ?? [];
             // A result with unverified pages is returned but never stored: a later
-            // read must get the chance to verify them.
+            // read must get the chance to verify them. The text itself carries no note;
+            // the caller reports the pages inside the requested range.
             return {
               totalPages: extracted.pages.length,
               storable: degraded.length === 0,
-              text:
-                degraded.length === 0
-                  ? body
-                  : `${body}\n[Note: figures and tables on page(s) ${degraded.join(", ")} could not be verified; the text for those pages is OCR only.]`,
+              ...(degraded.length > 0 ? { degradedPages: degraded } : {}),
+              text: extracted.pages
+                .map(({ page, text }) => (multiPage ? `--- page ${page} ---\n${text.trim()}` : text.trim()))
+                .join("\n"),
             };
           }
           // The processor gave nothing usable: what follows is the text-layer fallback,
@@ -281,12 +292,16 @@ export const createParseDocumentTool = ({
       });
 
       let fullText = stored.text;
+      let degradedInRange: number[] = [];
       // Single-page processor output carries no markers, so a stored copy has no page count.
       const totalPages = stored.totalPages ?? (ext === ".pdf" ? 1 : undefined);
       if (ext === ".pdf" && totalPages !== undefined) {
         const range = resolvePageRange(pages, totalPages, safeName);
         if (!Array.isArray(range)) return range;
         if (pages) fullText = selectPages(fullText, range);
+        degradedInRange = (stored.degradedPages ?? []).filter((p) => p >= range[0] && p <= range[1]);
+      } else {
+        degradedInRange = stored.degradedPages ?? [];
       }
 
       const lines = (fullText ?? "").split("\n");
@@ -299,6 +314,12 @@ export const createParseDocumentTool = ({
         content = content.slice(0, MAX_CONTENT_CHARS);
         linesReturned = Math.max(1, content.split("\n").length - 1);
         content = content + "\n[slice truncated — request fewer lines]";
+      }
+      // After slicing and the cap, so neither can remove it; the line counts describe the text only.
+      if (degradedInRange.length > 0) {
+        content +=
+          `\n[Note: figures and tables on page(s) ${collapsePageList(degradedInRange)} could not be verified; ` +
+          "the text for those pages is OCR only.]";
       }
       return {
         content,
