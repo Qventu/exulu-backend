@@ -143,3 +143,49 @@ export async function verifyRunSessionOwnership(
     throw new Error(`Session ${sessionId} does not belong to routine ${workflowId}; refusing to run.`);
   }
 }
+
+/**
+ * The session step of a routine run in the worker: an existing session (from the
+ * job payload, a continuation, a retry or an earlier attempt) must be this
+ * routine's run session; without one a run session is created and linked to the
+ * job_results row. Only then is `generate` invoked with the session id. A foreign
+ * session throws (which fails the run) after unlinking it from the row, which
+ * upsertWorkflowRunStart already linked, so the failed run does not point at a
+ * transcript that is not its own.
+ */
+export async function withRunSession<T>(
+  db: any,
+  opts: {
+    existingSession: string | null | undefined;
+    jobResultId: string;
+    workflow: { id: string; name: string; agent: string; rights_mode?: string };
+    runUser: User;
+    trigger: "email" | "schedule" | "manual" | "api";
+  },
+  generate: (sessionId: string) => Promise<T>,
+): Promise<T> {
+  const { existingSession, jobResultId, workflow, runUser, trigger } = opts;
+  let sessionId: string;
+  if (existingSession) {
+    try {
+      await verifyRunSessionOwnership(db, { sessionId: existingSession, workflowId: workflow.id, runUser });
+    } catch (error) {
+      await Promise.resolve(
+        db.from("job_results").where({ id: jobResultId, session: existingSession }).update({ session: null }),
+      ).catch(() => {});
+      throw error;
+    }
+    sessionId = existingSession;
+  } else {
+    sessionId = await createRunSession({
+      db,
+      workflow,
+      userId: runUser.id as number,
+      title: `${workflow.name} — ${new Date().toISOString()}`,
+      trigger,
+      jobResultId,
+    });
+    await db.from("job_results").where({ id: jobResultId }).update({ session: sessionId });
+  }
+  return generate(sessionId);
+}
