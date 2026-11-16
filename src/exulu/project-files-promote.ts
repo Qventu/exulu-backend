@@ -84,3 +84,70 @@ export async function promoteSessionFiles(args: {
   }
   return { promoted, rejected, clashes: [] };
 }
+
+export type MoveS3 = PromoteS3 & {
+  /** Delete one object by its full key. */
+  remove: (key: string) => Promise<void>;
+};
+
+export type MoveResult = {
+  /** Names now in the project (their session original is gone unless listed in originalsKept). */
+  moved: string[];
+  /** Names that stayed in the session, with why. Never a file that is in neither place. */
+  notMoved: { name: string; reason: string }[];
+  /** Moved names whose session original could not be deleted: they exist in BOTH places. */
+  originalsKept: string[];
+};
+
+/**
+ * Move session files into a project: promote (copy) each batch, then delete the session
+ * original of each file whose copy succeeded, and only of those. A failed copy leaves the
+ * original untouched; a failed delete leaves a duplicate. In no case does a file end up in
+ * neither place. `batches` come from planMove (at most 20 keys / 50 MB each); a batch that
+ * fails as a whole (a thrown S3 error) leaves all its files in the session.
+ */
+export async function moveSessionFiles(args: {
+  projectId: string;
+  s3prefix?: string | null;
+  fullSessionPrefix: string;
+  batches: { key: string; name: string }[][];
+  s3: MoveS3;
+}): Promise<MoveResult> {
+  const result: MoveResult = { moved: [], notMoved: [], originalsKept: [] };
+  for (const batch of args.batches) {
+    const nameByKey = new Map(batch.map((f) => [f.key, f.name]));
+    let outcome: PromoteResult;
+    try {
+      outcome = await promoteSessionFiles({
+        projectId: args.projectId,
+        s3prefix: args.s3prefix,
+        keys: batch.map((f) => f.key),
+        fullSessionPrefix: args.fullSessionPrefix,
+        overwrite: false,
+        s3: args.s3,
+      });
+    } catch (err) {
+      console.error("[PROJECT-FILES] move batch failed", err);
+      for (const f of batch) result.notMoved.push({ name: f.name, reason: COPY_FAILED_REASON });
+      continue;
+    }
+    for (const r of outcome.rejected) {
+      result.notMoved.push({ name: nameByKey.get(r.key) ?? r.key, reason: r.reason });
+    }
+    for (const name of outcome.clashes) {
+      result.notMoved.push({ name, reason: "A file with this name is already in the project." });
+    }
+    const promotedNames = new Set(outcome.promoted.map((p) => p.name));
+    for (const f of batch) {
+      if (!promotedNames.has(f.name)) continue;
+      result.moved.push(f.name);
+      try {
+        await args.s3.remove(f.key);
+      } catch (err) {
+        console.error("[PROJECT-FILES] could not delete session original after copy", f.key, err);
+        result.originalsKept.push(f.name);
+      }
+    }
+  }
+  return result;
+}

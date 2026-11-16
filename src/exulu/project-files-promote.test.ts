@@ -46,3 +46,64 @@ it("a copy failing midway keeps the earlier files in promoted and reports the fa
   expect(r.promoted.map((p) => p.name)).toEqual(["a.pdf", "c.pdf"]);
   expect(r.rejected).toEqual([{ key: keys[1], reason: "Copying the file into the project failed." }]);
 });
+
+describe("moveSessionFiles", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { moveSessionFiles } = require("./project-files-promote") as typeof import("./project-files-promote");
+  const mk = (over: Record<string, unknown> = {}) => {
+    const removed: string[] = [];
+    const copies: [string, string][] = [];
+    const s3 = {
+      listProjectNames: async () => [],
+      sizeOf: async () => 10,
+      copy: async (a: string, b: string) => void copies.push([a, b]),
+      remove: async (k: string) => void removed.push(k),
+      ...over,
+    };
+    return { s3: s3 as never, removed, copies };
+  };
+  const batch = [`${SESSION}a.pdf`, `${SESSION}b.pdf`].map((key) => ({ key, name: key.slice(SESSION.length) }));
+
+  it("deletes each original only after its copy succeeded", async () => {
+    const order: string[] = [];
+    const { s3 } = mk({
+      copy: async (a: string) => void order.push(`copy ${a.slice(SESSION.length)}`),
+      remove: async (k: string) => void order.push(`remove ${k.slice(SESSION.length)}`),
+    });
+    const r = await moveSessionFiles({ projectId: "p1", fullSessionPrefix: SESSION, batches: [batch], s3 });
+    expect(r).toEqual({ moved: ["a.pdf", "b.pdf"], notMoved: [], originalsKept: [] });
+    expect(order.indexOf("remove a.pdf")).toBeGreaterThan(order.indexOf("copy a.pdf"));
+    expect(order.indexOf("remove b.pdf")).toBeGreaterThan(order.indexOf("copy b.pdf"));
+  });
+  it("a failing copy leaves that file in the session, names it, and deletes nothing for it", async () => {
+    const { s3, removed } = mk({
+      copy: async (a: string) => {
+        if (a.endsWith("b.pdf")) throw new Error("boom");
+      },
+    });
+    const r = await moveSessionFiles({ projectId: "p1", fullSessionPrefix: SESSION, batches: [batch], s3 });
+    expect(r.moved).toEqual(["a.pdf"]);
+    expect(r.notMoved).toEqual([{ name: "b.pdf", reason: expect.any(String) }]);
+    expect(removed).toEqual([`${SESSION}a.pdf`]);
+  });
+  it("a failing delete keeps the copy and reports the duplicate", async () => {
+    const { s3 } = mk({ remove: async () => { throw new Error("denied"); } });
+    const r = await moveSessionFiles({ projectId: "p1", fullSessionPrefix: SESSION, batches: [batch], s3 });
+    expect(r.moved).toEqual(["a.pdf", "b.pdf"]);
+    expect(r.originalsKept).toEqual(["a.pdf", "b.pdf"]);
+  });
+  it("a batch that fails as a whole leaves all its files in the session and later batches still run", async () => {
+    let n = 0;
+    const { s3, removed } = mk({
+      listProjectNames: async () => {
+        if (n++ === 0) throw new Error("s3 down");
+        return [];
+      },
+    });
+    const second = [{ key: `${SESSION}c.pdf`, name: "c.pdf" }];
+    const r = await moveSessionFiles({ projectId: "p1", fullSessionPrefix: SESSION, batches: [batch, second], s3 });
+    expect(r.notMoved.map((x) => x.name)).toEqual(["a.pdf", "b.pdf"]);
+    expect(r.moved).toEqual(["c.pdf"]);
+    expect(removed).toEqual([`${SESSION}c.pdf`]);
+  });
+});
