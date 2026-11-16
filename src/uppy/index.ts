@@ -1260,8 +1260,10 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
   });
 
   app.get("/s3/multipart/:uploadId", async (req, res, next) => {
-    const key = await authorizeMultipartKey(req, res);
-    if (key === null) return;
+    const authorizedKey = await authorizeMultipartKey(req, res);
+    if (authorizedKey === null) return;
+    // Narrowed copy: the closure below does not see the null check.
+    const key: string = authorizedKey;
     const client = getS3Client(config);
     const { uploadId } = req.params;
 
