@@ -3,6 +3,7 @@ import { lstat, mkdir, open, readlink, realpath, rename, unlink, writeFile } fro
 import { randomBytes } from 'node:crypto'
 import { discardEntry } from './project-sync'
 import { dirname, isAbsolute, join, sep } from 'node:path'
+import { MAX_ADOPT_UPLOAD_BYTES } from '@SRC/exulu/session-file-adopt'
 
 /**
  * Filesystem access by the BACKEND (not the sandboxed agent) inside a session
@@ -67,6 +68,11 @@ export async function readRegularFileInside(sessionDir: string, path: string): P
     try {
         const st = await handle.stat()
         if (!st.isFile()) return skip('it is not a regular file')
+        // Same ceiling as an upload: a sparse `truncate -s 2G` costs the agent no
+        // disk but would make the backend read and upload gigabytes.
+        if (st.size > MAX_ADOPT_UPLOAD_BYTES) {
+            return skip(`it is larger than the ${MAX_ADOPT_UPLOAD_BYTES / (1024 * 1024)}MB upload limit (${st.size} bytes)`)
+        }
         // A parent directory swapped for a link after the realpath check above would
         // have steered the open elsewhere. Where the descriptor's real path is
         // available (Linux), check that instead of trusting the earlier check.
@@ -77,7 +83,18 @@ export async function readRegularFileInside(sessionDir: string, path: string): P
             const again = await realpath(dirname(path)).catch(() => null)
             if (again === null || !isInside(root, again)) return skip('it resolves outside the session directory')
         }
-        return await handle.readFile()
+        // Bounded read: the file may still grow after the fstat above.
+        const chunks: Buffer[] = []
+        let total = 0
+        for (;;) {
+            const chunk = Buffer.allocUnsafe(1024 * 1024)
+            const { bytesRead } = await handle.read(chunk, 0, chunk.length, null)
+            if (bytesRead === 0) break
+            total += bytesRead
+            if (total > MAX_ADOPT_UPLOAD_BYTES) return skip('it grew past the upload limit while being read')
+            chunks.push(chunk.subarray(0, bytesRead))
+        }
+        return Buffer.concat(chunks, total)
     } finally {
         await handle.close().catch(() => {})
     }

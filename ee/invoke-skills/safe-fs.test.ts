@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { closeSync, constants, openSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MAX_ADOPT_UPLOAD_BYTES } from "@SRC/exulu/session-file-adopt";
 import { readRegularFileInside } from "./safe-fs";
 
 let dir: string;
@@ -25,7 +26,7 @@ const canMkfifo = (() => {
   }
 })();
 
-describe("readRegularFileInside: special files", () => {
+describe("readRegularFileInside: special files and size", () => {
   (canMkfifo ? it : it.skip)(
     "a FIFO at the path returns null at once instead of blocking a threadpool thread",
     async () => {
@@ -45,4 +46,15 @@ describe("readRegularFileInside: special files", () => {
     },
     5000,
   );
+
+  it("skips a (sparse) file just over the upload cap and reads one just under it", async () => {
+    const over = join(dir, "over.bin");
+    const under = join(dir, "under.bin");
+    await writeFile(over, "");
+    await writeFile(under, "");
+    await truncate(over, MAX_ADOPT_UPLOAD_BYTES + 1);
+    await truncate(under, MAX_ADOPT_UPLOAD_BYTES - 1);
+    expect(await readRegularFileInside(dir, over)).toBeNull();
+    expect((await readRegularFileInside(dir, under))?.length).toBe(MAX_ADOPT_UPLOAD_BYTES - 1);
+  }, 20000);
 });
