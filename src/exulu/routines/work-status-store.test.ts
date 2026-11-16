@@ -1,4 +1,4 @@
-import { loadRunBySession, loadRunWorkStatus, loadRoutineWorkStatusConfig, setRunWorkStatus } from "./work-status-store";
+import { defaultWorkStatusColumns, loadRunBySession, loadRunWorkStatus, loadRoutineWorkStatusConfig, setRunWorkStatus } from "./work-status-store";
 
 const CONFIG = { statuses: [{ key: "neu", label: "Neu" }, { key: "erledigt", label: "Erledigt", done: true }], default: "neu" };
 
@@ -72,5 +72,23 @@ describe("setRunWorkStatus", () => {
     await expect(setRunWorkStatus(a.db, { jobResultId: "jr-1", status: "neu", actor: { kind: "agent" }, origin: "worker" })).rejects.toThrow("Run jr-1 not found");
     const b = makeDb({ job_results: [run()], workflow_templates: [] });
     await expect(setRunWorkStatus(b.db, { jobResultId: "jr-1", status: "neu", actor: { kind: "agent" }, origin: "worker" })).rejects.toThrow(/routine .* not found/i);
+  });
+});
+
+describe("defaultWorkStatusColumns", () => {
+  it("returns the default status, a timestamp and the default actor", async () => {
+    const { db } = makeDb({ workflow_templates: [routine] });
+    const cols = await defaultWorkStatusColumns(db, "wf-1");
+    expect(cols.work_status).toBe("neu");
+    expect(cols.work_status_updated_at).toBeInstanceOf(Date);
+    expect(JSON.parse(cols.work_status_updated_by!)).toEqual({ kind: "default" });
+  });
+  it("returns {} without statuses, without a default, for an unknown routine, and when the lookup fails", async () => {
+    const { db } = makeDb({ workflow_templates: [{ id: "wf-2", name: "Ohne", work_statuses: null }, { id: "wf-3", name: "x", work_statuses: { statuses: [{ key: "neu", label: "Neu" }], default: null } }] });
+    expect(await defaultWorkStatusColumns(db, "wf-2")).toEqual({});
+    expect(await defaultWorkStatusColumns(db, "wf-3")).toEqual({});
+    expect(await defaultWorkStatusColumns(db, "nope")).toEqual({});
+    const broken: any = () => { throw new Error("db down"); };
+    expect(await defaultWorkStatusColumns(broken, "wf-1")).toEqual({});
   });
 });

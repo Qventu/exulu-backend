@@ -92,3 +92,26 @@ export async function setRunWorkStatus(
   }
   return decision;
 }
+
+/**
+ * Columns that give a run the routine's default work status; {} when the
+ * routine has no statuses or no default. Never throws: a run must start even
+ * when this lookup fails.
+ */
+export async function defaultWorkStatusColumns(
+  db: any,
+  workflowId: string,
+): Promise<{ work_status?: string; work_status_updated_at?: Date; work_status_updated_by?: string }> {
+  try {
+    const routine = await loadRoutineWorkStatusConfig(db, workflowId);
+    if (!routine?.config.default) return {};
+    return {
+      work_status: routine.config.default,
+      work_status_updated_at: new Date(),
+      work_status_updated_by: JSON.stringify({ kind: "default" } satisfies WorkStatusActor),
+    };
+  } catch (error) {
+    console.warn(`[EXULU] could not resolve the default work status of routine ${workflowId}:`, error);
+    return {};
+  }
+}
