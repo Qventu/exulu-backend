@@ -246,7 +246,7 @@ describe("stored text", () => {
     const first = await runTool({ filename: "report.pdf", pages: "2-3" });
     const second = await runTool({ filename: "report.pdf", pages: "2-3" });
     expect(pdfToText).toHaveBeenCalledTimes(1);
-    expect(second).toEqual(first);
+    expect(second).toEqual({ ...first, fromStore: true });
     expect(second.content).toBe(
       "--- page 2 ---\npage two full body of searchable text\n--- page 3 ---\npage three full body of searchable text",
     );
@@ -255,6 +255,14 @@ describe("stored text", () => {
     expect(pdfToText).toHaveBeenCalledTimes(1);
     expect(whole.content).toBe("--- page 2 ---\npage two full body of searchable text");
     expect(whole.totalLines).toBe(8);
+  });
+
+  it("flags a read served from the store with fromStore: true, and a first read has no such key", async () => {
+    pdfToText.mockResolvedValue(PAGES);
+    const first = await runTool({ filename: "report.pdf" });
+    expect(Object.keys(first)).not.toContain("fromStore");
+    const second = await runTool({ filename: "report.pdf" });
+    expect((second as { fromStore?: boolean }).fromStore).toBe(true);
   });
 
   it("does not download the source again on a hit", async () => {
@@ -296,7 +304,7 @@ describe("stored text", () => {
       const first = await run({ filename: "report.pdf", pages: "2" });
       const second = await run({ filename: "report.pdf", pages: "2" });
       expect(first.content).toBe("--- page 2 ---\nbeta");
-      expect(second).toEqual(first);
+      expect(second).toEqual({ ...first, fromStore: true });
       expect(extractDocument).toHaveBeenCalledTimes(1);
     });
 

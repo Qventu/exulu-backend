@@ -332,6 +332,9 @@ export const createParseDocumentTool = ({
         totalLines: lines.length,
         offset: start + 1,
         linesReturned,
+        // Only when the text came from the store; the key is absent otherwise, so results of
+        // uncached reads stay byte-identical to what they were.
+        ...(stored.fromStore ? { fromStore: true } : {}),
       };
     } catch (err) {
       if (err instanceof ExtractionRefusal) return { error: err.message };
