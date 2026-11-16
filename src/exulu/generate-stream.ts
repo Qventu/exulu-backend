@@ -2,6 +2,7 @@ import type { User } from "@EXULU_TYPES/models/user";
 import { classifyFilePart } from "./file-part";
 import { dropEmptyMessages } from "./stored-messages";
 import { mayResignStoredFileKey, resolveFreshFileUrl } from "./stored-file-url";
+import { loadFilePartBytes } from "./file-part-fetch";
 import { canRegisterSaveToProject } from "@SRC/templates/tools/save-to-project-tool";
 import { loadSessionFileListing, sessionFilesScopeSentence } from "./session-file-listing";
 import { resolveSessionProject, type ResolvedSessionProject } from "./resolve-session-project";
@@ -60,7 +61,8 @@ import { randomUUID } from "node:crypto";
   * - Document files (PDF, DOCX, etc.) -> text parts with extracted content using officeparser
   * - Image files -> image parts (which ARE supported by Responses API)
   */
-const processFilePartsInMessages = async (
+/** Exported for tests (generate-stream.file-parts.test.ts). */
+export const processFilePartsInMessages = async (
     messages: UIMessage[],
     offloadCtx: {
         contextWindow?: number;
@@ -127,19 +129,19 @@ const processFilePartsInMessages = async (
                     // processor when configured, officeparser otherwise — attachment-text.ts).
                     console.log(`[EXULU] Converting file part to text: ${filename}`);
                     try {
-                        // Fetch the file content from the URL
-                        const response = await fetch(url);
-                        if (!response.ok) {
-                            console.error(
-                                `[EXULU] Failed to fetch file: ${filename}, status: ${response.status} `,
-                            );
-                            return {
-                                type: "text",
-                                text: `[Error: Could not load file ${filename}]`,
-                            };
+                        // Only data: URLs and the workspace's own storage are loaded (with
+                        // timeout, byte cap, no redirects): the URL is user input and guest
+                        // chats reach this, so it must not become a server-side fetch proxy.
+                        const loaded = await loadFilePartBytes(part.url, filename, {
+                            store: uploads?.s3Bucket
+                                ? { endpoint: uploads.s3endpoint, bucket: uploads.s3Bucket }
+                                : undefined,
+                            fetchUrl: url,
+                        });
+                        if (!loaded.ok) {
+                            return { type: "text", text: loaded.error };
                         }
-
-                        const bytes = Buffer.from(await response.arrayBuffer());
+                        const bytes = loaded.bytes;
 
                         const extracted = await extractDocument({
                             bytes,

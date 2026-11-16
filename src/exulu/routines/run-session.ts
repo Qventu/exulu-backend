@@ -11,6 +11,9 @@
  * RBACResolver / handleRBACUpdate match on (table.name.singular).
  */
 
+import type { User } from "@EXULU_TYPES/models/user";
+import { checkRecordAccess } from "@SRC/utils/check-record-access";
+
 export async function createRunSession(opts: {
   db: any;
   workflow: { id: string; name: string; agent: string; rights_mode?: string };
@@ -98,3 +101,91 @@ export const isRunSessionMetadata = (metadata: unknown): boolean => {
     !!(parsed as { job_result_id?: unknown }).job_result_id
   );
 };
+
+const parseMetadata = (metadata: unknown): Record<string, unknown> | null => {
+  if (metadata == null) return null;
+  if (typeof metadata === "string") {
+    try {
+      const parsed = JSON.parse(metadata);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return typeof metadata === "object" ? (metadata as Record<string, unknown>) : null;
+};
+
+/**
+ * Throws unless `sessionId` is a run session of routine `workflowId`. The worker
+ * takes the session from the job payload, so without this a crafted job could
+ * make a run write its transcript into any session. Run sessions carry the
+ * routine in `run` and `metadata.routine_id` (createRunSession); every marker
+ * present must name this routine. A session with neither marker (older rows)
+ * falls back to write access of the run user.
+ */
+export async function verifyRunSessionOwnership(
+  db: any,
+  opts: { sessionId: string; workflowId: string; runUser?: User },
+): Promise<void> {
+  const { sessionId, workflowId, runUser } = opts;
+  const session = await db.from("agent_sessions").where({ id: sessionId }).first();
+  if (!session) {
+    throw new Error(`Run session ${sessionId} not found; refusing to run routine ${workflowId}.`);
+  }
+  const markers = [session.run, parseMetadata(session.metadata)?.routine_id].filter(
+    (m) => m != null && m !== "",
+  );
+  const belongs =
+    markers.length > 0
+      ? markers.every((m) => String(m) === String(workflowId))
+      : await checkRecordAccess(session, "write", runUser);
+  if (!belongs) {
+    throw new Error(`Session ${sessionId} does not belong to routine ${workflowId}; refusing to run.`);
+  }
+}
+
+/**
+ * The session step of a routine run in the worker: an existing session (from the
+ * job payload, a continuation, a retry or an earlier attempt) must be this
+ * routine's run session; without one a run session is created and linked to the
+ * job_results row. Only then is `generate` invoked with the session id. A foreign
+ * session throws (which fails the run) after unlinking it from the row, which
+ * upsertWorkflowRunStart already linked, so the failed run does not point at a
+ * transcript that is not its own.
+ */
+export async function withRunSession<T>(
+  db: any,
+  opts: {
+    existingSession: string | null | undefined;
+    jobResultId: string;
+    workflow: { id: string; name: string; agent: string; rights_mode?: string };
+    runUser: User;
+    trigger: "email" | "schedule" | "manual" | "api";
+  },
+  generate: (sessionId: string) => Promise<T>,
+): Promise<T> {
+  const { existingSession, jobResultId, workflow, runUser, trigger } = opts;
+  let sessionId: string;
+  if (existingSession) {
+    try {
+      await verifyRunSessionOwnership(db, { sessionId: existingSession, workflowId: workflow.id, runUser });
+    } catch (error) {
+      await Promise.resolve(
+        db.from("job_results").where({ id: jobResultId, session: existingSession }).update({ session: null }),
+      ).catch(() => {});
+      throw error;
+    }
+    sessionId = existingSession;
+  } else {
+    sessionId = await createRunSession({
+      db,
+      workflow,
+      userId: runUser.id as number,
+      title: `${workflow.name} — ${new Date().toISOString()}`,
+      trigger,
+      jobResultId,
+    });
+    await db.from("job_results").where({ id: jobResultId }).update({ session: sessionId });
+  }
+  return generate(sessionId);
+}

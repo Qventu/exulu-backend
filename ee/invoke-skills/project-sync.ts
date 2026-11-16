@@ -136,6 +136,15 @@ async function discard(path: string | null, sessionDir: string): Promise<void> {
 }
 
 /**
+ * Move any entry of the session directory (a directory, file or link) out of the
+ * agent's reach and delete it there; see moveAway and removeTreeSafely. Used for
+ * backend-side deletes under the session dir (e.g. a skill folder being replaced).
+ */
+export async function discardEntry(path: string, sessionDir: string): Promise<void> {
+    await discard(await moveAway(path, sessionDir), sessionDir)
+}
+
+/**
  * Mirror the project's shared files into `<sessionDir>/project/` (read-only by
  * convention: the sandbox never writes this folder back). With `projectId: null`
  * a folder that an earlier sync created is removed; a folder of that name the
