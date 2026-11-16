@@ -538,6 +538,8 @@ export const getS3SignedUploadUrl = async (
   key: string,
   contentType: string,
   config: ExuluConfig,
+  // Defaults to a day; project uploads pass minutes (PROJECT_UPLOAD_URL_TTL_SECONDS).
+  opts: { expiresIn?: number } = {},
 ): Promise<string> => {
   if (!config.fileUploads) {
     throw new Error("File uploads are not configured");
@@ -551,7 +553,7 @@ export const getS3SignedUploadUrl = async (
       Key: key,
       ContentType: contentType,
     }),
-    { expiresIn },
+    { expiresIn: opts.expiresIn ?? expiresIn },
   );
   return url;
 };
@@ -833,10 +835,11 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
 
     let prefix = `${config.fileUploads.s3prefix ? config.fileUploads.s3prefix.replace(/\/$/, "") + "/" : ""}`;
 
+    // Trailing slash: without it user 1's prefix also matches user_10/, user_100/ …
     if (!req.headers.global) {
-      prefix += `user_${authenticationResult.user.id}`;
+      prefix += `user_${authenticationResult.user.id}/`;
     } else {
-      prefix += "global";
+      prefix += "global/";
     }
 
     console.log("[EXULU] bucket", config.fileUploads.s3Bucket);

@@ -34,7 +34,7 @@ export type ProjectFileRouteDeps = {
   s3: PromoteS3 & {
     list: (prefix: string) => Promise<Obj[]>;
     presign: (key: string) => Promise<string>;
-    signUpload: (key: string, contentType: string) => Promise<string>;
+    signUpload: (key: string, contentType: string, expiresIn: number) => Promise<string>;
     remove: (key: string) => Promise<void>;
     etag: (key: string) => Promise<string | undefined | null>;
   };
@@ -45,6 +45,13 @@ export type ProjectFileRouteDeps = {
   isPreviewError: (err: unknown) => boolean;
 };
 
+/**
+ * Project upload URLs are short-lived: the clash and cap checks (and the caller's
+ * write right) are decided when the URL is signed, so a day-long URL would let a
+ * revoked writer keep writing, or race past the checks, for a day.
+ */
+export const PROJECT_UPLOAD_URL_TTL_SECONDS = 5 * 60;
+
 /** Key must sit under the prefix, with no traversal segment. */
 function isInside(key: string, fullPrefix: string): boolean {
   return key.startsWith(fullPrefix) && !key.includes("..");
@@ -52,6 +59,10 @@ function isInside(key: string, fullPrefix: string): boolean {
 
 export function registerProjectFileRoutes(app: Express, deps: ProjectFileRouteDeps) {
   const idOf = (req: Request) => String(req.params.projectId ?? "");
+  // S3 prefixes come from the LOADED row: Postgres matches a uuid case-insensitively,
+  // so `/projects/<UPPERCASE>/files` passes the access check but would otherwise
+  // address a shadow folder.
+  const rowId = (authed: { project: { id: unknown } }) => String(authed.project.id);
   const listObjects = async (projectId: string) =>
     (await deps.s3.list(projectFilePrefix(projectId, deps.s3prefix).projectPrefix)).filter(
       (o) => !o.key.endsWith("/"),
@@ -64,7 +75,7 @@ export function registerProjectFileRoutes(app: Express, deps: ProjectFileRouteDe
     const canWrite = await deps.canWrite(authed.user, authed.project);
     let objects: Obj[];
     try {
-      objects = await listObjects(projectId);
+      objects = await listObjects(rowId(authed));
     } catch (err) {
       console.error("[PROJECT-FILES] list failed", err);
       res.status(500).json({ detail: "Failed to list project files." });
@@ -98,7 +109,7 @@ export function registerProjectFileRoutes(app: Express, deps: ProjectFileRouteDe
       return;
     }
     try {
-      const objects = await listObjects(projectId);
+      const objects = await listObjects(rowId(authed));
       const decision = decideUploadSign({
         name: safeName,
         overwrite: overwrite === true,
@@ -111,9 +122,9 @@ export function registerProjectFileRoutes(app: Express, deps: ProjectFileRouteDe
         res.status(decision.status).json(decision.body);
         return;
       }
-      const { fullProjectPrefix } = projectFilePrefix(projectId, deps.s3prefix);
+      const { fullProjectPrefix } = projectFilePrefix(rowId(authed), deps.s3prefix);
       const key = `${fullProjectPrefix}${safeName}`;
-      res.json({ uploadUrl: await deps.s3.signUpload(key, contentType), key });
+      res.json({ uploadUrl: await deps.s3.signUpload(key, contentType, PROJECT_UPLOAD_URL_TTL_SECONDS), key });
     } catch (err) {
       console.error("[PROJECT-FILES] upload-sign failed", err);
       res.status(500).json({ detail: "Failed to sign the upload." });
@@ -129,7 +140,7 @@ export function registerProjectFileRoutes(app: Express, deps: ProjectFileRouteDe
     }
     const authed = await deps.loadAuthedProject(req, res, projectId, "write");
     if (!authed) return;
-    const { fullProjectPrefix } = projectFilePrefix(projectId, deps.s3prefix);
+    const { fullProjectPrefix } = projectFilePrefix(rowId(authed), deps.s3prefix);
     if (!isInside(key, fullProjectPrefix)) {
       res.status(403).json({ detail: "Key does not belong to this project." });
       return;
@@ -156,7 +167,7 @@ export function registerProjectFileRoutes(app: Express, deps: ProjectFileRouteDe
     }
     const authed = await deps.loadAuthedProject(req, res, projectId, "read");
     if (!authed) return;
-    const { fullProjectPrefix } = projectFilePrefix(projectId, deps.s3prefix);
+    const { fullProjectPrefix } = projectFilePrefix(rowId(authed), deps.s3prefix);
     if (!isInside(key, fullProjectPrefix)) {
       res.status(403).json({ detail: "Key does not belong to this project." });
       return;
@@ -196,7 +207,7 @@ export function registerProjectFileRoutes(app: Express, deps: ProjectFileRouteDe
 
     try {
       const result = await promoteSessionFiles({
-        projectId,
+        projectId: rowId(authed),
         s3prefix: deps.s3prefix,
         keys,
         fullSessionPrefix,

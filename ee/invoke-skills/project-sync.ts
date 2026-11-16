@@ -139,8 +139,10 @@ async function discard(path: string | null, sessionDir: string): Promise<void> {
  * Mirror the project's shared files into `<sessionDir>/project/` (read-only by
  * convention: the sandbox never writes this folder back). With `projectId: null`
  * a folder that an earlier sync created is removed; a folder of that name the
- * agent made in a session that never had a project is left alone. Failures are
- * logged and never thrown at the caller — one bad object must not end a turn.
+ * agent made in a session that never had a project is left alone. Failures while
+ * mirroring are logged and not thrown — one bad object must not end a turn. The
+ * detach branch (`projectId: null`) is the exception: a failure removing the old
+ * folder or its marker can propagate, so callers must catch it (create-sandbox.ts does).
  *
  * The agent can swap `project` (or anything in it) for a link at any moment, and
  * this runs as the backend user, so it NEVER operates under the agent-writable

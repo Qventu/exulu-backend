@@ -50,6 +50,7 @@ export class ExuluTool {
    * Calls for which approval is ALWAYS asked, even when the user allowed the tool for this
    * chat (e.g. save_to_project with overwrite: true). Only narrows the shortcut: a call whose
    * approval was already answered is still honoured by the approval wiring.
+   * Ignored for tools that set `needsApprovalFn` (that check decides every call on its own).
    */
   public alwaysAskWhen?: (input: unknown) => boolean;
   public authentication?: ExuluAuthConfig;

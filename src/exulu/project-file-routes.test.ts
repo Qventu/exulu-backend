@@ -7,9 +7,11 @@ import { hasProjectAccess } from "./project-access";
 import { createOriginResolver } from "./file-origin";
 import { MAX_PROJECT_FILES } from "./project-files";
 
-const PROJECT = { id: "p1", created_by: 1, rights_mode: "users" };
+// A real uuid: the routes 404 anything else before the database sees it.
+const P1 = "0b5e9c1a-3f2d-4c6b-9a8e-7d1f2e3c4b5a";
+const PROJECT = { id: P1, created_by: 1, rights_mode: "users" };
 const RBAC = { type: "users", users: [{ id: "2", rights: "read" }], roles: [] };
-const PP = "projects/p1/files/";
+const PP = `projects/${P1}/files/`;
 const sessionPrefix = (owner: number, sid: string) => `user_${owner}/sessions/${sid}/`;
 
 function setup(
@@ -25,13 +27,20 @@ function setup(
   const put = (key: string, meta?: Record<string, string>) =>
     store.set(key, { lastModified: new Date("2026-11-01T10:00:00Z"), meta });
   const copies: [string, string][] = [];
+  const signs: { key: string; expiresIn?: number }[] = [];
 
   const loadAuthedProject = makeLoadAuthedProject({
     authenticate: async (req) => {
       const id = req.headers["x-user"];
       return id ? { user: { id: Number(id), role: null } } : { code: 401, message: "no auth" };
     },
-    getProject: async (id) => (id === PROJECT.id ? PROJECT : undefined),
+    // Like Postgres: an invalid uuid makes the cast throw, a valid one matches
+    // case-insensitively and with or without hyphens.
+    getProject: async (id) => {
+      const norm = (v: string) => v.toLowerCase().replace(/-/g, "");
+      if (!/^[0-9a-f]{32}$/.test(norm(id))) throw new Error(`invalid input syntax for type uuid: "${id}"`);
+      return norm(id) === norm(PROJECT.id) ? PROJECT : undefined;
+    },
     getRbac: async () => RBAC,
   });
 
@@ -57,8 +66,9 @@ function setup(
           .filter(([k]) => k.startsWith(prefix))
           .map(([key, v]) => ({ key, size: 10, lastModified: v.lastModified })),
       presign: async (key) => `https://s3/${key}`,
-      signUpload: async (key) => {
+      signUpload: async (key, _contentType, expiresIn) => {
         if (over.failSign) throw new Error("sts down");
+        signs.push({ key, expiresIn });
         return `https://s3/put/${key}`;
       },
       remove: async (key) => void store.delete(key),
@@ -82,7 +92,7 @@ function setup(
   const app = express();
   app.use(express.json());
   registerProjectFileRoutes(app, deps);
-  return { app, store, put, copies };
+  return { app, store, put, copies, signs };
 }
 
 const as = (r: request.Test, u: number) => r.set("x-user", String(u));
@@ -91,22 +101,22 @@ describe("project file routes", () => {
   it("list: creator 200 (canWrite), reader 200 (read-only), outsider 403, anonymous 401, unknown 404", async () => {
     const { app, put } = setup();
     put(`${PP}a.pdf`, { "exulu-origin": "agent" });
-    const creator = await as(request(app).get("/projects/p1/files"), 1);
+    const creator = await as(request(app).get(`/projects/${P1}/files`), 1);
     expect(creator.status).toBe(200);
     expect(creator.body.canWrite).toBe(true);
     expect(creator.body.files[0]).toMatchObject({ name: "a.pdf", origin: "agent" });
-    const reader = await as(request(app).get("/projects/p1/files"), 2);
+    const reader = await as(request(app).get(`/projects/${P1}/files`), 2);
     expect(reader.status).toBe(200);
     expect(reader.body.canWrite).toBe(false);
-    expect((await as(request(app).get("/projects/p1/files"), 3)).status).toBe(403);
-    expect((await request(app).get("/projects/p1/files")).status).toBe(401);
-    expect((await as(request(app).get("/projects/nope/files"), 1)).status).toBe(404);
+    expect((await as(request(app).get(`/projects/${P1}/files`), 3)).status).toBe(403);
+    expect((await request(app).get(`/projects/${P1}/files`)).status).toBe(401);
+    expect((await as(request(app).get("/projects/1b5e9c1a-3f2d-4c6b-9a8e-7d1f2e3c4b5a/files"), 1)).status).toBe(404);
   });
 
   it("list: a failing HEAD still lists the file as origin user", async () => {
     const { app, put } = setup({ head: async () => Promise.reject(new Error("boom")) });
     put(`${PP}a.pdf`);
-    const res = await as(request(app).get("/projects/p1/files"), 1);
+    const res = await as(request(app).get(`/projects/${P1}/files`), 1);
     expect(res.status).toBe(200);
     expect(res.body.files[0].origin).toBe("user");
   });
@@ -114,21 +124,21 @@ describe("project file routes", () => {
   it("upload-sign: creator 200, reader and outsider 403", async () => {
     const { app } = setup();
     const body = { filename: "n.pdf", contentType: "application/pdf" };
-    const ok = await as(request(app).post("/projects/p1/files/upload-sign").send(body), 1);
+    const ok = await as(request(app).post(`/projects/${P1}/files/upload-sign`).send(body), 1);
     expect(ok.status).toBe(200);
     expect(ok.body.key).toBe(`${PP}n.pdf`);
-    expect((await as(request(app).post("/projects/p1/files/upload-sign").send(body), 2)).status).toBe(403);
-    expect((await as(request(app).post("/projects/p1/files/upload-sign").send(body), 3)).status).toBe(403);
+    expect((await as(request(app).post(`/projects/${P1}/files/upload-sign`).send(body), 2)).status).toBe(403);
+    expect((await as(request(app).post(`/projects/${P1}/files/upload-sign`).send(body), 3)).status).toBe(403);
   });
 
   it("upload-sign: existing name is 409 with lastModified, overwrite lets it through", async () => {
     const { app, put } = setup();
     put(`${PP}a.pdf`);
     const body = { filename: "a.pdf", contentType: "application/pdf" };
-    const clash = await as(request(app).post("/projects/p1/files/upload-sign").send(body), 1);
+    const clash = await as(request(app).post(`/projects/${P1}/files/upload-sign`).send(body), 1);
     expect(clash.status).toBe(409);
     expect(clash.body).toEqual({ error: "exists", lastModified: "2026-11-01T10:00:00.000Z" });
-    const over = await as(request(app).post("/projects/p1/files/upload-sign").send({ ...body, overwrite: true }), 1);
+    const over = await as(request(app).post(`/projects/${P1}/files/upload-sign`).send({ ...body, overwrite: true }), 1);
     expect(over.status).toBe(200);
   });
 
@@ -136,14 +146,14 @@ describe("project file routes", () => {
     const { app, put } = setup();
     for (let i = 0; i < MAX_PROJECT_FILES; i++) put(`${PP}f${i}.pdf`);
     const full = await as(
-      request(app).post("/projects/p1/files/upload-sign").send({ filename: "new.pdf", contentType: "application/pdf" }),
+      request(app).post(`/projects/${P1}/files/upload-sign`).send({ filename: "new.pdf", contentType: "application/pdf" }),
       1,
     );
     expect(full.status).toBe(400);
     expect(full.body).toEqual({ error: "project_full", max: MAX_PROJECT_FILES });
     const over = await as(
       request(app)
-        .post("/projects/p1/files/upload-sign")
+        .post(`/projects/${P1}/files/upload-sign`)
         .send({ filename: "f1.pdf", contentType: "application/pdf", overwrite: true }),
       1,
     );
@@ -154,11 +164,11 @@ describe("project file routes", () => {
     const { app, put, store } = setup();
     put(`${PP}a.pdf`);
     put("user_1/sessions/s-user1/b.pdf");
-    expect((await as(request(app).delete("/projects/p1/files").query({ key: "user_1/sessions/s-user1/b.pdf" }), 1)).status).toBe(403);
-    expect((await as(request(app).delete("/projects/p1/files").query({ key: `${PP}../x` }), 1)).status).toBe(403);
-    expect((await as(request(app).delete("/projects/p1/files").query({ key: `${PP}a.pdf` }), 2)).status).toBe(403);
+    expect((await as(request(app).delete(`/projects/${P1}/files`).query({ key: "user_1/sessions/s-user1/b.pdf" }), 1)).status).toBe(403);
+    expect((await as(request(app).delete(`/projects/${P1}/files`).query({ key: `${PP}../x` }), 1)).status).toBe(403);
+    expect((await as(request(app).delete(`/projects/${P1}/files`).query({ key: `${PP}a.pdf` }), 2)).status).toBe(403);
     expect(store.has(`${PP}a.pdf`)).toBe(true);
-    expect((await as(request(app).delete("/projects/p1/files").query({ key: `${PP}a.pdf` }), 1)).status).toBe(200);
+    expect((await as(request(app).delete(`/projects/${P1}/files`).query({ key: `${PP}a.pdf` }), 1)).status).toBe(200);
     expect(store.has(`${PP}a.pdf`)).toBe(false);
   });
 
@@ -166,18 +176,18 @@ describe("project file routes", () => {
     const { app, put } = setup();
     put(`${PP}a.pdf`);
     put("user_1/sessions/s-user1/b.pdf");
-    const ok = await as(request(app).get("/projects/p1/file/preview-pdf").query({ key: `${PP}a.pdf` }), 2);
+    const ok = await as(request(app).get(`/projects/${P1}/file/preview-pdf`).query({ key: `${PP}a.pdf` }), 2);
     expect(ok.status).toBe(200);
     expect(ok.headers["content-type"]).toContain("application/pdf");
-    expect((await as(request(app).get("/projects/p1/file/preview-pdf").query({ key: `${PP}a.pdf` }), 3)).status).toBe(403);
-    expect((await as(request(app).get("/projects/p1/file/preview-pdf").query({ key: "user_1/sessions/s-user1/b.pdf" }), 1)).status).toBe(403);
+    expect((await as(request(app).get(`/projects/${P1}/file/preview-pdf`).query({ key: `${PP}a.pdf` }), 3)).status).toBe(403);
+    expect((await as(request(app).get(`/projects/${P1}/file/preview-pdf`).query({ key: "user_1/sessions/s-user1/b.pdf" }), 1)).status).toBe(403);
   });
 
   it("promote: copies, keeps the source, preserves what was accepted", async () => {
     const { app, put, store, copies } = setup();
     const src = `${sessionPrefix(1, "s-user1")}report.pdf`;
     put(src, { "exulu-origin": "agent" });
-    const res = await as(request(app).post("/projects/p1/files/promote").send({ sessionId: "s-user1", keys: [src] }), 1);
+    const res = await as(request(app).post(`/projects/${P1}/files/promote`).send({ sessionId: "s-user1", keys: [src] }), 1);
     expect(res.status).toBe(200);
     expect(res.body.promoted).toEqual([{ key: `${PP}report.pdf`, name: "report.pdf" }]);
     expect(copies).toEqual([[src, `${PP}report.pdf`]]);
@@ -191,12 +201,12 @@ describe("project file routes", () => {
     put(a);
     put(b);
     put(`${PP}a.pdf`);
-    const clash = await as(request(app).post("/projects/p1/files/promote").send({ sessionId: "s-user1", keys: [a, b] }), 1);
+    const clash = await as(request(app).post(`/projects/${P1}/files/promote`).send({ sessionId: "s-user1", keys: [a, b] }), 1);
     expect(clash.status).toBe(409);
     expect(clash.body.clashes).toEqual(["a.pdf"]);
     expect(copies).toEqual([]);
     const over = await as(
-      request(app).post("/projects/p1/files/promote").send({ sessionId: "s-user1", keys: [a, b], overwrite: true }),
+      request(app).post(`/projects/${P1}/files/promote`).send({ sessionId: "s-user1", keys: [a, b], overwrite: true }),
       1,
     );
     expect(over.status).toBe(200);
@@ -207,9 +217,9 @@ describe("project file routes", () => {
     const { app, put, copies } = setup();
     const foreign = `${sessionPrefix(9, "s-other")}x.pdf`;
     put(foreign);
-    expect((await as(request(app).post("/projects/p1/files/promote").send({ sessionId: "s-other", keys: [foreign] }), 1)).status).toBe(403);
-    expect((await as(request(app).post("/projects/p1/files/promote").send({ sessionId: "s-user1", keys: [] }), 2)).status).toBe(403);
-    const res = await as(request(app).post("/projects/p1/files/promote").send({ sessionId: "s-user1", keys: [foreign] }), 1);
+    expect((await as(request(app).post(`/projects/${P1}/files/promote`).send({ sessionId: "s-other", keys: [foreign] }), 1)).status).toBe(403);
+    expect((await as(request(app).post(`/projects/${P1}/files/promote`).send({ sessionId: "s-user1", keys: [] }), 2)).status).toBe(403);
+    const res = await as(request(app).post(`/projects/${P1}/files/promote`).send({ sessionId: "s-user1", keys: [foreign] }), 1);
     expect(res.status).toBe(200);
     expect(res.body.promoted).toEqual([]);
     expect(res.body.rejected).toHaveLength(1);
@@ -222,7 +232,7 @@ describe("project file routes", () => {
     const b = `${sessionPrefix(1, "s-user1")}b.pdf`;
     put(a);
     put(b);
-    const res = await as(request(app).post("/projects/p1/files/promote").send({ sessionId: "s-user1", keys: [a, b] }), 1);
+    const res = await as(request(app).post(`/projects/${P1}/files/promote`).send({ sessionId: "s-user1", keys: [a, b] }), 1);
     expect(res.status).toBe(200);
     expect(res.body.promoted).toEqual([{ key: `${PP}a.pdf`, name: "a.pdf" }]);
     expect(res.body.rejected).toHaveLength(1);
@@ -233,7 +243,7 @@ describe("project file routes", () => {
     const { app, put } = setup({ failCopyOf: "a.pdf" });
     const a = `${sessionPrefix(1, "s-user1")}a.pdf`;
     put(a);
-    const res = await as(request(app).post("/projects/p1/files/promote").send({ sessionId: "s-user1", keys: [a] }), 1);
+    const res = await as(request(app).post(`/projects/${P1}/files/promote`).send({ sessionId: "s-user1", keys: [a] }), 1);
     expect(res.status).toBe(500);
     expect(res.body.promoted).toEqual([]);
     expect(res.body.rejected).toHaveLength(1);
@@ -243,13 +253,13 @@ describe("project file routes", () => {
     const { app, put, copies } = setup({ s3prefix: "exulu" });
     const src = `exulu/${sessionPrefix(1, "s-user1")}a.pdf`;
     put(src);
-    const res = await as(request(app).post("/projects/p1/files/promote").send({ sessionId: "s-user1", keys: [src] }), 1);
+    const res = await as(request(app).post(`/projects/${P1}/files/promote`).send({ sessionId: "s-user1", keys: [src] }), 1);
     expect(res.status).toBe(200);
     expect(res.body.promoted).toEqual([{ key: `exulu/${PP}a.pdf`, name: "a.pdf" }]);
     expect(copies).toEqual([[src, `exulu/${PP}a.pdf`]]);
     // A key without the prefix is not this session's file.
     const bare = await as(
-      request(app).post("/projects/p1/files/promote").send({ sessionId: "s-user1", keys: [`${sessionPrefix(1, "s-user1")}a.pdf`] }),
+      request(app).post(`/projects/${P1}/files/promote`).send({ sessionId: "s-user1", keys: [`${sessionPrefix(1, "s-user1")}a.pdf`] }),
       1,
     );
     expect(bare.body.promoted).toEqual([]);
@@ -263,7 +273,7 @@ describe("project file routes", () => {
     put(owners);
     put(callers);
     const res = await as(
-      request(app).post("/projects/p1/files/promote").send({ sessionId: "s-shared", keys: [owners, callers] }),
+      request(app).post(`/projects/${P1}/files/promote`).send({ sessionId: "s-shared", keys: [owners, callers] }),
       1,
     );
     expect(res.status).toBe(200);
@@ -272,18 +282,18 @@ describe("project file routes", () => {
     expect(copies).toEqual([[owners, `${PP}a.pdf`]]);
   });
 
-  it("a sibling project whose id starts with this id (p10 vs p1) fails the prefix check", async () => {
+  it("a sibling project whose id starts with this id (<id>0 vs <id>) fails the prefix check", async () => {
     const { app, put, store } = setup();
-    put("projects/p10/files/x.pdf");
-    expect((await as(request(app).delete("/projects/p1/files").query({ key: "projects/p10/files/x.pdf" }), 1)).status).toBe(403);
-    expect(store.has("projects/p10/files/x.pdf")).toBe(true);
-    expect((await as(request(app).get("/projects/p1/file/preview-pdf").query({ key: "projects/p10/files/x.pdf" }), 1)).status).toBe(403);
+    put(`projects/${P1}0/files/x.pdf`);
+    expect((await as(request(app).delete(`/projects/${P1}/files`).query({ key: `projects/${P1}0/files/x.pdf` }), 1)).status).toBe(403);
+    expect(store.has(`projects/${P1}0/files/x.pdf`)).toBe(true);
+    expect((await as(request(app).get(`/projects/${P1}/file/preview-pdf`).query({ key: `projects/${P1}0/files/x.pdf` }), 1)).status).toBe(403);
   });
 
   it("upload-sign: a signing failure answers the JSON error shape, not an unhandled rejection", async () => {
     const { app } = setup({ failSign: true });
     const res = await as(
-      request(app).post("/projects/p1/files/upload-sign").send({ filename: "n.pdf", contentType: "application/pdf" }),
+      request(app).post(`/projects/${P1}/files/upload-sign`).send({ filename: "n.pdf", contentType: "application/pdf" }),
       1,
     );
     expect(res.status).toBe(500);
@@ -293,12 +303,58 @@ describe("project file routes", () => {
   it("promote: missing source fails the batch before anything is copied", async () => {
     const { app, copies } = setup();
     const res = await as(
-      request(app).post("/projects/p1/files/promote").send({ sessionId: "s-user1", keys: [`${sessionPrefix(1, "s-user1")}gone.pdf`] }),
+      request(app).post(`/projects/${P1}/files/promote`).send({ sessionId: "s-user1", keys: [`${sessionPrefix(1, "s-user1")}gone.pdf`] }),
       1,
     );
     expect(res.body.promoted).toEqual([]);
     expect(res.body.rejected[0].reason).toContain("not found");
     expect(copies).toEqual([]);
+  });
+});
+
+describe("project file routes — the project id", () => {
+  it("a non-uuid id answers 404 before the database sees it", async () => {
+    const { app } = setup();
+    const res = await as(request(app).get("/projects/not-a-uuid/files"), 1);
+    expect(res.status).toBe(404);
+    expect((await as(request(app).post("/projects/x'1/files/upload-sign").send({ filename: "a.pdf", contentType: "application/pdf" }), 1)).status).toBe(404);
+  });
+
+  it("an uppercase id addresses the loaded project's folder, not a shadow folder", async () => {
+    const { app, put, signs } = setup();
+    put(`${PP}a.pdf`);
+    const upper = P1.toUpperCase();
+    const list = await as(request(app).get(`/projects/${upper}/files`), 1);
+    expect(list.status).toBe(200);
+    expect(list.body.files.map((f: { key: string }) => f.key)).toEqual([`${PP}a.pdf`]);
+    const sign = await as(
+      request(app).post(`/projects/${upper}/files/upload-sign`).send({ filename: "n.pdf", contentType: "application/pdf" }),
+      1,
+    );
+    expect(sign.body.key).toBe(`${PP}n.pdf`);
+    expect(signs[0].key).toBe(`${PP}n.pdf`);
+    // A key in the real folder is inside the project when addressed by the uppercase id.
+    expect((await as(request(app).delete(`/projects/${upper}/files`).query({ key: `${PP}a.pdf` }), 1)).status).toBe(200);
+  });
+
+  it("an uppercase id promotes into the loaded project's folder", async () => {
+    const { app, put, copies } = setup();
+    const src = `${sessionPrefix(1, "s-user1")}r.pdf`;
+    put(src);
+    const res = await as(
+      request(app).post(`/projects/${P1.toUpperCase()}/files/promote`).send({ sessionId: "s-user1", keys: [src] }),
+      1,
+    );
+    expect(res.status).toBe(200);
+    expect(copies).toEqual([[src, `${PP}r.pdf`]]);
+  });
+});
+
+describe("project file routes — upload URL lifetime", () => {
+  it("signs project uploads for five minutes, so the clash and cap checks cannot go stale for a day", async () => {
+    const { app, signs } = setup();
+    await as(request(app).post(`/projects/${P1}/files/upload-sign`).send({ filename: "n.pdf", contentType: "application/pdf" }), 1);
+    expect(signs).toEqual([{ key: `${PP}n.pdf`, expiresIn: 300 }]);
   });
 });
 

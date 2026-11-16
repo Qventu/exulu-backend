@@ -16,8 +16,27 @@ export type ListedFile = {
   origin: FileOrigin;
 };
 
+/** At most this many files are presigned and HEADed at once while listing. */
+const LIST_CONCURRENCY = 10;
+
+/** `fn` over `items`, at most `limit` at a time, results in input order. */
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i] as T);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 /**
  * One listing for session and project files, so both carry `origin` the same way.
+ * Each file costs a HEAD (origin) and a presign; a folder can hold hundreds, so
+ * they run LIST_CONCURRENCY at a time instead of all at once.
  * A failing origin lookup must never fail the listing: the resolver already maps
  * errors to "user", the catch here is a second belt for a resolver that throws.
  */
@@ -27,26 +46,26 @@ export async function listFilesWithOrigin(args: {
   resolveOrigin: (file: { key: string; lastModified: Date }) => Promise<FileOrigin>;
   inferContentType: (name: string) => string;
 }): Promise<ListedFile[]> {
-  const files = await Promise.all(
-    args.objects
-      // Skip the directory marker (key ending with /).
-      .filter((obj) => !obj.key.endsWith("/"))
-      .map(async (obj) => {
-        const name = obj.key.split("/").pop() ?? obj.key;
-        const [presignedUrl, origin] = await Promise.all([
-          args.presign(obj.key),
-          args.resolveOrigin(obj).catch((): FileOrigin => "user"),
-        ]);
-        return {
-          key: obj.key,
-          name,
-          size: obj.size,
-          lastModified: obj.lastModified.toISOString(),
-          contentType: args.inferContentType(name),
-          presignedUrl,
-          origin,
-        };
-      }),
+  const files = await mapWithConcurrency(
+    // Skip the directory marker (key ending with /).
+    args.objects.filter((obj) => !obj.key.endsWith("/")),
+    LIST_CONCURRENCY,
+    async (obj) => {
+      const name = obj.key.split("/").pop() ?? obj.key;
+      const [presignedUrl, origin] = await Promise.all([
+        args.presign(obj.key),
+        args.resolveOrigin(obj).catch((): FileOrigin => "user"),
+      ]);
+      return {
+        key: obj.key,
+        name,
+        size: obj.size,
+        lastModified: obj.lastModified.toISOString(),
+        contentType: args.inferContentType(name),
+        presignedUrl,
+        origin,
+      };
+    },
   );
   // Most-recent first.
   files.sort((a, b) => b.lastModified.localeCompare(a.lastModified));
@@ -74,6 +93,8 @@ export function decideUploadSign(args: {
   return { ok: true };
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export type ProjectAuthDeps = {
   authenticate: (
     req: Request,
@@ -85,6 +106,8 @@ export type ProjectAuthDeps = {
 /**
  * Auth for the project-file routes, mirroring loadAuthedSession: 401 / 404 / 403
  * are written to `res` and null is returned. Write implies read (hasProjectAccess).
+ * Callers build S3 prefixes from the returned row's id, never from `projectId`:
+ * Postgres matches a uuid case-insensitively, so the URL spelling can differ.
  */
 export function makeLoadAuthedProject(deps: ProjectAuthDeps) {
   return async (
@@ -96,6 +119,12 @@ export function makeLoadAuthedProject(deps: ProjectAuthDeps) {
     const authResult = await deps.authenticate(req);
     if (!authResult.user?.id) {
       res.status(authResult.code || 401).json({ detail: authResult.message });
+      return null;
+    }
+    // The id goes into a uuid cast; anything else would throw there (a 500), so it
+    // is simply not a project.
+    if (!UUID_RE.test(projectId)) {
+      res.status(404).json({ detail: `Project ${projectId} not found.` });
       return null;
     }
     const project = await deps.getProject(projectId);

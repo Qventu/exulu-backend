@@ -5139,7 +5139,7 @@ export const createExpressRoutes = async (
         ...createPromoteS3(fileConfig),
         list: (prefix) => listS3ObjectsByPrefix(prefix, fileConfig),
         presign: (key) => getPresignedUrl(fileConfig.fileUploads!.s3Bucket, key, fileConfig),
-        signUpload: (key, contentType) => getS3SignedUploadUrl(key, contentType, fileConfig),
+        signUpload: (key, contentType, expiresIn) => getS3SignedUploadUrl(key, contentType, fileConfig, { expiresIn }),
         remove: (key) => deleteS3Object(key, fileConfig),
         etag: (key) => getS3ObjectEtag(key, fileConfig),
       },

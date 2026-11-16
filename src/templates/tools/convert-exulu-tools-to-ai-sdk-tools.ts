@@ -362,9 +362,12 @@ export const convertExuluToolsToAiSdkTools = async (
 
   // Project sessions only, and only when the SPEAKER may write to the project (the session
   // owner may have been granted less than the colleague continuing the session).
-  // Invariant: the speaker's SESSION write access is not re-checked here or in the tool. Both
-  // chat entry points in src/exulu/routes.ts (checkRecordAccess(session, "write", user), near lines
-  // 808 and 1245) refuse the turn unless the speaker has write access to the session.
+  // Invariant: the speaker's SESSION write access is not re-checked here or in the tool. The
+  // single check is the agent run route in src/exulu/routes.ts (registerAgentRunRoute,
+  // checkRecordAccess(session, "write", user), near line 808), which covers both the streaming
+  // and the sync turn; the other checkRecordAccess(…, "write", …) near line 1245 belongs to the
+  // compaction route, which runs no tools. Routine steps (ee/workers.ts, generateStream near line
+  // 1896) do NOT pass through that check: they run as the routine's identity in its own session.
   const saveToProjectTool = createSaveToProjectTool({
     sessionID,
     user,
