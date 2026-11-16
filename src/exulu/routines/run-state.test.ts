@@ -9,6 +9,11 @@ const { queues: queuesMock } = require("@EE/queues/queues") as {
   queues: { list: Map<string, { use: () => Promise<any> }> };
 };
 
+const defaultColumnsMock = jest.fn(async (): Promise<Record<string, unknown>> => ({}));
+jest.mock("./work-status-store", () => ({
+  defaultWorkStatusColumns: (...args: unknown[]) => (defaultColumnsMock as any)(...args),
+}));
+
 import {
   casJobResultState,
   deleteAgentSessionData,
@@ -159,6 +164,51 @@ describe("upsertWorkflowRunStart", () => {
     const updateArgs = calls.find((c) => c.name === "update")!.args[0];
     expect(updateArgs.tries).toBe(2);
     expect(JSON.parse(updateArgs.metadata).current_step_index).toBe(2);
+  });
+
+  describe("default work status", () => {
+    const DEFAULTS = { work_status: "neu", work_status_updated_at: new Date(0), work_status_updated_by: '{"kind":"default"}' };
+
+    it("a fresh row gets the routine's default work status", async () => {
+      defaultColumnsMock.mockResolvedValueOnce(DEFAULTS);
+      const { db, calls } = makeJobResultsDb({ row: undefined });
+      await upsertWorkflowRunStart(db, baseOpts);
+      expect(defaultColumnsMock).toHaveBeenCalledWith(db, "wf-1");
+      expect(calls.find((c) => c.name === "insert")!.args[0]).toMatchObject(DEFAULTS);
+    });
+
+    it("a pre-inserted row without any work status gets the default when the worker starts it", async () => {
+      defaultColumnsMock.mockResolvedValueOnce(DEFAULTS);
+      const { db, calls } = makeJobResultsDb({ row: { id: "jr-9", metadata: "{}", work_status: null, work_status_updated_by: null } });
+      await upsertWorkflowRunStart(db, { ...baseOpts, jobResultId: "jr-9" });
+      expect(calls.find((c) => c.name === "update")!.args[0]).toMatchObject(DEFAULTS);
+    });
+
+    it("a row that already has a work status keeps it on continuation and retry", async () => {
+      for (const opts of [{ ...baseOpts, jobResultId: "jr-9" }, baseOpts]) {
+        defaultColumnsMock.mockResolvedValue(DEFAULTS);
+        const { db, calls } = makeJobResultsDb({ row: { id: "jr-9", metadata: "{}", work_status: "erledigt", work_status_updated_by: '{"kind":"user","id":14}' } });
+        await upsertWorkflowRunStart(db, opts);
+        const update = calls.find((c) => c.name === "update")!.args[0];
+        expect(update).not.toHaveProperty("work_status");
+        expect(update).not.toHaveProperty("work_status_updated_by");
+      }
+      defaultColumnsMock.mockResolvedValue({});
+    });
+
+    it("a status a person cleared stays cleared", async () => {
+      defaultColumnsMock.mockResolvedValue(DEFAULTS);
+      const { db, calls } = makeJobResultsDb({ row: { id: "jr-9", metadata: "{}", work_status: null, work_status_updated_by: { kind: "user", id: 14 } } });
+      await upsertWorkflowRunStart(db, { ...baseOpts, jobResultId: "jr-9" });
+      expect(calls.find((c) => c.name === "update")!.args[0]).not.toHaveProperty("work_status");
+      defaultColumnsMock.mockResolvedValue({});
+    });
+
+    it("a routine without statuses writes none of the columns", async () => {
+      const { db, calls } = makeJobResultsDb({ row: undefined });
+      await upsertWorkflowRunStart(db, baseOpts);
+      expect(calls.find((c) => c.name === "insert")!.args[0]).not.toHaveProperty("work_status");
+    });
   });
 
   it("inserts a fresh row (type workflow, trigger stamped) otherwise", async () => {

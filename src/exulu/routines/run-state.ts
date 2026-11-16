@@ -11,6 +11,8 @@ import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import { clearStreamActive } from "@SRC/exulu/active-streams.ts";
 
 /** job_results.metadata / trigger_metadata arrive as jsonb objects or strings. */
+import { defaultWorkStatusColumns } from "./work-status-store";
+
 export const parseRunMetadata = (value: unknown): Record<string, any> => {
   if (value == null) {
     return {};
@@ -80,6 +82,16 @@ export async function upsertWorkflowRunStart(
   const metadataJson = (currentStepIndex: number) =>
     JSON.stringify({ ...opts.bookkeeping, current_step_index: currentStepIndex });
 
+  // Work status (spec 2026-11-16): every run passes through here when the
+  // worker starts it, so this is the one place the routine's default is
+  // applied — to a fresh row, and to a row another path pre-inserted
+  // (email intake, manual run) that has never had a status. A row that has
+  // one, or whose status a person cleared, is left alone.
+  const defaultStatusFor = async (row: any | undefined): Promise<Record<string, unknown>> => {
+    if (row && (row.work_status != null || row.work_status_updated_by != null)) return {};
+    return defaultWorkStatusColumns(db, opts.workflow);
+  };
+
   if (opts.jobResultId) {
     // Spec §5.7: a continuation must not lose the pre-pause metadata written
     // at pause time (tokens, messages) — MERGE the existing row's metadata,
@@ -96,6 +108,7 @@ export async function upsertWorkflowRunStart(
         trigger: opts.trigger,
         trigger_metadata: triggerMetadataJson,
         ...(opts.session ? { session: opts.session } : {}),
+        ...(await defaultStatusFor(currentRow)),
         metadata: JSON.stringify({
           ...priorMetadata,
           ...opts.bookkeeping,
@@ -126,6 +139,7 @@ export async function upsertWorkflowRunStart(
         trigger_metadata: triggerMetadataJson,
         metadata: metadataJson(resumeFromIndex),
         tries: (existing.tries ?? 0) + 1,
+        ...(await defaultStatusFor(existing)),
       });
     return {
       jobResultId: existing.id,
@@ -148,6 +162,7 @@ export async function upsertWorkflowRunStart(
       session: opts.session,
       trigger: opts.trigger,
       trigger_metadata: triggerMetadataJson,
+      ...(await defaultStatusFor(undefined)),
     })
     .returning("id");
   return {

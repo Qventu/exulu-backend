@@ -42,6 +42,8 @@ import { exuluApp } from "@SRC/exulu/app/singleton";
 import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
 import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
 import { cancelRoutineRunRow, casJobResultState, deleteRoutineRunRow, parseRunMetadata } from "@SRC/exulu/routines/run-state.ts";
+import { guardRoutineWorkStatusWrites } from "@SRC/exulu/routines/work-status-save.ts";
+import { defaultWorkStatusColumns, loadRoutineWorkStatusConfig, setRunWorkStatusManually } from "@SRC/exulu/routines/work-status-store.ts";
 import { applyRoutineRunFilters, mapRoutineRunRow } from "@SRC/exulu/routines/runs-query.ts";
 import { workflowTemplatesSchema } from "@EE/schemas";
 import { checkLicense } from "@EE/entitlements.ts";
@@ -1106,7 +1108,7 @@ type PageInfo {
 
   // Routine runs (spec §6) — powers the per-routine Runs section and /runs.
   typeDefs += `
-    routineRuns(page: Int, limit: Int, workflow: ID, states: [String!], triggers: [String!], from: Date, to: Date, search: String, needsAttention: Boolean): RoutineRunPage
+    routineRuns(page: Int, limit: Int, workflow: ID, states: [String!], triggers: [String!], from: Date, to: Date, search: String, needsAttention: Boolean, workStatuses: [String!], workStatusOpen: Boolean): RoutineRunPage
     routineRunsNeedingAttentionCount: Float!
     `;
 
@@ -1257,6 +1259,7 @@ type PageInfo {
 
   mutationDefs += `
     cancelRoutineRun(id: ID!): RoutineRun
+    setRoutineRunWorkStatus(id: ID!, status: String): RoutineRun
     retryRoutineRun(id: ID!): RoutineRun
     deleteRoutineRun(id: ID!): ID
     `;
@@ -1439,6 +1442,9 @@ type RoutineRun {
   inputTokens: Float
   outputTokens: Float
   costUsd: Float
+  work_status: String
+  work_status_updated_at: Date
+  work_status_updated_by: JSON
 }
 
 type RoutineRunPage {
@@ -2073,6 +2079,9 @@ type EmbeddingModelOption {
           type: "workflow",
           workflow: workflow_template_id,
           trigger: jobData.triggerSource ?? null,
+          // This path never passes upsertWorkflowRunStart, which gives
+          // queued runs the routine's default work status.
+          ...(await defaultWorkStatusColumns(db, workflow_template_id)),
         })
         .returning("id");
 
@@ -2132,6 +2141,9 @@ type EmbeddingModelOption {
                 // Tag LLM spend to this routine (direct one-shot path mirrors the queued path).
                 routine: { id: workflow.id, name: workflow.name },
                 sessionId,
+                // Marks tool writes of the work status as the run's own
+                // (never overriding a person), not as a chat continuation.
+                jobResultId,
               });
               resolve(messages);
               break;
@@ -2244,12 +2256,21 @@ type EmbeddingModelOption {
     const page = Math.max(1, args.page ?? 1);
     const limit = Math.min(100, Math.max(1, args.limit ?? 20));
 
-    const countRows = await applyRoutineRunFilters(db("job_results"), args, allowedIds).count(
+    // "Done" is defined per routine, so the open/done split only applies
+    // when the list is scoped to one routine.
+    const doneKeys =
+      args.workflow && typeof args.workStatusOpen === "boolean"
+        ? ((await loadRoutineWorkStatusConfig(db, args.workflow))?.config.statuses ?? [])
+            .filter((status) => status.done === true)
+            .map((status) => status.key)
+        : undefined;
+
+    const countRows = await applyRoutineRunFilters(db("job_results"), args, allowedIds, doneKeys).count(
       "* as count",
     );
     const total = Number(countRows[0]?.count ?? 0);
 
-    const rows = await applyRoutineRunFilters(db("job_results"), args, allowedIds)
+    const rows = await applyRoutineRunFilters(db("job_results"), args, allowedIds, doneKeys)
       .select("job_results.*")
       .orderBy("job_results.createdAt", "desc")
       .offset((page - 1) * limit)
@@ -2274,6 +2295,25 @@ type EmbeddingModelOption {
       .count("* as count");
     return Number(rows[0]?.count ?? 0);
   };
+
+  // Manual work status from the runs list: whoever may read the routine's
+  // runs may set it (spec 2026-11-16-routine-work-status-design, decision 1).
+  resolvers.Mutation["setRoutineRunWorkStatus"] = async (_, args, context) => {
+    const user = context.user;
+    const { db } = await postgresClient();
+    const routineById = await readableRoutines(db, user);
+    await setRunWorkStatusManually(db, {
+      id: args.id,
+      status: args.status ?? null,
+      userId: user.id,
+      readableRoutineIds: [...routineById.keys()],
+    });
+    const updated = await db.from("job_results").where({ id: args.id }).first();
+    return mapRoutineRunRow(updated, routineById);
+  };
+
+  // Reject an invalid work_statuses config before the generic write runs.
+  guardRoutineWorkStatusWrites(resolvers.Mutation);
 
   resolvers.Mutation["cancelRoutineRun"] = async (_, args, context) => {
     const user = context.user;
