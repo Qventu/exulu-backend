@@ -707,7 +707,7 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
 
     // Only the user themselves, a super admin
     // or an api user can delete files.
-    if (!mayDeleteGenericS3Key(key.slice(bucket.length + 1), user, config.fileUploads.s3prefix)) {
+    if (!mayDeleteGenericS3Key(key.slice((bucket ?? "").length + 1), user, config.fileUploads.s3prefix)) {
       res.status(405).json({
         error: "Not allowed to access the files in the folder based on authenticated user.",
       });
