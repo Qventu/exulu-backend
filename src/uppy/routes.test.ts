@@ -279,3 +279,43 @@ describe("GET /s3/download uses the first-segment rule", () => {
     expect((await request(app).get("/s3/download").query({ key: "bkt/items/report_user_1.pdf" })).status).toBe(200);
   });
 });
+
+describe("mayReadGenericS3Key — no first-segment escapes", () => {
+  const u1 = { id: 1, type: "user", super_admin: false };
+  it("judges a key outside the general prefix on every directory segment", () => {
+    expect(mayReadGenericS3Key("otherprefix/user_5/a.pdf", u1, "imp")).toBe(false);
+    expect(mayReadGenericS3Key("otherprefix/user_1/a.pdf", u1, "imp")).toBe(true);
+  });
+  it("refuses empty, . and .. segments", () => {
+    for (const key of ["imp//user_2/x", "imp/./user_2/x", "imp/../user_2/x", "user_1/../user_2/x", "/user_2/x//y"]) {
+      expect(mayReadGenericS3Key(key, u1, "imp")).toBe(false);
+    }
+  });
+  it("exempts only the final (file name) segment", () => {
+    expect(mayReadGenericS3Key("items/report_user_1.pdf", u1)).toBe(true);
+    expect(mayReadGenericS3Key("items/user_2.pdf", u1)).toBe(true);
+    expect(mayReadGenericS3Key("items/user_2/a.pdf", u1)).toBe(false);
+  });
+});
+
+describe("DELETE /s3/delete ownership", () => {
+  it("still requires the key to be under the caller's own user_<id>/", async () => {
+    authAs(normalUser);
+    expect((await request(app).delete("/s3/delete").query({ key: "bkt/global/a.png" })).status).toBe(405);
+    expect((await request(app).delete("/s3/delete").query({ key: "bkt/items/report_user_1.pdf" })).status).toBe(405);
+    expect(send).not.toHaveBeenCalled();
+  });
+  it("refuses another user's prefix even when user_<caller>/ appears deeper", async () => {
+    authAs(normalUser);
+    for (const key of ["bkt/user_2/x/user_1/y", "bkt/other/user_2/user_1/y", "bkt/user_1/../user_2/y", "bkt//user_1/y"]) {
+      expect((await request(app).delete("/s3/delete").query({ key })).status).toBe(405);
+    }
+    expect(send).not.toHaveBeenCalled();
+  });
+  it("deletes the caller's own key", async () => {
+    authAs(normalUser);
+    const res = await request(app).delete("/s3/delete").query({ key: "bkt/user_1/a.pdf" });
+    expect(res.status).toBe(200);
+    expect(send.mock.calls[0][0].input).toEqual({ Bucket: "bkt", Key: "user_1/a.pdf" });
+  });
+});

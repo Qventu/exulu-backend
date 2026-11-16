@@ -443,13 +443,29 @@ export function mayUseGenericS3Route(
 }
 
 /**
+ * Directory segments of a generic S3 key (WITHOUT bucket), or null when the key
+ * has an empty, `.` or `..` segment: such keys could dodge the ownership check
+ * below and never come from an upload path. The general prefix's own segments
+ * are dropped when the key starts with it.
+ */
+function genericKeyDirectories(key: string, s3prefix?: string | null): string[] | null {
+  // No leading-slash stripping: "/user_2/x" is a different object than "user_2/x"
+  // and no upload path produces one.
+  const segments = key.split("/");
+  if (segments.some((s) => s === "" || s === "." || s === "..")) return null;
+  const general = (s3prefix ?? "").replace(/^\/+|\/+$/g, "");
+  const prefixSegments = general ? general.split("/") : [];
+  const hasPrefix = prefixSegments.length > 0 && prefixSegments.every((p, i) => segments[i] === p);
+  return segments.slice(hasPrefix ? prefixSegments.length : 0, -1);
+}
+
+/**
  * Ownership rule of the generic read routes (`GET /s3/download`, `POST /s3/object`):
- * API users and super admins read anything; everyone else a key whose FIRST
- * segment (after the general prefix) is their own `user_<id>`, or does not start
- * with `user_` at all. Only the first segment counts: that is where every upload
- * path puts the owner (uploadFile, Uppy, session files), and a substring match let
- * `user_2/x/user_1/y` through for user 1 while blocking `items/report_user_1.pdf`
- * for everyone. `key` is WITHOUT the bucket.
+ * API users and super admins read anything; everyone else a key in which every
+ * DIRECTORY segment starting with `user_` is their own `user_<id>` (keys without
+ * one, e.g. `global/`, `items/`, are readable). The file name is exempt, so
+ * `items/report_user_1.pdf` is readable while `user_2/x/user_1/y` is not.
+ * Empty, `.` and `..` segments are refused. `key` is WITHOUT the bucket.
  */
 export function mayReadGenericS3Key(
   key: string,
@@ -457,12 +473,23 @@ export function mayReadGenericS3Key(
   s3prefix?: string | null,
 ): boolean {
   if (user.type === "api" || user.super_admin) return true;
-  let rest = key.replace(/^\/+/, "");
-  const general = (s3prefix ?? "").replace(/\/+$/, "");
-  // Keys outside the general prefix (older objects, other buckets) are judged as they are.
-  if (general && rest.startsWith(`${general}/`)) rest = rest.slice(general.length + 1);
-  const first = rest.split("/")[0] ?? "";
-  return !first.startsWith("user_") || first === `user_${user.id}`;
+  const directories = genericKeyDirectories(key, s3prefix);
+  if (directories === null) return false;
+  return directories.every((d) => !d.startsWith("user_") || d === `user_${user.id}`);
+}
+
+/**
+ * `/s3/delete`: the read rule above AND the key must lie under the caller's own
+ * `user_<id>/` segment (a global or item key is not the caller's to delete).
+ */
+export function mayDeleteGenericS3Key(
+  key: string,
+  user: { id?: number | string; type?: string; super_admin?: boolean },
+  s3prefix?: string | null,
+): boolean {
+  if (user.type === "api" || user.super_admin) return true;
+  if (!mayReadGenericS3Key(key, user, s3prefix)) return false;
+  return (genericKeyDirectories(key, s3prefix) ?? []).includes(`user_${user.id}`);
 }
 
 /**
@@ -679,7 +706,7 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
 
     // Only the user themselves, a super admin
     // or an api user can delete files.
-    if (user.type !== "api" && !key.includes(`/user_${user.id}/`) && !user.super_admin) {
+    if (!mayDeleteGenericS3Key(key.slice(bucket.length + 1), user, config.fileUploads.s3prefix)) {
       res.status(405).json({
         error: "Not allowed to access the files in the folder based on authenticated user.",
       });
