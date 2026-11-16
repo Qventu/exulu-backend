@@ -11,7 +11,6 @@ import {
   MAX_PROJECT_NAME_LENGTH,
   createProjectAndAttach,
   planMove,
-  isDefaultMoveCandidate,
   type MoveCandidate,
 } from "@SRC/exulu/project-create";
 import { moveSessionFiles, type MoveResult, type MoveS3 } from "@SRC/exulu/project-files-promote";
@@ -19,6 +18,7 @@ import { createMoveS3 } from "@SRC/exulu/project-files-s3";
 import { parseStoredFileUrl } from "@SRC/exulu/stored-file-url";
 import { promptSafeProjectName } from "@SRC/exulu/session-file-listing";
 import { listS3ObjectsByPrefix } from "@SRC/uppy";
+import { isRunSessionMetadata } from "@SRC/exulu/routines/run-session";
 import type { TurnProject } from "@SRC/exulu/turn-project";
 
 export const CREATE_PROJECT_TOOL_NAME = "create_project";
@@ -63,10 +63,13 @@ export function canRegisterCreateProject(args: {
   sessionProjectId?: string | null;
   /** Session owner id; undefined when the session row does not exist or has no owner. */
   ownerId?: number | string | null;
+  /** True when this turn is part of a routine run: a run is not a conversation to turn into a project. */
+  routineRun?: boolean;
   req?: { headers?: Record<string, unknown> };
   user?: { id?: unknown } | null;
   disabled?: Set<string> | string[];
 }): boolean {
+  if (args.routineRun) return false;
   if (!args.sessionID || !args.exuluConfig?.fileUploads?.s3Bucket) return false;
   if (treatAsGuest(args.req, args.user)) return false;
   if (!isCreateProjectEnabledOnAgent(args.agentTools)) return false;
@@ -80,12 +83,13 @@ export function canRegisterCreateProject(args: {
 export const CREATE_PROJECT_PROMPT =
   "Projects: this conversation does not belong to a project yet. When the user wants to keep working on this " +
   "topic over time, or to share the work with colleagues later, you can offer to turn the conversation into a " +
-  "project with the create_project tool: agree a short project name with the user first, then call it. " +
-  "The user approves the call; the project is private to them, and their session files move into it.";
+  "project with the create_project tool: agree a short project name with the user first, then call it with " +
+  "`files` listing exactly the session files (from the listing above) that should move into the project. " +
+  "The user approves the call and sees that list; the project is private to them; unlisted files stay in the session.";
 
 type Deps = {
   /** The session row (project, user) or undefined. */
-  loadSession: (id: string) => Promise<{ project?: string | null; user?: number | string | null } | undefined>;
+  loadSession: (id: string) => Promise<{ project?: string | null; user?: number | string | null; metadata?: unknown } | undefined>;
   /** Creates the project and attaches the session in one transaction. */
   createAndAttach: typeof createProjectAndAttach;
   /** Full S3 keys that stored messages of this session refer to (file parts): never deleted. */
@@ -135,7 +139,7 @@ export function formatCreateProjectResult(args: {
   }
   if (leftInSession > 0) {
     lines.push(
-      `${leftInSession} other session file${leftInSession === 1 ? "" : "s"} (tool outputs, generated artifacts, subfolders) stayed in the session on purpose.`,
+      `${leftInSession} other session file${leftInSession === 1 ? "" : "s"} not on the approved list stayed in the session.`,
     );
   }
   lines.push(
@@ -161,6 +165,7 @@ export const createCreateProjectTool = ({
   agentTools,
   project,
   sessionProjectId,
+  routineRun,
   disabled,
   turnProject,
   deps,
@@ -174,6 +179,8 @@ export const createCreateProjectTool = ({
   agentTools?: unknown;
   project?: unknown;
   sessionProjectId?: string | null;
+  /** The turn is part of a routine run. */
+  routineRun?: boolean;
   disabled?: Set<string> | string[];
   /** The turn's project holder, set once the project exists so project/<name> resolves in this turn. */
   turnProject?: TurnProject;
@@ -187,6 +194,7 @@ export const createCreateProjectTool = ({
       project: liveProject,
       sessionProjectId: liveSessionProject,
       ownerId: liveOwner,
+      routineRun,
       req,
       user,
       disabled,
@@ -233,7 +241,9 @@ export const createCreateProjectTool = ({
     ...deps,
   };
 
-  const execute = async ({ name, description, files }: { name: string; description?: string; files?: string[] }) => {
+  const execute = async ({ name, description, files }: { name: string; description?: string; files: string[] }) => {
+    // A direct call without `files` moves nothing: what moves is what the user approved.
+    const requested = Array.isArray(files) ? files : [];
     // The live session decides, not what was true at registration.
     let session: Awaited<ReturnType<Deps["loadSession"]>>;
     try {
@@ -244,6 +254,9 @@ export const createCreateProjectTool = ({
     }
     if (!session) return { result: "This conversation has no saved session yet, so it cannot become a project." };
     if (session.project) return { result: "This conversation already belongs to a project." };
+    if (isRunSessionMetadata((session as { metadata?: unknown }).metadata)) {
+      return { result: "A routine run cannot be turned into a project." };
+    }
     if (!gate(session.user, turnProject?.current ?? null, null)) {
       return { result: "Only the owner of this conversation can turn it into a project, and only where this agent has the tool enabled." };
     }
@@ -256,7 +269,7 @@ export const createCreateProjectTool = ({
       console.error("[PROJECT-CREATE] could not list the session files", err);
       return { result: "Creating the project failed. Try again; if it keeps failing, tell the user." };
     }
-    const plan = planMove({ files: candidates, requested: files });
+    const plan = planMove({ files: candidates, requested });
 
     let created: { id: string; name: string };
     try {
@@ -308,8 +321,8 @@ export const createCreateProjectTool = ({
       };
     }
 
-    const leftInSession =
-      files && files.length > 0 ? 0 : candidates.filter((c) => !isDefaultMoveCandidate(c.name)).length;
+    const asked = new Set(requested.map((n) => String(n ?? "").trim()));
+    const leftInSession = candidates.filter((c) => !asked.has(c.name)).length;
     return {
       result: formatCreateProjectResult({
         name: created.name,
@@ -330,17 +343,18 @@ export const createCreateProjectTool = ({
     alwaysAskWhen: () => true,
     description:
       "Turn this conversation into a project: creates a new private project owned by the user, attaches this " +
-      "conversation to it and moves the session's files into the project's shared folder. Only offer this when " +
-      "the user wants to keep working on this topic over time or share it later; ask for a short project name first. " +
-      "By default every top-level session file moves (not tool outputs or generated artifacts); pass `files` " +
-      "with bare file names to move only those. The user approves the call; nobody else gets access.",
+      "conversation to it and moves the listed session files into the project's shared folder. Only offer this when " +
+      "the user wants to keep working on this topic over time or share it later; agree a short project name first. " +
+      "`files` is REQUIRED and must list exactly the files to move, as bare names taken from the session file " +
+      "listing in the system prompt (an empty list creates the project without moving files). The user sees this " +
+      "list on the approval card; every session file not on it stays in the session. Do not list tool-output-* " +
+      "files, generated artifacts or files in subfolders unless the user asked for them. Nobody else gets access.",
     inputSchema: z.object({
       name: z.string().min(1).max(MAX_PROJECT_NAME_LENGTH).describe("The project's name."),
       description: z.string().max(MAX_PROJECT_DESCRIPTION_LENGTH).optional().describe("One or two sentences about what the project is for."),
       files: z
         .array(z.string())
-        .optional()
-        .describe("Bare names of the session files to move. Omit to move all of them."),
+        .describe("Bare names of the session files to move, exactly as listed. [] to move none."),
     }),
     type: "function",
     category: "session",
@@ -348,3 +362,19 @@ export const createCreateProjectTool = ({
     execute: execute as never,
   });
 };
+
+/** The display-only entry for the agent editor's catalogue; its presence in agent.tools is the opt-in. */
+export const createCreateProjectPickerTool = (): ExuluTool =>
+  new ExuluTool({
+    id: CREATE_PROJECT_TOOL_ID,
+    name: "Create project from chat",
+    category: "default",
+    description:
+      "Let this agent offer to turn a conversation into a project: after the user approves, it creates a private project, " +
+      "attaches the conversation and moves the listed session files into the project's shared folder. " +
+      "Off unless added here; always asks for approval; not offered in routine runs or to guests.",
+    type: "function",
+    inputSchema: z.object({}),
+    config: [],
+    execute: async () => ({ result: "This entry is configuration-only; Exulu builds the create_project tool per conversation at runtime." }),
+  });

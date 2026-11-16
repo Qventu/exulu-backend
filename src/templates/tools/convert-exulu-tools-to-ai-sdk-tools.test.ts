@@ -614,3 +614,24 @@ describe("interim reading status from a generator tool", () => {
     expect(guardMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("create_project registration", () => {
+  const withEntry = [{ id: "create_project", type: "function", config: [] }];
+  const run = (agent: unknown, owner: number | undefined = 7, routine?: unknown) =>
+    convertExuluToolsToAiSdkTools(
+      [], [], [], [], [], undefined, { id: 7 } as never, { fileUploads: { s3Bucket: "b" } } as never,
+      "session-1", undefined, undefined, undefined, undefined, agent as never, undefined, undefined, undefined,
+      owner, undefined, undefined, routine as never, null,
+    );
+  it("is in the tool set, with approval, when the agent opted in and the speaker owns a project-less session", async () => {
+    const tools = await run({ id: "a1", tools: withEntry });
+    expect(Object.keys(tools)).toContain("create_project");
+    expect(await (tools.create_project as any).needsApproval({}, { toolCallId: "c1", messages: [] })).toBe(true);
+  });
+  it("is absent without the opt-in entry, for a non-owner, and in a routine run", async () => {
+    expect(Object.keys(await run({ id: "a1", tools: [] }))).not.toContain("create_project");
+    expect(Object.keys(await run({ id: "a1" }))).not.toContain("create_project");
+    expect(Object.keys(await run({ id: "a1", tools: withEntry }, 8))).not.toContain("create_project");
+    expect(Object.keys(await run({ id: "a1", tools: withEntry }, 7, () => ({ statuses: [] })))).not.toContain("create_project");
+  });
+});

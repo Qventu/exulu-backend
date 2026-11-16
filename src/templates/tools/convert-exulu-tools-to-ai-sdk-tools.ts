@@ -420,6 +420,7 @@ export const convertExuluToolsToAiSdkTools = async (
     agentTools: agent?.tools,
     project: turnProject,
     sessionProjectId: project,
+    routineRun: Boolean(routineHandleFactory),
     disabled,
     turnProject: turnProjectHolder,
   });

@@ -203,6 +203,10 @@ describe("planMove", () => {
     expect(r.skipped.map((s) => s.name).sort()).toEqual(["ghost.txt", "x/y.txt"]);
     expect(r.skipped.find((s) => s.name === "ghost.txt")!.reason).toMatch(/No session file/);
   });
+  it("an explicit empty request moves nothing (it does not fall back to the default set)", () => {
+    const r = planMove({ files: [f("a.pdf")], requested: [] });
+    expect(r.batches).toEqual([]);
+  });
   it("an explicit request may name a file the default set would leave out", () => {
     const r = planMove({ files: [f("tool-output-1.txt")], requested: ["tool-output-1.txt"] });
     expect(r.batches.flat()).toHaveLength(1);

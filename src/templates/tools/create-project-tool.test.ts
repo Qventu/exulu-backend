@@ -4,6 +4,8 @@ import {
   CREATE_PROJECT_TOOL_NAME,
   isCreateProjectEnabledOnAgent,
   PRIVATE_PROJECT_SENTENCE,
+  createCreateProjectPickerTool,
+  CREATE_PROJECT_PROMPT,
 } from "./create-project-tool";
 import { createTurnProject } from "@SRC/exulu/turn-project";
 import { createParseDocumentTool } from "./parse-document-tool";
@@ -14,6 +16,7 @@ import type { ExuluConfig } from "@SRC/exulu/app";
 const exuluConfig = { fileUploads: { s3Bucket: "bucket", s3prefix: "exulu" } } as unknown as ExuluConfig;
 const PREFIX = "exulu/user_7/sessions/s1/";
 const agentTools = [{ id: "create_project", type: "function", config: [] }];
+const ALL = ["a.pdf", "b.docx"];
 const base = { sessionID: "s1", user: { id: 7 } as never, ownerId: 7, exuluConfig, agentTools };
 
 const finalOf = async (r: unknown): Promise<unknown> => {
@@ -116,7 +119,7 @@ describe("execute", () => {
         },
       },
     });
-    const { result } = await run(m.tool, { name: "Alpha" });
+    const { result } = await run(m.tool, { name: "Alpha", files: files.map((f) => f.name) });
     expect(result).toContain("Moved 29 files");
     expect(removed).toHaveLength(29);
     expect(removed).not.toContain("f17.txt");
@@ -125,19 +128,19 @@ describe("execute", () => {
 
   it("copies but keeps the original of a file that a stored message refers to", async () => {
     const m = make({ deps: { referencedKeys: async () => new Set([`${PREFIX}a.pdf`]) } });
-    const { result } = await run(m.tool, { name: "Alpha" });
+    const { result } = await run(m.tool, { name: "Alpha", files: ALL });
     expect(m.log).toEqual(["copy a.pdf", "copy b.docx", "remove b.docx"]);
     expect(result).toMatch(/also kept in the session.*a\.pdf/);
   });
   it("when the message lookup fails, no original is deleted", async () => {
     const m = make({ deps: { referencedKeys: async () => { throw new Error("db"); } } });
-    await run(m.tool, { name: "Alpha" });
+    await run(m.tool, { name: "Alpha", files: ALL });
     expect(m.log.filter((l) => l.startsWith("remove"))).toEqual([]);
   });
 
   it("creates, attaches, copies then deletes each original, and reports everything required", async () => {
     const { tool, create, log, turnProject } = make();
-    const { result } = await run(tool, { name: "Alpha", description: "d" });
+    const { result } = await run(tool, { name: "Alpha", description: "d", files: ALL });
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0]![2]).toEqual({ sessionId: "s1", name: "Alpha", description: "d" });
     expect(log).toEqual(["copy a.pdf", "copy b.docx", "remove a.pdf", "remove b.docx"]);
@@ -163,7 +166,7 @@ describe("execute", () => {
         },
       },
     });
-    const { result } = await run(tool, { name: "Alpha" });
+    const { result } = await run(tool, { name: "Alpha", files: ALL });
     expect(result).toContain("Moved 1 file");
     expect(result).toMatch(/Not moved .*b\.docx/);
     expect(result).not.toContain("secret-bucket");
@@ -177,17 +180,47 @@ describe("execute", () => {
     expect(result).toMatch(/ghost\.pdf \(No session file/);
   });
 
-  it("says how many files stayed behind on purpose (tool outputs etc.)", async () => {
-    const { tool } = make({ files: [{ name: "a.pdf" }, { name: "tool-output-1.txt" }] });
-    const { result } = await run(tool, { name: "Alpha" });
-    expect(result).toContain("1 other session file");
+  it("moves only the approved list: unlisted files stay and the result says how many", async () => {
+    const { tool, log } = make({ files: [{ name: "a.pdf" }, { name: "b.docx" }, { name: "tool-output-1.txt" }] });
+    const { result } = await run(tool, { name: "Alpha", files: ["a.pdf"] });
+    expect(log).toEqual(["copy a.pdf", "remove a.pdf"]);
+    expect(result).toContain("2 other session files not on the approved list stayed in the session");
+  });
+  it("an empty list creates the project and moves nothing; a direct call without files does the same", async () => {
+    for (const input of [{ name: "Alpha", files: [] }, { name: "Alpha" }]) {
+      const m = make();
+      const { result } = await run(m.tool, input);
+      expect(m.log).toEqual([]);
+      expect(m.create).toHaveBeenCalledTimes(1);
+      expect(result).toContain("Moved 0 files");
+    }
+  });
+  it("requires files in the input schema, with an array of strings", () => {
+    const schema = make().tool.inputSchema as import("zod").ZodTypeAny;
+    expect(schema.safeParse({ name: "A" }).success).toBe(false);
+    expect(schema.safeParse({ name: "A", files: [] }).success).toBe(true);
+    expect(schema.safeParse({ name: "A", files: [1] }).success).toBe(false);
+  });
+  it("tells the model to list exactly the files to move, from the prompt listing", () => {
+    const { tool } = make();
+    expect(tool.description).toMatch(/REQUIRED/);
+    expect(tool.description).toMatch(/exactly the files to move/);
+    expect(tool.description).toMatch(/stays in the session/);
+    expect(CREATE_PROJECT_PROMPT).toMatch(/`files`/);
+  });
+  it("is not created in a routine run, and a direct call on a run session is refused", async () => {
+    expect(createCreateProjectTool({ ...base, routineRun: true })).toBeUndefined();
+    const m = make({ session: { project: null, user: 7, metadata: { job_result_id: "j1" } } });
+    const { result } = await run(m.tool, { name: "Alpha", files: ALL });
+    expect(m.create).not.toHaveBeenCalled();
+    expect(result).toMatch(/routine run/);
   });
 
   it("a failed create-and-attach moves nothing, leaves the holder empty and leaks nothing", async () => {
     const { tool, log, turnProject } = make({
       deps: { createAndAttach: jest.fn(async () => { throw new Error("pg: relation secret_table"); }) },
     });
-    const { result } = await run(tool, { name: "Alpha" });
+    const { result } = await run(tool, { name: "Alpha", files: ALL });
     expect(log).toEqual([]);
     expect(turnProject.current).toBeNull();
     expect(result).not.toContain("secret_table");
@@ -196,16 +229,16 @@ describe("execute", () => {
 
   it("a create failure leaks nothing; a validation message is passed on", async () => {
     const boom = make({ deps: { createAndAttach: jest.fn(async () => { throw new Error("pg: password for user exulu"); }) } });
-    const r1 = await run(boom.tool, { name: "Alpha" });
+    const r1 = await run(boom.tool, { name: "Alpha", files: ALL });
     expect(r1.result).not.toContain("password");
     const bad = make({ deps: { createAndAttach: jest.fn(async () => { throw new Error("Project name must be 1 to 120 characters."); }) } });
-    expect((await run(bad.tool, { name: "" })).result).toContain("Project name must be");
+    expect((await run(bad.tool, { name: "", files: ALL })).result).toContain("Project name must be");
   });
 
   it("refuses a direct call when the live session has a project, no row, or another owner", async () => {
     for (const session of [{ project: "p9", user: 7 }, undefined, { project: null, user: 8 }]) {
       const m = make({ session: session ?? null, deps: session === undefined ? { loadSession: async () => undefined } : {} });
-      const { result } = await run(m.tool, { name: "Alpha" });
+      const { result } = await run(m.tool, { name: "Alpha", files: ALL });
       expect(m.create).not.toHaveBeenCalled();
       expect(typeof result).toBe("string");
     }
@@ -213,8 +246,8 @@ describe("execute", () => {
 
   it("a second call in the same turn is refused (the holder already has the project)", async () => {
     const m = make();
-    await run(m.tool, { name: "Alpha" });
-    await run(m.tool, { name: "Beta" });
+    await run(m.tool, { name: "Alpha", files: ALL });
+    await run(m.tool, { name: "Beta", files: ALL });
     expect(m.create).toHaveBeenCalledTimes(1);
   });
 
@@ -227,8 +260,20 @@ describe("execute", () => {
     const NONE = /no project files/i;
     expect(JSON.stringify(await call(parse, { filename: "project/a.pdf" }))).toMatch(NONE);
     expect(JSON.stringify(await call(read, { filename: "project/a.pdf" }))).toMatch(NONE);
-    await run(m.tool, { name: "Alpha" });
+    await run(m.tool, { name: "Alpha", files: ALL });
     expect(JSON.stringify(await call(parse, { filename: "project/a.pdf" }))).not.toMatch(NONE);
     expect(JSON.stringify(await call(read, { filename: "project/a.pdf" }))).not.toMatch(NONE);
+  });
+});
+
+describe("picker entry", () => {
+  it("is a display-only catalogue entry with the opt-in id", () => {
+    const picker = createCreateProjectPickerTool();
+    expect(picker.id).toBe("create_project");
+    expect(picker.category).toBe("default");
+    expect(picker.type).toBe("function");
+    expect(picker.config).toEqual([]);
+    expect(picker.name).toBeTruthy();
+    expect(picker.description).toMatch(/approval/);
   });
 });

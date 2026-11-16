@@ -565,7 +565,7 @@ export const generateSync = async ({
         });
         if (listing) system += "\n\n" + listing;
     }
-    if (canRegisterCreateProject({ sessionID: session, exuluConfig, agentTools: agent?.tools, project: resolvedProject, sessionProjectId: project, ownerId: sessionOwnerId, req, user, disabled: disabledTools })) {
+    if (canRegisterCreateProject({ sessionID: session, exuluConfig, agentTools: agent?.tools, project: resolvedProject, sessionProjectId: project, ownerId: sessionOwnerId, routineRun: false, req, user, disabled: disabledTools })) {
         system += "\n\n" + CREATE_PROJECT_PROMPT;
     }
 
@@ -1032,7 +1032,7 @@ ${skillsList}
         });
         if (listing) system += "\n\n" + listing;
     }
-    if (canRegisterCreateProject({ sessionID: session, exuluConfig, agentTools: agent?.tools, project: resolvedProject, sessionProjectId: project, ownerId: sessionOwnerId, req, user, disabled: disabledTools })) {
+    if (canRegisterCreateProject({ sessionID: session, exuluConfig, agentTools: agent?.tools, project: resolvedProject, sessionProjectId: project, ownerId: sessionOwnerId, routineRun: Boolean(routineRun) || isRunSessionMetadata(sessionMetadata), req, user, disabled: disabledTools })) {
         system += "\n\n" + CREATE_PROJECT_PROMPT;
     }
 
