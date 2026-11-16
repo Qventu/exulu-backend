@@ -15,12 +15,22 @@ export type RoutineRunsFilterArgs = {
   to?: Date | string;
   search?: string;
   needsAttention?: boolean;
+  /** Work-status keys to include (spec 2026-11-16-routine-work-status-design). */
+  workStatuses?: string[];
+  /** true = open (no status, or one not flagged done); false = done. Needs doneKeys. */
+  workStatusOpen?: boolean | null;
 };
 
 export const applyRoutineRunFilters = (
   query: any,
   args: RoutineRunsFilterArgs,
   allowedWorkflowIds: string[],
+  /**
+   * Keys of the statuses flagged done, for the open/done split. "Done" is
+   * defined per routine, so the resolver passes this only when the list is
+   * scoped to one routine; without it workStatusOpen is ignored.
+   */
+  doneKeys?: string[],
 ): any => {
   let q = query
     .where("job_results.type", "workflow")
@@ -39,6 +49,22 @@ export const applyRoutineRunFilters = (
   }
   if (args.to) {
     q = q.where("job_results.createdAt", "<=", args.to);
+  }
+  if (args.workStatuses?.length) {
+    q = q.whereIn("job_results.work_status", args.workStatuses);
+  }
+  if (typeof args.workStatusOpen === "boolean" && doneKeys) {
+    if (args.workStatusOpen) {
+      if (doneKeys.length > 0) {
+        q = q.where((group: any) => {
+          group.whereNull("job_results.work_status").orWhereNotIn("job_results.work_status", doneKeys);
+        });
+      }
+    } else if (doneKeys.length > 0) {
+      q = q.whereIn("job_results.work_status", doneKeys);
+    } else {
+      q = q.whereRaw("1 = 0");
+    }
   }
   if (args.search) {
     // session ⇄ run is 1:1 — the join cannot fan out rows.
@@ -84,6 +110,9 @@ export const mapRoutineRunRow = (
   inputTokens: number | null;
   outputTokens: number | null;
   costUsd: number | null;
+  work_status: string | null;
+  work_status_updated_at: unknown;
+  work_status_updated_by: any;
 } => {
   const routine = row.workflow ? routineById.get(row.workflow) : undefined;
   const tokens = parseMaybeJson(row.metadata)?.tokens as
@@ -106,6 +135,9 @@ export const mapRoutineRunRow = (
     inputTokens: tokens?.inputTokens ?? null,
     outputTokens: tokens?.outputTokens ?? null,
     costUsd: tokens?.costUsd ?? null,
+    work_status: row.work_status ?? null,
+    work_status_updated_at: row.work_status_updated_at ?? null,
+    work_status_updated_by: parseMaybeJson(row.work_status_updated_by),
   };
 };
 

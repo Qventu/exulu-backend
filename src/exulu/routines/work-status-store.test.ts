@@ -1,4 +1,4 @@
-import { defaultWorkStatusColumns, loadRunWorkStatus, loadRoutineWorkStatusConfig, setRunWorkStatus } from "./work-status-store";
+import { defaultWorkStatusColumns, setRunWorkStatusManually, loadRunWorkStatus, loadRoutineWorkStatusConfig, setRunWorkStatus } from "./work-status-store";
 
 const CONFIG = { statuses: [{ key: "neu", label: "Neu" }, { key: "erledigt", label: "Erledigt", done: true }], default: "neu" };
 
@@ -85,5 +85,33 @@ describe("defaultWorkStatusColumns", () => {
     expect(await defaultWorkStatusColumns(db, "nope")).toEqual({});
     const broken: any = () => { throw new Error("db down"); };
     expect(await defaultWorkStatusColumns(broken, "wf-1")).toEqual({});
+  });
+});
+
+describe("setRunWorkStatusManually (runs list)", () => {
+  const tables = () => ({ job_results: [{ ...run(), type: "workflow" }], workflow_templates: [routine] });
+  it("sets the status as the acting user, overriding whatever was there", async () => {
+    const { db, updates } = makeDb({ job_results: [{ ...run({ work_status: "erledigt", work_status_updated_by: JSON.stringify({ kind: "user", id: 99 }) }), type: "workflow" }], workflow_templates: [routine] });
+    await setRunWorkStatusManually(db, { id: "jr-1", status: "neu", userId: 14, readableRoutineIds: ["wf-1"] });
+    expect(updates[0].values.work_status).toBe("neu");
+    expect(JSON.parse(updates[0].values.work_status_updated_by)).toEqual({ kind: "user", id: 14 });
+  });
+  it("clears the status with null", async () => {
+    const { db, updates } = makeDb(tables());
+    await setRunWorkStatusManually(db, { id: "jr-1", status: null, userId: 14, readableRoutineIds: ["wf-1"] });
+    expect(updates[0].values.work_status).toBeNull();
+  });
+  it("answers 'not found' for a missing run, a non-routine job and a routine the caller cannot read", async () => {
+    const a = makeDb({ job_results: [], workflow_templates: [routine] });
+    await expect(setRunWorkStatusManually(a.db, { id: "jr-1", status: "neu", userId: 14, readableRoutineIds: ["wf-1"] })).rejects.toThrow("Routine run not found.");
+    const b = makeDb({ job_results: [{ ...run({ workflow: null }), type: "eval" }], workflow_templates: [routine] });
+    await expect(setRunWorkStatusManually(b.db, { id: "jr-1", status: "neu", userId: 14, readableRoutineIds: ["wf-1"] })).rejects.toThrow("Routine run not found.");
+    const c = makeDb(tables());
+    await expect(setRunWorkStatusManually(c.db, { id: "jr-1", status: "neu", userId: 14, readableRoutineIds: ["wf-other"] })).rejects.toThrow("Routine run not found.");
+    expect(c.updates).toEqual([]);
+  });
+  it("rejects an unknown status with the allowed keys", async () => {
+    const { db } = makeDb(tables());
+    await expect(setRunWorkStatusManually(db, { id: "jr-1", status: "fertig", userId: 14, readableRoutineIds: ["wf-1"] })).rejects.toThrow(/Allowed: neu, erledigt/);
   });
 });

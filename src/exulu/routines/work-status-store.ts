@@ -108,3 +108,25 @@ export async function defaultWorkStatusColumns(
     return {};
   }
 }
+
+/**
+ * The manual path from the runs list. Whoever may read a routine's runs may
+ * set a run's work status (spec decision 1) — the caller passes the routine
+ * ids the user can read. A run outside that set is reported as not found, so
+ * the answer does not reveal that it exists.
+ */
+export async function setRunWorkStatusManually(
+  db: any,
+  args: { id: string; status: string | null; userId: number; readableRoutineIds: string[] },
+): Promise<void> {
+  const row = await db("job_results").where({ id: args.id }).first();
+  if (!row || row.type !== "workflow" || !row.workflow || !args.readableRoutineIds.includes(row.workflow)) {
+    throw new Error("Routine run not found.");
+  }
+  await setRunWorkStatus(db, {
+    jobResultId: args.id,
+    status: args.status,
+    actor: { kind: "user", id: args.userId },
+    origin: "manual",
+  });
+}
