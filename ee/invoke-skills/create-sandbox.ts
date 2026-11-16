@@ -915,10 +915,12 @@ export async function createSessionSandbox(
      * bash wrapper (which scans for files the agent created via shell
      * commands like `node create_doc.js`).
      */
-    // Callers read this ONCE per tool call and pass it down: a concurrent turn
-    // (e.g. a detach) can flip projectState mid-command, before its sync has
+    // Callers read this ONCE at the start of a tool call and pass it down: a
+    // concurrent detach can flip projectState mid-command, before its sync has
     // removed project/, and a flag re-read in between would upload the project
-    // copy to the session as agent files.
+    // copy to the session as agent files. The reverse (an attach mid-command,
+    // whose sync writes project/ while the command runs) is covered by also
+    // checking the flag after the command: project/ is skipped if EITHER says so.
     const hasProjectNow = () => projectState.projectId !== null
 
     async function persistArtifactToS3(
@@ -991,7 +993,7 @@ export async function createSessionSandbox(
             const persisted = await persistArtifactToS3(
                 file.path,
                 Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content),
-                hasProject,
+                hasProject || hasProjectNow(),
             )
             if (persisted.key) result.key = persisted.key
             if (persisted.url) result.url = persisted.url
@@ -1166,7 +1168,9 @@ export async function createSessionSandbox(
                 url?: string
             }> = []
             if (persistenceEnabled && before) {
-                const after = await snapshotSessionArtifacts(hasProject)
+                // Read once more after the command (see hasProjectNow).
+                const skipProject = hasProject || hasProjectNow()
+                const after = await snapshotSessionArtifacts(skipProject)
                 const changedPaths: string[] = []
                 for (const [path, mtime] of after) {
                     const beforeMtime = before.get(path)
@@ -1177,7 +1181,7 @@ export async function createSessionSandbox(
                 for (const path of changedPaths) {
                     try {
                         const content = await fsReadFile(path)
-                        const persisted = await persistArtifactToS3(path, content, hasProject)
+                        const persisted = await persistArtifactToS3(path, content, skipProject)
                         artifacts.push({
                             path,
                             relativePath: relative(sessionDir, path),

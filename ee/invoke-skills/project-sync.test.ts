@@ -85,8 +85,11 @@ describe("syncProjectDir", () => {
 
   it("downloads remote files, removes local ones gone remotely, keeps identical ones", async () => {
     const dir = join(sessionDir, "project");
-    await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "same.txt"), "123");
+    // An earlier sync of the same project left same.txt (marker + folder).
+    list.mockResolvedValue([remoteObj("same.txt", 3)]);
+    bytes.mockResolvedValue(Buffer.from("123"));
+    await syncProjectDir({ sessionDir, projectId: "p1", config });
+    bytes.mockReset();
     await writeFile(join(dir, "gone.txt"), "x");
     await mkdir(join(dir, "agent-subdir"));
     list.mockResolvedValue([remoteObj("same.txt", 3), remoteObj("new.txt", 2)]);
@@ -185,6 +188,7 @@ describe("syncProjectDir", () => {
     list.mockResolvedValue([remoteObj("a.txt", 1)]);
     // Plant the link while the bytes are being fetched, i.e. after readdir/plan.
     bytes.mockImplementation(async () => {
+      await mkdir(join(sessionDir, "project"), { recursive: true });
       await symlink(victim, join(sessionDir, "project", "a.txt"));
       return Buffer.from("A");
     });
@@ -193,6 +197,89 @@ describe("syncProjectDir", () => {
     expect((await lstat(join(sessionDir, "project", "a.txt"))).isSymbolicLink()).toBe(false);
     expect(await readFile(join(sessionDir, "project", "a.txt"), "utf8")).toBe("A");
     expect((await readdir(join(sessionDir, "project"))).sort()).toEqual(["a.txt"]);
+  });
+
+  const snapshotTree = async (d: string): Promise<string[]> => {
+    const out: string[] = [];
+    const walk = async (x: string, rel: string) => {
+      for (const e of await readdir(x, { withFileTypes: true })) {
+        const r = `${rel}${e.name}`;
+        if (e.isDirectory()) { out.push(`${r}/`); await walk(join(x, e.name), `${r}/`); }
+        else out.push(`${r}=${await readFile(join(x, e.name), "utf8")}`);
+      }
+    };
+    await walk(d, "");
+    return out.sort();
+  };
+  const makeVictim = async () => {
+    const victim = join(root, "victim");
+    await mkdir(join(victim, "sub"), { recursive: true });
+    await writeFile(join(victim, "keep.txt"), "victim");
+    await writeFile(join(victim, "sub", "deep.txt"), "deep");
+    await writeFile(join(victim, "gone.txt"), "would be removed by plan");
+    return victim;
+  };
+
+  it("a project link swapped in while the sync runs is never followed", async () => {
+    const victim = await makeVictim();
+    const before = await snapshotTree(victim);
+    // first sync: marker matches and a local copy exists, like a real later turn
+    list.mockResolvedValue([remoteObj("a.txt", 1)]);
+    bytes.mockResolvedValue(Buffer.from("A"));
+    await syncProjectDir({ sessionDir, projectId: "p1", config });
+    await writeFile(join(sessionDir, "project", "gone.txt"), "x");
+
+    list.mockResolvedValue([remoteObj("a.txt", 2), remoteObj("b.txt", 1)]);
+    bytes.mockImplementation(async (key: string) => {
+      // the agent's loop wins the race during the S3 await
+      await rm(join(sessionDir, "project"), { recursive: true, force: true });
+      await symlink(victim, join(sessionDir, "project"));
+      return Buffer.from(key.endsWith("a.txt") ? "AA" : "B");
+    });
+    await syncProjectDir({ sessionDir, projectId: "p1", config });
+
+    expect(await snapshotTree(victim)).toEqual(before);
+    const st = await lstat(join(sessionDir, "project")).catch(() => null);
+    if (st) {
+      expect(st.isSymbolicLink()).toBe(false);
+      expect(st.isDirectory()).toBe(true);
+      expect(await snapshotTree(join(sessionDir, "project"))).toEqual(["a.txt=AA", "b.txt=B"]);
+    }
+  });
+
+  it("detach while project/sub is a link to a victim leaves the victim untouched", async () => {
+    const victim = await makeVictim();
+    const before = await snapshotTree(victim);
+    list.mockResolvedValue([remoteObj("a.txt", 1)]);
+    bytes.mockResolvedValue(Buffer.from("A"));
+    await syncProjectDir({ sessionDir, projectId: "p1", config });
+    await symlink(victim, join(sessionDir, "project", "sub"));
+
+    await syncProjectDir({ sessionDir, projectId: null, config });
+    expect(existsSync(join(sessionDir, "project"))).toBe(false);
+    expect(await snapshotTree(victim)).toEqual(before);
+  });
+
+  it("unchanged files are reused without a download", async () => {
+    list.mockResolvedValue([remoteObj("a.txt", 1), remoteObj("b.txt", 2)]);
+    bytes.mockImplementation(async (key: string) => Buffer.from(key.endsWith("a.txt") ? "A" : "BB"));
+    await syncProjectDir({ sessionDir, projectId: "p1", config });
+    bytes.mockClear();
+    await syncProjectDir({ sessionDir, projectId: "p1", config });
+    expect(bytes).not.toHaveBeenCalled();
+    expect(await snapshotTree(join(sessionDir, "project"))).toEqual(["a.txt=A", "b.txt=BB"]);
+  });
+
+  it("leaves no staging or trash directories behind", async () => {
+    list.mockResolvedValue([remoteObj("a.txt", 1)]);
+    bytes.mockResolvedValue(Buffer.from("A"));
+    await syncProjectDir({ sessionDir, projectId: "p1", config });
+    await syncProjectDir({ sessionDir, projectId: "p1", config });
+    await syncProjectDir({ sessionDir, projectId: null, config });
+    for (const d of [".project-staging", ".project-trash"]) {
+      const p = join(root, d);
+      if (existsSync(p)) expect(await readdir(p)).toEqual([]);
+    }
   });
 
   it("keeps the marker outside the session directory, so the sandbox cannot write it", () => {

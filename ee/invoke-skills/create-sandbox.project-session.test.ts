@@ -151,6 +151,23 @@ describe("project flag is fixed for the duration of one bash command", () => {
   });
 });
 
+describe("an attach that lands mid-command", () => {
+  it("does not upload the freshly synced project copy as agent files", async () => {
+    const id = sid();
+    const h = await open(id, null);
+    upload.mockClear();
+    remote({ "brief.txt": "shared" });
+
+    const bash = run(h, "sleep 0.4 && echo z > out.txt");
+    await new Promise((r) => setTimeout(r, 100)); // before-snapshot taken without a project
+    await open(id, "p1"); // attach: sync writes project/brief.txt during the command
+    expect(existsSync(join(h.sessionDir, "project", "brief.txt"))).toBe(true);
+    await bash;
+
+    expect(uploadedKeys()).toEqual([`sessions/${id}/out.txt`]);
+  });
+});
+
 describe("session sandbox without a project", () => {
   it("project/ is an ordinary folder whose files are uploaded to the session", async () => {
     const id = sid();

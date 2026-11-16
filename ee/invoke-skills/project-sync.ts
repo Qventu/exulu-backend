@@ -1,4 +1,4 @@
-import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 import { listS3ObjectsByPrefix, getS3ObjectBytes } from '@SRC/uppy/index.ts'
@@ -48,11 +48,53 @@ export async function clearProjectSyncMarker(sessionDir: string): Promise<void> 
 const isFlatName = (name: string) => !!name && !name.includes('/') && !name.includes('\\') && name !== '.' && name !== '..'
 
 /**
+ * Backend-only helper directories, siblings of the session dirs under
+ * /tmp/exulu-sessions (same filesystem, so rename never crosses devices). The
+ * sandbox policy only allows writes inside `sessionDir`, and the leading dot
+ * keeps the names apart from session ids (uuids).
+ */
+const helperPath = (sessionDir: string, kind: '.project-staging' | '.project-trash') =>
+    join(dirname(sessionDir), kind, `${basename(sessionDir)}-${randomBytes(8).toString('hex')}`)
+
+const errCode = (err: unknown) => (err as NodeJS.ErrnoException | undefined)?.code
+
+/**
+ * Move `<sessionDir>/project` (whatever it is: directory, file or link) out of
+ * the agent's reach. rename acts on the entry itself and never follows a link.
+ * Returns the trash path, or null when there was nothing to move.
+ */
+async function moveAway(dir: string, sessionDir: string): Promise<string | null> {
+    const trash = helperPath(sessionDir, '.project-trash')
+    await mkdir(dirname(trash), { recursive: true })
+    try {
+        await rename(dir, trash)
+        return trash
+    } catch (err) {
+        if (errCode(err) === 'ENOENT') return null
+        throw err
+    }
+}
+
+/** Trash and staging live outside every session dir, so a recursive rm there is ours alone. */
+async function discard(path: string | null): Promise<void> {
+    if (!path) return
+    await rm(path, { recursive: true, force: true }).catch((err) => {
+        console.error(`[SKILLS] Failed to remove ${path}; continuing.`, err)
+    })
+}
+
+/**
  * Mirror the project's shared files into `<sessionDir>/project/` (read-only by
  * convention: the sandbox never writes this folder back). With `projectId: null`
  * a folder that an earlier sync created is removed; a folder of that name the
  * agent made in a session that never had a project is left alone. Failures are
  * logged and never thrown at the caller — one bad object must not end a turn.
+ *
+ * The agent can swap `project` (or anything in it) for a link at any moment, and
+ * this runs as the backend user, so it NEVER operates under the agent-writable
+ * path: the old folder is renamed away, the new one is built in a private staging
+ * directory and renamed into place. The only operations on `<sessionDir>/project`
+ * are those two renames.
  */
 export async function syncProjectDir(args: {
     sessionDir: string
@@ -65,7 +107,7 @@ export async function syncProjectDir(args: {
 
     if (!projectId) {
         if (previous !== null) {
-            await rm(dir, { recursive: true, force: true })
+            await discard(await moveAway(dir, sessionDir))
             await clearProjectSyncMarker(sessionDir)
         }
         return
@@ -76,25 +118,16 @@ export async function syncProjectDir(args: {
         return
     }
 
-    // Another project's files under the same names must not survive a re-attach.
-    if (previous !== null && previous !== projectId) {
-        await rm(dir, { recursive: true, force: true })
-    }
-
     const { projectPrefix } = projectFilePrefix(projectId)
-    let remote: Entry[]
-    const keys = new Map<string, string>()
+    const remote = new Map<string, { size: number; key: string }>()
     try {
-        const objects = await listS3ObjectsByPrefix(projectPrefix, config)
-        remote = []
-        for (const obj of objects) {
+        for (const obj of await listS3ObjectsByPrefix(projectPrefix, config)) {
             // listS3ObjectsByPrefix prepends the general s3prefix; recover the name
             // the same way restoreArtifactsFromS3 does.
             const idx = obj.key.indexOf(projectPrefix)
             const name = idx >= 0 ? obj.key.slice(idx + projectPrefix.length) : ''
             if (!isFlatName(name)) continue
-            remote.push({ name, size: obj.size })
-            keys.set(name, obj.key)
+            remote.set(name, { size: obj.size, key: obj.key })
         }
     } catch (err) {
         // Keep the local copy as it is: a transient S3 error must not empty the folder.
@@ -102,58 +135,75 @@ export async function syncProjectDir(args: {
         return
     }
 
-    // The agent controls everything inside the session dir and may have replaced
-    // project/ with a symlink (to /app, /, another session …) or a file. Everything
-    // below runs as the backend process user, so it must never follow that link:
-    // drop the link itself (rm on a link removes the link, not its target).
-    const existing = await lstat(dir).catch(() => null)
-    if (existing && !existing.isDirectory()) await rm(dir, { force: true })
-    await mkdir(dir, { recursive: true })
     await mkdir(dirname(projectSyncMarkerPath(sessionDir)), { recursive: true })
-    // Written before the downloads, so a crash halfway still lets a later detach clean up.
+    // Written before anything moves, so a crash halfway still lets a later detach clean up.
     await writeFile(projectSyncMarkerPath(sessionDir), projectId)
 
-    const local: Entry[] = []
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-        if (entry.isFile()) {
-            try {
-                local.push({ name: entry.name, size: (await stat(join(dir, entry.name))).size })
-            } catch {
-                // vanished between readdir and stat
-            }
-        } else {
-            // Directories (or links) the agent made here are not project files; the
-            // folder is flat, so anything else goes.
-            await rm(join(dir, entry.name), { recursive: true, force: true })
-        }
-    }
+    const trashes: Array<string | null> = []
+    const staging = helperPath(sessionDir, '.project-staging')
+    let installed = false
+    try {
+        const old = await moveAway(dir, sessionDir)
+        trashes.push(old)
+        await mkdir(dirname(staging), { recursive: true })
+        await mkdir(staging) // fresh, private: nothing else knows this path
 
-    const plan = planProjectSync(remote, local)
-    for (const name of plan.remove) {
-        await rm(join(dir, name), { recursive: true, force: true })
-    }
-    // Sequential on purpose: a project holds up to 200 files and a turn must not
-    // fan out that many parallel S3 reads.
-    for (const name of plan.download) {
-        try {
-            const bytes = await getS3ObjectBytes(keys.get(name)!, config)
-            // A link planted at project/<name> after the scan must not be written
-            // through: write a fresh file exclusively ('wx' fails on any existing
-            // entry, links included) and rename it over the name, which replaces
-            // the link itself.
-            const tmp = join(dir, `.sync-${randomBytes(6).toString('hex')}.tmp`)
-            try {
-                await writeFile(tmp, bytes, { flag: 'wx' })
-                await rename(tmp, join(dir, name))
-            } catch (err) {
-                await rm(tmp, { force: true }).catch(() => {})
-                throw err
+        // Reuse unchanged files of the same project. Only regular files are taken
+        // (lstat, no link is followed); another project's files never are.
+        const local: Array<{ name: string; size: number }> = []
+        const oldStat = old && previous === projectId ? await lstat(old).catch(() => null) : null
+        if (old && oldStat?.isDirectory()) {
+            for (const name of await readdir(old)) {
+                const st = await lstat(join(old, name)).catch(() => null)
+                if (!st?.isFile() || remote.get(name)?.size !== st.size) continue
+                await rename(join(old, name), join(staging, name))
+                // A process still inside the old folder could have swapped the entry
+                // between lstat and rename; anything that is not a regular file goes back.
+                const moved = await lstat(join(staging, name)).catch(() => null)
+                if (!moved?.isFile()) {
+                    await rename(join(staging, name), join(old, `.rejected-${randomBytes(4).toString('hex')}`)).catch(() => {})
+                    continue
+                }
+                local.push({ name, size: moved.size })
             }
-        } catch (err) {
-            console.error(`[SKILLS] Failed to sync project file ${name} (project ${projectId}); continuing.`, err)
-            // A stale local copy of a changed file is worse than none.
-            await rm(join(dir, name), { force: true }).catch(() => {})
         }
+
+        const plan = planProjectSync(
+            [...remote].map(([name, r]) => ({ name, size: r.size })),
+            local,
+        )
+        // Sequential on purpose: a project holds up to 200 files and a turn must not
+        // fan out that many parallel S3 reads.
+        for (const name of plan.download) {
+            try {
+                const bytes = await getS3ObjectBytes(remote.get(name)!.key, config)
+                await writeFile(join(staging, name), bytes, { flag: 'wx' })
+            } catch (err) {
+                console.error(`[SKILLS] Failed to sync project file ${name} (project ${projectId}); continuing.`, err)
+            }
+        }
+
+        // Swap in. The agent may have planted something at project/ meanwhile:
+        // move that away too and retry once, then give up for this turn.
+        for (let attempt = 0; attempt < 2 && !installed; attempt++) {
+            try {
+                await rename(staging, dir)
+                installed = true
+            } catch (err) {
+                const code = errCode(err)
+                if (attempt === 0 && (code === 'EEXIST' || code === 'ENOTEMPTY' || code === 'ENOTDIR' || code === 'EISDIR')) {
+                    trashes.push(await moveAway(dir, sessionDir))
+                    continue
+                }
+                console.error(`[SKILLS] Could not install the project folder for session ${sessionDir}; skipping this turn.`, err)
+                break
+            }
+        }
+    } catch (err) {
+        console.error(`[SKILLS] Project sync failed for project ${projectId}; continuing.`, err)
+    } finally {
+        if (!installed) await discard(staging)
+        for (const t of trashes) await discard(t)
     }
 }
 
