@@ -337,6 +337,13 @@ const up = async function (knex: Knex) {
       `CREATE INDEX IF NOT EXISTS job_results_workflow_state_trigger_created_idx
           ON job_results (workflow, state, trigger, "createdAt")`,
     );
+    // The runs list splits a routine's runs into open/done by work status.
+    // addMissingFields adds columns without their indexes, so existing
+    // deployments get this one here.
+    await knex.raw(
+      `CREATE INDEX IF NOT EXISTS job_results_workflow_work_status_created_idx
+          ON job_results (workflow, work_status, "createdAt")`,
+    );
     // resumeRoutineRunIfWaiting queries by session on every chat turn;
     // the partial index keeps the common no-waiting-run case an index-only miss.
     await knex.raw(

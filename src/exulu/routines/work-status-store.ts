@@ -73,13 +73,22 @@ export async function setRunWorkStatus(
   });
   if (decision.action === "reject") throw new Error(decision.message);
   if (decision.action === "write") {
-    await db("job_results")
-      .where({ id: args.jobResultId })
-      .update({
-        work_status: decision.status,
-        work_status_updated_at: new Date(),
-        work_status_updated_by: JSON.stringify(args.actor),
-      });
+    let query = db("job_results").where({ id: args.jobResultId });
+    // The decision above was taken on a row read a moment ago. For the
+    // worker's run the rule "a person's status wins" is repeated inside the
+    // UPDATE, so a click that lands between the read and the write is kept.
+    if (args.origin === "worker") {
+      query = query.whereRaw("(work_status_updated_by::jsonb)->>'kind' IS DISTINCT FROM 'user'");
+    }
+    const written = await query.update({
+      work_status: decision.status,
+      work_status_updated_at: new Date(),
+      work_status_updated_by: JSON.stringify(args.actor),
+    });
+    if (args.origin === "worker" && written === 0) {
+      console.log(`[EXULU] work status of run ${args.jobResultId} left unchanged: a person set it.`);
+      return { action: "skip", reason: "human_set" };
+    }
   } else if (decision.reason === "human_set") {
     console.log(`[EXULU] work status of run ${args.jobResultId} left unchanged: a person set it.`);
   }

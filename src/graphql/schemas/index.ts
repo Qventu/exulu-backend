@@ -43,7 +43,7 @@ import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
 import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
 import { cancelRoutineRunRow, casJobResultState, deleteRoutineRunRow, parseRunMetadata } from "@SRC/exulu/routines/run-state.ts";
 import { guardRoutineWorkStatusWrites } from "@SRC/exulu/routines/work-status-save.ts";
-import { loadRoutineWorkStatusConfig, setRunWorkStatusManually } from "@SRC/exulu/routines/work-status-store.ts";
+import { defaultWorkStatusColumns, loadRoutineWorkStatusConfig, setRunWorkStatusManually } from "@SRC/exulu/routines/work-status-store.ts";
 import { applyRoutineRunFilters, mapRoutineRunRow } from "@SRC/exulu/routines/runs-query.ts";
 import { workflowTemplatesSchema } from "@EE/schemas";
 import { checkLicense } from "@EE/entitlements.ts";
@@ -2079,6 +2079,9 @@ type EmbeddingModelOption {
           type: "workflow",
           workflow: workflow_template_id,
           trigger: jobData.triggerSource ?? null,
+          // This path never passes upsertWorkflowRunStart, which gives
+          // queued runs the routine's default work status.
+          ...(await defaultWorkStatusColumns(db, workflow_template_id)),
         })
         .returning("id");
 
@@ -2138,6 +2141,9 @@ type EmbeddingModelOption {
                 // Tag LLM spend to this routine (direct one-shot path mirrors the queued path).
                 routine: { id: workflow.id, name: workflow.name },
                 sessionId,
+                // Marks tool writes of the work status as the run's own
+                // (never overriding a person), not as a chat continuation.
+                jobResultId,
               });
               resolve(messages);
               break;

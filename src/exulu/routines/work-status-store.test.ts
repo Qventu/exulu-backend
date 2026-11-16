@@ -4,17 +4,19 @@ const CONFIG = { statuses: [{ key: "neu", label: "Neu" }, { key: "erledigt", lab
 
 /** Minimal knex stand-in: db(table) → chainable builder over in-memory rows. */
 function makeDb(tables: Record<string, any[]>) {
-  const updates: { table: string; where: any; values: any }[] = [];
+  const updates: { table: string; where: any; values: any; raw?: string[] }[] = [];
   const db: any = (table: string) => {
     let rows = [...(tables[table] ?? [])];
     let whereObj: any = {};
+    const raw: string[] = [];
     const builder: any = {
       where(cond: any) { whereObj = { ...whereObj, ...cond }; rows = rows.filter((r) => Object.entries(cond).every(([k, v]) => r[k] === v)); return builder; },
       whereNotNull(col: string) { rows = rows.filter((r) => r[col] != null); return builder; },
       orderBy(col: string, dir: string) { rows.sort((a, b) => (a[col] < b[col] ? -1 : 1) * (dir === "desc" ? -1 : 1)); return builder; },
       select() { return builder; },
       async first() { return rows[0]; },
-      async update(values: any) { updates.push({ table, where: whereObj, values }); return rows.length; },
+      whereRaw(sql: string) { raw.push(sql); if (tables.__raceLost) rows = []; return builder; },
+      async update(values: any) { updates.push({ table, where: whereObj, values, raw: [...raw] }); return rows.length; },
     };
     return builder;
   };
@@ -113,5 +115,23 @@ describe("setRunWorkStatusManually (runs list)", () => {
   it("rejects an unknown status with the allowed keys", async () => {
     const { db } = makeDb(tables());
     await expect(setRunWorkStatusManually(db, { id: "jr-1", status: "fertig", userId: 14, readableRoutineIds: ["wf-1"] })).rejects.toThrow(/Allowed: neu, erledigt/);
+  });
+});
+
+describe("setRunWorkStatus — a person's status set between the read and the write", () => {
+  const tables = (extra: any = {}) => ({ job_results: [run()], workflow_templates: [routine], ...extra });
+  it("a worker write carries the not-set-by-a-person condition in the UPDATE itself", async () => {
+    const { db, updates } = makeDb(tables());
+    await setRunWorkStatus(db, { jobResultId: "jr-1", status: "erledigt", actor: { kind: "tool", id: "x" }, origin: "worker" });
+    expect(updates[0].raw?.join(" ")).toMatch(/work_status_updated_by.*'kind'.*IS DISTINCT FROM 'user'/);
+  });
+  it("a worker write that loses the race reports human_set instead of a write", async () => {
+    const { db } = makeDb(tables({ __raceLost: [true] }));
+    expect(await setRunWorkStatus(db, { jobResultId: "jr-1", status: "erledigt", actor: { kind: "tool", id: "x" }, origin: "worker" })).toEqual({ action: "skip", reason: "human_set" });
+  });
+  it("chat and manual writes stay unconditional", async () => {
+    const { db, updates } = makeDb(tables());
+    await setRunWorkStatus(db, { jobResultId: "jr-1", status: "erledigt", actor: { kind: "user", id: 14 }, origin: "manual" });
+    expect(updates[0].raw).toEqual([]);
   });
 });
