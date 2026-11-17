@@ -237,6 +237,10 @@ Enable `batch_report_generator` on the same agent. When prompted to generate a r
 
 </Steps>
 
+## Saving a file into the chat session
+
+The first argument of `execute` also carries `saveSessionFile({ name, data })`, which writes a file into the folder of the current chat session so the standard document tools can read it. It returns `{ name }` (pass that name to `parse_document` or `read_session_file`) or `{ error }`. A same-named file is replaced, the cap is 50 MB, and the function is `undefined` without a session, without configured file uploads, for guests and public-surface requests, and during routine runs. Moving a file into a project stays with `create_project` and `save_to_project`. See [Execute function](/developers/core/exulu-tool/configuration#saving-a-file-into-the-chat-session).
+
 ## What you built
 
 - `order_lookup` — a standard async tool with a Zod schema, two admin config params (one a `"variable"` for secrets), and `needsApproval: false`.

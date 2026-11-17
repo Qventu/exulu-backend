@@ -352,6 +352,22 @@ Both `authType` arms validate their configuration when the `ExuluTool` is constr
   The function that implements the tool's logic. Receives `(inputs, options?)` where `inputs` matches your `inputSchema` plus any framework-injected fields — `toolVariablesConfig` (the admin-configured [config values](#reading-config-values-at-runtime)), `oauth` when an OAuth authentication config is present, `credentials` when a user-credentials config is present, and platform context such as `user`, `contexts`, `sessionID` and `exuluConfig`. `options` carries only AI-SDK context — `toolCallId` and `messages` — and never your config; ignore it if you don't need it.
 </ParamField>
 
+### Saving a file into the chat session
+
+Next to `upload`, `sessionID` and `routine`, the platform context carries `saveSessionFile(file)`. It writes a file (`{ name, data }`, where `data` is a `Uint8Array` or `Buffer`) into the folder of the chat session the tool runs in, exactly where a user upload lands. It returns `{ name }` on success or `{ error }` (invalid name, empty file, over 50 MB, or a failed write). The returned `name` is what the standard document tools take: pass it to `parse_document` or `read_session_file`.
+
+- A file with the same name is replaced, as with a user upload. The cap is 50 MB.
+- `saveSessionFile` is `undefined` when there is no `sessionID`, when file uploads are not configured (S3 endpoint, key, secret and bucket), when nobody is signed in or the request comes from the public surface, and during a routine run. Check for it before calling.
+- It only writes to the session folder. Moving a file into a project stays with the `create_project` and `save_to_project` tools.
+
+```typescript
+execute: async ({ saveSessionFile }, inputs) => {
+  const saved = await saveSessionFile?.({ name: "report.pdf", data: pdfBytes });
+  if (!saved || "error" in saved) return { result: saved?.error ?? "Saving is not available here." };
+  return { result: `Saved ${saved.name}. Use parse_document with this name to read it.` };
+}
+```
+
 The return value can be a `Promise` or an `AsyncGenerator` yielding the same shape:
 
 ```typescript

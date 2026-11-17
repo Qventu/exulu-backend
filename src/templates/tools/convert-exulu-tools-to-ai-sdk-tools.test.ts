@@ -652,3 +652,36 @@ describe("create_project registration", () => {
     expect(Object.keys(await run({ id: "a1", tools: withEntry }, 7, () => ({ statuses: [] })))).not.toContain("create_project");
   });
 });
+
+describe("saveSessionFile in the tool context", () => {
+  const uploads = { s3endpoint: "e", s3key: "k", s3secret: "s", s3Bucket: "b" };
+  const run = async (exuluConfig: unknown, sessionID: string | undefined) => {
+    const execute = jest.fn(async () => "ok");
+    const entry = {
+      id: "custom_tool",
+      name: "Custom",
+      description: "d",
+      type: "function",
+      category: "custom",
+      config: [],
+      tool: { execute },
+    } as never;
+    const tools = await convertExuluToolsToAiSdkTools(
+      [entry], [], [], [], [], undefined, { id: 7 } as never, exuluConfig as never, sessionID,
+    );
+    const gen = (tools as Record<string, { execute: (i: unknown, o: unknown) => AsyncGenerator<unknown> }>)
+      .Custom.execute({}, {});
+    for await (const _ of gen) { /* drain */ }
+    return (execute.mock.calls[0] as unknown[])[0] as { saveSessionFile?: unknown };
+  };
+
+  it("is a function when the session has uploads configured", async () => {
+    const ctx = await run({ fileUploads: uploads }, "session-1");
+    expect(typeof ctx.saveSessionFile).toBe("function");
+  });
+
+  it("is undefined without a sessionID", async () => {
+    const ctx = await run({ fileUploads: uploads }, undefined);
+    expect(ctx.saveSessionFile).toBeUndefined();
+  });
+});

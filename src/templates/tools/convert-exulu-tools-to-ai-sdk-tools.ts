@@ -35,6 +35,7 @@ import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
 import { resolveSessionProject, type ResolvedSessionProject } from "@SRC/exulu/resolve-session-project";
 import type { RoutineHandleInternal } from "@SRC/exulu/routines/routine-handle";
+import { buildSaveSessionFile, getMimeType } from "@SRC/exulu/session-file-write";
 import { createRoutineStatusTool } from "./routine-status-tool";
 import { getPresignedUrl } from "@SRC/uppy";
 import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
@@ -82,53 +83,6 @@ const generateS3Key = (filename) => `${randomUUID()}-${filename}`;
  * @type {S3Client}
  */
 let s3Client: S3Client | undefined;
-
-const getMimeType = (type: allFileTypes) => {
-  switch (type) {
-    case ".png":
-      return "image/png";
-    case ".jpg":
-      return "image/jpg";
-    case ".jpeg":
-      return "image/jpeg";
-    case ".gif":
-      return "image/gif";
-    case ".webp":
-      return "image/webp";
-    case ".pdf":
-      return "application/pdf";
-    case ".docx":
-      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    case ".xlsx":
-      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    case ".xls":
-      return "application/vnd.ms-excel";
-    case ".csv":
-      return "text/csv";
-    case ".pptx":
-      return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-    case ".ppt":
-      return "application/vnd.ms-powerpoint";
-    case ".m4a":
-      return "audio/mp4";
-    case ".mp4":
-      return "audio/mp4";
-    case ".mpeg":
-      return "audio/mpeg";
-    case ".mp3":
-      return "audio/mp3";
-    case ".wav":
-      return "audio/wav";
-    case ".txt":
-      return "text/plain";
-    case ".md":
-      return "text/markdown";
-    case ".json":
-      return "application/json";
-    default:
-      return "";
-  }
-};
 
 export const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentToolConfig> => {
   const { db } = await postgresClient();
@@ -749,6 +703,15 @@ export const convertExuluToolsToAiSdkTools = async (
                 user,
                 contexts: contextsMap,
                 upload,
+                // Writes a file into this session's folder (undefined without a session, uploads, a signed-in user, or outside routines/public surface).
+                saveSessionFile: buildSaveSessionFile({
+                  sessionID,
+                  ownerId: sessionOwnerId,
+                  user,
+                  req,
+                  exuluConfig,
+                  inRoutineRun: inRoutineRun ?? Boolean(routineHandleFactory),
+                }),
                 exuluConfig,
                 toolVariablesConfig: toolVariablesConfigData,
                 // Present only inside a routine run: routine.runs.current.update({ status }).
