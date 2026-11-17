@@ -41,19 +41,22 @@ Daniel chose A on 2026-11-17.
 
 ## Design
 
-### 1. `exulu:panel:open` with a project (frontend, plus a backend check if none exists)
+### 1. `exulu:panel:open` with a project (frontend)
 
-- `OpenPanelRequest` gains an optional `project: string`. `parseOpenPanelRequest` accepts it only as a strict uuid and drops anything else. `CHANNEL_V` goes from 2 to 3. A v2 request without `project` keeps working unchanged.
-- When `project` is present, the host creates the panel session inside that project, the same way the project page starts a chat in a project today. The planner must find that path and reuse it.
-- The access decision is made by the backend, with the rule `resolveSessionProject` already applies (project owner or RBAC grant). The frontend never decides.
+- `OpenPanelRequest` gains an optional `project: string`. `parseOpenPanelRequest` accepts it only as a strict uuid and drops anything else.
+- **`CHANNEL_V` stays 2.** Published artifacts drop every host message whose version is not 2, and the host rejects every request that is not exactly `CHANNEL_V`. A bump would break the panel in every published artifact until each is republished. `project` on the request and on the ack are additive fields: an old host ignores the request field, an old artifact ignores the ack field.
+- **Access probe before the ack.** Today the ack is sent synchronously and the session is created lazily. With `project` present, the host first asks the backend whether the viewer can open that project, through the RBAC-filtered project query the project page already uses, and only then acks. The artifact waits up to 10 seconds for the ack. A probe that fails or times out counts as `denied`.
 - `exulu:panel:open:ack` gains `project?: "attached" | "denied"`. `denied` covers both "no access" and "no such project", so the artifact cannot tell them apart.
-- On `denied` the panel still opens, with the prompt placed and a session without a project. The artifact decides what to tell the user.
-- A panel that already shows a session in another project, or in none, starts a new session for a request with a different `project`. The planner decides how that fits the existing reuse rules in `apply-open-request.ts`.
-- Docs: the artifact panel protocol page in `mintlify-docs`.
+- On `attached`, every session the panel creates for this request carries the project, including the lazy create triggered by dropping a file. It uses the same call as the project page: `agent_sessionsCreateOne` with `project` and `rights_mode: "private"`.
+- On `denied` the panel still opens, with the prompt placed and a session without a project. No session row with that project id is created.
+- **Session reuse.** The mounted session is reused only when its project equals the request's project, where "none" equals "none". Otherwise the panel starts a new session. A request without `project` therefore never lands in a project session. This matters because `create_project` refuses a session that already has a project.
+- Enforcement stays in the backend, which resolves project access on every turn (`resolveSessionProject`). The probe is for the user's benefit, not a security boundary.
+- Access means what `hasProjectAccess` says: creator, RBAC grant, public project, super-admin, admin API key. On an instance where every account is super-admin, `denied` only occurs for a project that does not exist.
+- Also updated: the bundled artifact template `src/skills/bundled/imp-artifact-apps/templates/imp-channel.ts`, its `identity-handshake.md`, and the artifact panel protocol page in `mintlify-docs`.
 
 ### 2. `saveSessionFile` in the tool context (backend)
 
-- The options object passed to an app tool's `execute` gains `saveSessionFile?: (file: { name: string; data: Uint8Array | Buffer; }) => Promise<{ name: string } | { error: string }>`.
+- The first argument of an app tool's `execute`, where `upload`, `sessionID` and `routine` already arrive, gains `saveSessionFile?: (file: { name: string; data: Uint8Array | Buffer; }) => Promise<{ name: string } | { error: string }>`.
 - It writes into the folder of the session the tool runs in, with the same rules as a user upload: name sanitising, name clash handling, size cap, session ownership. It returns the final file name, which is the name the standard tools take.
 - It is undefined when the turn has no session, when file uploads are not configured, for guests, and in routine runs. A tool must handle its absence.
 - It writes to the session only. Moving a file into the project stays with `create_project` and `save_to_project`, so approval stays where it is.
@@ -63,12 +66,11 @@ Daniel chose A on 2026-11-17.
 
 - `@exulu/backend` exports `ExuluProjects` with two functions:
   - `create({ name, description?, ownerId })` returns `{ id }`. It wraps `createProjectForUser`: private project, creator gets write.
-  - `addFile({ projectId, name, data })` returns `{ name } | { error }`. Same name, size and 200-file rules as `promoteSessionFiles`. No user context: this is for trusted server code.
+  - `addFile({ projectId, name, data, ifExists? })` returns `{ name, skipped?: true } | { error }`. Same name, size and 200-file rules as `promoteSessionFiles`. `ifExists` is `"error"` (default) or `"skip"`; `"skip"` leaves an existing file of that name untouched and reports `skipped`, so a script can be rerun. No user context: this is for trusted server code.
 - Both are documented as server-side APIs for scripts and migrations, not for tools acting on behalf of a user.
 
 ## Left to the builder
 
-- How the project page starts a session in a project, and whether a backend check on session creation already exists or has to be added.
 - Whether `saveSessionFile` and `ExuluProjects.addFile` share one write helper with the upload routes.
 - Test layout. Each piece needs tests for the refusal cases named above.
 
