@@ -189,7 +189,7 @@ Controls how documents are read when the model receives them inline (chat upload
   How many OCR chunks of one document run at the same time. Integer from 1 to 8, default 3.
 </ParamField>
 
-Across all documents the process runs at most 8 OCR calls and 8 vision calls at the same time; further calls wait in a queue. The page limits are set with `EXULU_DOCUMENT_MAX_PAGES` and `EXULU_ATTACHMENT_MAX_PAGES` (see [Environment variables](/self-hosting/environment-variables#document-reading)). The engine, the OCR model and the vision model are part of the key under which read text is stored: changing any of them makes every document be read once more. See [Reading cache](/self-hosting/services/s3-storage#reading-cache).
+Across all chat reads (`parse_document` and files attached to a message) the process runs at most 8 OCR calls and 8 vision calls at the same time; further calls wait in a queue. Knowledge-base processing does not share this ceiling and behaves as before. A single OCR call is stopped after 180 seconds and a single vision call after 120 seconds; a timeout counts as a failed attempt and is retried. The page limits are set with `EXULU_DOCUMENT_MAX_PAGES` and `EXULU_ATTACHMENT_MAX_PAGES` (see [Environment variables](/self-hosting/environment-variables#document-reading)). The engine, the OCR model and the vision model are part of the key under which read text is stored: changing any of them makes every document be read once more. The names are the aliases from your LiteLLM config: remapping an alias to a different model does not invalidate stored text. See [Reading cache](/self-hosting/services/s3-storage#reading-cache).
 
 ### File uploads
 

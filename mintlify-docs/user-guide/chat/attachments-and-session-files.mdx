@@ -75,7 +75,7 @@ The agent reads a document once. The text is kept, so later reads of the same co
 
 While a long document is read for the first time, the tool call in the conversation shows a progress card with the file name, the pages done, and the current step. A long document can take several minutes. The reading continues even if you leave the conversation, and the result is kept for the next read. When the text was already available, the card shows **already read** ("bereits gelesen" in the German interface) and nothing waits.
 
-- **Page limit** — the agent reads PDFs up to 300 pages with `parse_document` when the instance has a document processor (OCR) configured. Longer documents are refused with a note that names both numbers and suggests splitting the file. Your administrator can change the limit. Files you attach directly to a message are limited to 50 pages by default.
+- **Page limit** — the agent reads PDFs up to 300 pages with `parse_document` when the instance has a document processor (OCR) configured. Longer documents are refused with a note that names both numbers and suggests splitting the file, unless the agent has already read that document and its text is kept. Your administrator can change the limit. Files you attach directly to a message are limited to 50 pages by default.
 - **Pages that could not be verified** — if the check of figures and tables failed for some pages, the agent says which pages are OCR text only. That result is not kept, so the next read tries again.
 - **Deleting a file** — deleting a file does not delete the kept text of its content. See [Reading cache](/self-hosting/services/s3-storage#reading-cache).
 
