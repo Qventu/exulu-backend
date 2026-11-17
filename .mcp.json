@@ -14,6 +14,9 @@
         "Authorization": "Bearer ${EXULU_TOKEN}"
       }
     },
+    "recall-ai": {
+      "url": "https://eu-central-1.recall.ai/mcp"
+    },
     "21st": {
       "type": "http",
       "url": "https://21st.dev/api/mcp",

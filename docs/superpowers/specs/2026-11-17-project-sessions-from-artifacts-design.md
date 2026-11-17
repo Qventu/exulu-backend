@@ -1,7 +1,8 @@
 # Project sessions from artifacts, and files written by app tools
 
 Date: 2026-11-17
-Status: draft, awaiting approval
+Status: approved by Daniel on 2026-11-17
+Plan: `docs/superpowers/plans/2026-11-17-project-sessions-from-artifacts.md`
 Builds on: `2026-11-16-project-onboarding-platform-design.md` (reading store, `create_project`), PRs backend #116 and frontend #21.
 
 ## Intent
@@ -52,7 +53,7 @@ Daniel chose A on 2026-11-17.
 - **Session reuse.** The mounted session is reused only when its project equals the request's project, where "none" equals "none". Otherwise the panel starts a new session. A request without `project` therefore never lands in a project session. This matters because `create_project` refuses a session that already has a project.
 - Enforcement stays in the backend, which resolves project access on every turn (`resolveSessionProject`). The probe is for the user's benefit, not a security boundary.
 - Access means what `hasProjectAccess` says: creator, RBAC grant, public project, super-admin, admin API key. On an instance where every account is super-admin, `denied` only occurs for a project that does not exist.
-- Also updated: the bundled artifact template `src/skills/bundled/imp-artifact-apps/templates/imp-channel.ts`, its `identity-handshake.md`, and the artifact panel protocol page in `mintlify-docs`.
+- Also updated: the bundled artifact template `src/skills/bundled/imp-artifact-apps/templates/imp-channel.ts`, and its `identity-handshake.md`. No protocol page exists in `mintlify-docs`; `identity-handshake.md` is the reference.
 
 ### 2. `saveSessionFile` in the tool context (backend)
 
