@@ -597,7 +597,7 @@ export const getS3ObjectBytes = async (
 export const getS3ObjectTextExact = async (
   key: string,
   config: ExuluConfig,
-): Promise<{ text: string; lastModified: Date } | null> => {
+): Promise<{ text: string; lastModified: Date; metadata: Record<string, string> } | null> => {
   if (!config.fileUploads) {
     throw new Error("File uploads are not configured");
   }
@@ -610,6 +610,7 @@ export const getS3ObjectTextExact = async (
     return {
       text: await response.Body.transformToString("utf-8"),
       lastModified: response.LastModified ?? new Date(0),
+      metadata: response.Metadata ?? {},
     };
   } catch (err) {
     if (isS3NotFound(err)) return null;
@@ -617,11 +618,39 @@ export const getS3ObjectTextExact = async (
   }
 };
 
+/**
+ * Read an object's bytes together with the identity (ETag, last-modified, size) of the
+ * exact version that was returned, so a caller can bind what it computed from the bytes
+ * to what it read. The key is used as given by getS3ObjectBytes (bucket from config).
+ */
+export const getS3ObjectBytesWithInfo = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<{ bytes: Buffer; etag: string | null; lastModified: Date | null; size: number | null }> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const response = await client.send(
+    new GetObjectCommand({ Bucket: config.fileUploads.s3Bucket, Key: key }),
+  );
+  if (!response.Body) {
+    throw new Error(`Empty body for S3 key: ${key}`);
+  }
+  const bytes = Buffer.from(await response.Body.transformToByteArray());
+  return {
+    bytes,
+    etag: response.ETag ?? null,
+    lastModified: response.LastModified ?? null,
+    size: response.ContentLength ?? bytes.length,
+  };
+};
+
 /** HeadObject by exact key. A missing object yields null; other errors throw. */
 export const headS3ObjectExact = async (
   key: string,
   config: ExuluConfig,
-): Promise<{ etag: string | null } | null> => {
+): Promise<{ etag: string | null; lastModified: Date | null; size: number | null } | null> => {
   if (!config.fileUploads) {
     throw new Error("File uploads are not configured");
   }
@@ -630,7 +659,11 @@ export const headS3ObjectExact = async (
     const response = await client.send(
       new HeadObjectCommand({ Bucket: config.fileUploads.s3Bucket, Key: key }),
     );
-    return { etag: response.ETag ?? null };
+    return {
+      etag: response.ETag ?? null,
+      lastModified: response.LastModified ?? null,
+      size: response.ContentLength ?? null,
+    };
   } catch (err) {
     if (isS3NotFound(err)) return null;
     throw err;

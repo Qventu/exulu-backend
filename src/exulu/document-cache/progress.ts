@@ -1,4 +1,7 @@
-/** Progress of reading one document into the store; delivered to every caller waiting on it. */
+/**
+ * Progress of reading one document into the store; delivered to every caller waiting on it.
+ * "text" is reserved (not emitted today; the frontend handles it).
+ */
 export type ProgressFn = (p: {
   phase: "text" | "ocr" | "vision" | "storing";
   pagesDone: number;
@@ -13,6 +16,8 @@ export type ProgressFn = (p: {
 export type ReadingStatus = {
   status: "reading";
   filename: string;
+  // "cached" and "text" are reserved: the backend does not emit them today, but the frontend
+  // handles them and removing them from the contract would break it.
   phase: "cached" | "text" | "ocr" | "vision" | "storing";
   pagesDone: number;
   pagesTotal: number;

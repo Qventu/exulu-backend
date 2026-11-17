@@ -45,8 +45,8 @@ describe("extractorFingerprint", () => {
   });
   it("labels the processor cases and varies with engine, model, vlm", () => {
     const base = fp("a.pdf", proc({ name: "mistral", model: "mistral-ocr" }, { model: "g", concurrency: 2 }));
-    expect(base.label).toBe("document-processor/mistral/mistral-ocr/vlm:g@1");
-    expect(fp("a.pdf", proc({ name: "mistral", model: "mistral-ocr" })).label).toBe("document-processor/mistral/mistral-ocr/vlm:off@1");
+    expect(base.label).toBe("document-processor/mistral/mistral-ocr/vlm:g/.pdf/chunk:25@1");
+    expect(fp("a.pdf", proc({ name: "mistral", model: "mistral-ocr" })).label).toBe("document-processor/mistral/mistral-ocr/vlm:off/.pdf/chunk:25@1");
     expect(fp("a.pdf", proc({ name: "mistral" }, { model: "g", concurrency: 2 })).label).toBe(base.label);
     const ids = new Set([
       base.id,
@@ -56,6 +56,13 @@ describe("extractorFingerprint", () => {
       fp("a.pdf", proc({ name: "mistral", model: "mistral-ocr" }, { model: "h", concurrency: 2 })).id,
     ]);
     expect(ids.size).toBe(5);
+  });
+  it("with a processor, the file extension and maxPagesPerChunk are part of the fingerprint", () => {
+    const withProc = { name: "mistral", model: "m" };
+    expect(fp("a.doc", proc(withProc)).id).not.toBe(fp("a.docx", proc(withProc)).id);
+    expect(fp("a.DOCX", proc(withProc)).id).toBe(fp("b.docx", proc(withProc)).id);
+    expect(fp("a.pdf", proc({ ...withProc, maxPagesPerChunk: 10 })).id).not.toBe(fp("a.pdf", proc(withProc)).id);
+    expect(fp("a.pdf", proc({ ...withProc, maxPagesPerChunk: 25 })).id).toBe(fp("a.pdf", proc(withProc)).id);
   });
   it("ignores concurrency", () => {
     expect(fp("a.pdf", proc({ name: "mistral", model: "m" }, { model: "g", concurrency: 1 })).id).toBe(

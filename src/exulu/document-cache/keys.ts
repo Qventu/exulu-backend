@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { extname } from "node:path";
 
 /**
  * Content-addressed store for extracted document text. Layout:
@@ -45,7 +46,11 @@ export function extractorFingerprint(args: { filename: string; exuluConfig: any 
     const { name, model } = processorConfig.processor;
     const ocrModel = model?.trim() || (name === "mistral" ? "mistral-ocr" : "-");
     const vlm = processorConfig.vlm?.model ? `vlm:${processorConfig.vlm.model}` : "vlm:off";
-    label = `document-processor/${name}/${ocrModel}/${vlm}@${EXTRACTOR_VERSION}`;
+    // The same bytes named .doc vs .docx take different processor paths, and the chunk size
+    // changes where OCR splits a PDF, so both belong in the fingerprint.
+    const extension = extname(args.filename).toLowerCase() || "-";
+    const chunk = processorConfig.processor.maxPagesPerChunk ?? 25;
+    label = `document-processor/${name}/${ocrModel}/${vlm}/${extension}/chunk:${chunk}@${EXTRACTOR_VERSION}`;
   } else if (args.filename.toLowerCase().endsWith(".pdf")) {
     label = `pdftotext@${EXTRACTOR_VERSION}`;
   } else {

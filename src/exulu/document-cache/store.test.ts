@@ -4,7 +4,7 @@ import { contentKey, pointerKey } from "./keys";
 import type { ProgressFn } from "./progress";
 
 jest.mock("@SRC/uppy", () => ({
-  getS3ObjectBytes: jest.fn(),
+  getS3ObjectBytesWithInfo: jest.fn(),
   getS3ObjectTextExact: jest.fn(),
   headS3ObjectExact: jest.fn(),
   putS3ObjectTextExact: jest.fn(),
@@ -14,12 +14,17 @@ const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 const fp = { id: "fp1", label: "pdftotext@1" };
 const T0 = new Date("2026-01-01T00:00:00Z");
 
+const LM = new Date("2025-12-31T00:00:00Z");
 function fakeIo(files: Record<string, Buffer>, etags: Record<string, string> = {}) {
   const texts = new Map<string, { text: string; lastModified: Date; metadata?: Record<string, string> }>();
+  const info = (key: string) => ({ etag: etags[key] ?? `"e-${key}"`, lastModified: LM, size: files[key].length });
   const io = {
-    head: jest.fn(async (key: string) => (key in files ? { etag: etags[key] ?? `"e-${key}"` } : null)),
-    getBytes: jest.fn(async (key: string) => files[key]),
-    getText: jest.fn(async (key: string) => texts.get(key) ?? null),
+    head: jest.fn(async (key: string) => (key in files ? info(key) : null)),
+    getBytes: jest.fn(async (key: string) => ({ bytes: files[key], ...info(key) })),
+    getText: jest.fn(async (key: string) => {
+      const t = texts.get(key);
+      return t ? { text: t.text, lastModified: t.lastModified, metadata: t.metadata ?? {} } : null;
+    }),
     putText: jest.fn(async (key: string, text: string, metadata: Record<string, string>) => {
       texts.set(key, { text, lastModified: T0, metadata });
     }),
@@ -49,9 +54,14 @@ describe("readThroughDocument", () => {
     const first = await readThroughDocument(base(io, extract));
     expect(first).toEqual({ text: ok().text, totalPages: 2, fromStore: false });
     const textKey = contentKey(sha(bytes), fp.id, "pre");
-    expect(texts.get(textKey)?.metadata).toEqual({ "exulu-extractor": "pdftotext@1" });
+    expect(texts.get(textKey)?.metadata).toEqual({ "exulu-extractor": "pdftotext@1", "exulu-pages": "2" });
     const ptr = JSON.parse(texts.get(pointerKey("bkt", "pre/user_1/a.pdf", "pre"))!.text);
-    expect(ptr).toEqual({ etag: '"e-pre/user_1/a.pdf"', sha256: sha(bytes) });
+    expect(ptr).toEqual({
+      etag: '"e-pre/user_1/a.pdf"',
+      lastModified: LM.toISOString(),
+      size: bytes.length,
+      sha256: sha(bytes),
+    });
 
     io.getBytes.mockClear();
     const second = await readThroughDocument(base(io, extract));
@@ -64,7 +74,8 @@ describe("readThroughDocument", () => {
     const { io } = fakeIo({ "pre/user_1/a.pdf": bytes }, { "pre/user_1/a.pdf": '"v1"' });
     const extract = jest.fn(async () => ok());
     await readThroughDocument(base(io, extract));
-    io.head.mockResolvedValue({ etag: '"v2"' });
+    io.head.mockResolvedValue({ etag: '"v2"', lastModified: LM, size: bytes.length });
+    io.getBytes.mockResolvedValue({ bytes, etag: '"v2"', lastModified: LM, size: bytes.length });
     const again = await readThroughDocument(base(io, extract));
     expect(again.fromStore).toBe(true);
     expect(io.getBytes).toHaveBeenCalledTimes(2);
@@ -173,6 +184,97 @@ describe("readThroughDocument", () => {
     expect(res.fromStore).toBe(false);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe("pointer integrity", () => {
+  const bytes = Buffer.from("pdf-bytes");
+  const other = Buffer.from("other-bytes");
+  const SRC = "pre/user_1/a.pdf";
+  const meta = (b: Buffer, lm = LM, etag = '"same"') => ({ etag, lastModified: lm, size: b.length });
+
+  it("a same-ETag overwrite with another lastModified is re-hashed and its new content served", async () => {
+    const { io } = fakeIo({ [SRC]: bytes });
+    io.head.mockResolvedValue(meta(bytes));
+    io.getBytes.mockResolvedValue({ bytes, ...meta(bytes) });
+    const extract = jest.fn(async (b: Buffer) => ok(b.toString()));
+    expect((await readThroughDocument(base(io, extract))).text).toBe("pdf-bytes");
+    const later = new Date(LM.getTime() + 5000);
+    io.head.mockResolvedValue(meta(other, later));
+    io.getBytes.mockResolvedValue({ bytes: other, ...meta(other, later) });
+    const res = await readThroughDocument(base(io, extract));
+    expect(res).toMatchObject({ text: "other-bytes", fromStore: false });
+    expect(io.getBytes).toHaveBeenCalledTimes(2);
+  });
+
+  it("a different size alone also invalidates the pointer", async () => {
+    const { io } = fakeIo({ [SRC]: bytes });
+    io.head.mockResolvedValue(meta(bytes));
+    io.getBytes.mockResolvedValue({ bytes, ...meta(bytes) });
+    const extract = jest.fn(async (b: Buffer) => ok(b.toString()));
+    await readThroughDocument(base(io, extract));
+    io.head.mockResolvedValue({ ...meta(bytes), size: bytes.length + 1 });
+    await readThroughDocument(base(io, extract));
+    expect(io.getBytes).toHaveBeenCalledTimes(2);
+  });
+
+  it("a pointer in the old two-field shape is treated as absent", async () => {
+    const { io, texts } = fakeIo({ [SRC]: bytes });
+    const extract = jest.fn(async () => ok());
+    await readThroughDocument(base(io, extract));
+    texts.set(pointerKey("bkt", SRC, "pre"), {
+      text: JSON.stringify({ etag: `"e-${SRC}"`, sha256: sha(bytes) }),
+      lastModified: T0,
+    });
+    io.getBytes.mockClear();
+    const res = await readThroughDocument(base(io, extract));
+    expect(io.getBytes).toHaveBeenCalledTimes(1);
+    expect(res.fromStore).toBe(true);
+  });
+
+  it("when HEAD and GET disagree the pointer is written from the GET's values", async () => {
+    const { io, texts } = fakeIo({ [SRC]: bytes });
+    io.head.mockResolvedValue(meta(other, new Date(LM.getTime() - 1000), '"headetag"'));
+    io.getBytes.mockResolvedValue({ bytes, ...meta(bytes, LM, '"getetag"') });
+    await readThroughDocument(base(io, jest.fn(async () => ok())));
+    const ptr = JSON.parse(texts.get(pointerKey("bkt", SRC, "pre"))!.text);
+    expect(ptr).toEqual({ etag: '"getetag"', lastModified: LM.toISOString(), size: bytes.length, sha256: sha(bytes) });
+  });
+
+  it("no pointer is written when the GET reports no ETag", async () => {
+    const { io, texts } = fakeIo({ [SRC]: bytes });
+    io.getBytes.mockResolvedValue({ bytes, etag: null, lastModified: LM, size: bytes.length });
+    await readThroughDocument(base(io, jest.fn(async () => ok())));
+    expect(texts.has(pointerKey("bkt", SRC, "pre"))).toBe(false);
+  });
+});
+
+describe("page count in object metadata", () => {
+  const bytes = Buffer.from("pdf-bytes");
+  const SRC = "pre/user_1/a.pdf";
+
+  it("a hit returns the stored count even when the text has no markers (one-page document)", async () => {
+    const { io } = fakeIo({ [SRC]: bytes });
+    const extract = jest.fn(async () => ({ text: "just one page", totalPages: 1, storable: true }));
+    await readThroughDocument(base(io, extract));
+    const hit = await readThroughDocument(base(io, extract));
+    expect(hit).toEqual({ text: "just one page", totalPages: 1, fromStore: true });
+  });
+
+  it("a stored count wins over a marker-like line inside the text", async () => {
+    const { io } = fakeIo({ [SRC]: bytes });
+    const text = "--- page 1 ---\nquote:\n--- page 7 ---\nstill page one";
+    const extract = jest.fn(async () => ({ text, totalPages: 1, storable: true }));
+    await readThroughDocument(base(io, extract));
+    expect((await readThroughDocument(base(io, extract))).totalPages).toBe(1);
+  });
+
+  it("an object without the metadata falls back to counting markers", async () => {
+    const { io, texts } = fakeIo({ [SRC]: bytes });
+    await readThroughDocument(base(io, jest.fn(async () => ok())));
+    texts.get(contentKey(sha(bytes), fp.id, "pre"))!.metadata = { "exulu-extractor": "pdftotext@1" };
+    const hit = await readThroughDocument(base(io, jest.fn()));
+    expect(hit.totalPages).toBe(2);
   });
 });
 

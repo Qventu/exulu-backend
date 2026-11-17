@@ -545,9 +545,6 @@ export function reconstructTableHeaders(
   }
 }
 
-/**
- * Identifies pages that need VLM validation and validates them in parallel
- */
 /** Progress is advisory: a throwing callback must never touch processing. */
 function safeProgress(onProgress: ProgressFn | undefined, p: Parameters<ProgressFn>[0]): void {
   try {
@@ -566,6 +563,9 @@ function needsVisionPass(page: ProcessedPage): boolean {
   return Boolean(hasImage || hasTable);
 }
 
+/**
+ * Identifies pages that need VLM validation and validates them in parallel
+ */
 async function validateWithVLM(
   document: ProcessedDocument,
   model: LanguageModel,

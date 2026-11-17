@@ -6,11 +6,20 @@ import type { User } from "@EXULU_TYPES/models/user";
 const bucket = new Map<string, { body: Buffer | string; lastModified: Date }>();
 jest.mock("@SRC/uppy", () => ({
   isS3NotFound: (e: { name?: string }) => e?.name === "NoSuchKey",
-  headS3ObjectExact: jest.fn(async (key: string) => (bucket.has(key) ? { etag: `"etag-${key}"` } : null)),
+  headS3ObjectExact: jest.fn(async (key: string) => {
+    const obj = bucket.get(key);
+    return obj ? { etag: `"etag-${key}"`, lastModified: obj.lastModified, size: Buffer.from(obj.body).length } : null;
+  }),
   getS3ObjectBytes: jest.fn(async (key: string) => {
     const obj = bucket.get(key);
     if (!obj) throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
     return Buffer.from(obj.body);
+  }),
+  getS3ObjectBytesWithInfo: jest.fn(async (key: string, config: unknown) => {
+    // Delegates to the spied getS3ObjectBytes so existing assertions on it keep their meaning.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const bytes: Buffer = await require("@SRC/uppy").getS3ObjectBytes(key, config);
+    return { bytes, etag: `"etag-${key}"`, lastModified: bucket.get(key)!.lastModified, size: bytes.length };
   }),
   getS3ObjectTextExact: jest.fn(async (key: string) => {
     const obj = bucket.get(key);
@@ -26,7 +35,10 @@ jest.mock("./document-render-helpers", () => ({
   isLegacyOfficeFormat: jest.requireActual("./document-render-helpers").isLegacyOfficeFormat,
   convertLegacyOfficeToModern: jest.fn(),
 }));
-jest.mock("@SRC/exulu/attachment-text", () => ({ extractDocument: jest.fn() }));
+jest.mock("@SRC/exulu/attachment-text", () => ({
+  ...jest.requireActual("@SRC/exulu/attachment-text"),
+  extractDocument: jest.fn(),
+}));
 jest.mock("officeparser", () => ({
   parseOfficeAsync: jest.fn(),
 }));
@@ -316,9 +328,10 @@ describe("stored text", () => {
       expect(input.tolerateVisionFailures).toBe(true);
     });
 
-    it("refuses over the tool cap with the extraction's notice", async () => {
+    it("refuses over the tool cap with the notice for this caller's file", async () => {
       extractDocument.mockResolvedValue({ engine: "document-processor", text: "[Document too long: ...]", pages: [], tooLong: { pageCount: 301, maxPages: 300 } });
-      expect(await run({ filename: "report.pdf" })).toEqual({ error: "[Document too long: ...]" });
+      const out = await run({ filename: "report.pdf" });
+      expect(out.error).toMatch(/^\[Document too long: "report.pdf" has 301 pages, the limit for reading a document is 300 pages/);
     });
 
     describe("unverified pages", () => {
@@ -385,6 +398,63 @@ it("addresses the session file under the session owner's prefix when an owner is
   const tool = createParseDocumentTool({ sessionID: "s1", user, exuluConfig, ownerId: 11 })!;
   await finalOf((tool.tool!.execute as (i: unknown) => unknown)({ filename: "Anfrage 04072.pdf" }));
   expect(uppy.getS3ObjectBytes).toHaveBeenCalledWith("exulu/user_11/sessions/s1/Anfrage 04072.pdf", exuluConfig);
+});
+
+describe("refusals are formatted per caller", () => {
+  it("two concurrent callers with different names for the same bytes each see their own name", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    pdfToText.mockImplementation(async () => {
+      await gate;
+      return " \f  \f ";
+    });
+    // report.pdf and scan.pdf hold the same bytes.
+    const a = runTool({ filename: "report.pdf" });
+    const b = runTool({ filename: "scan.pdf" });
+    await new Promise((r) => setTimeout(r, 20));
+    release();
+    const [ra, rb] = await Promise.all([a, b]);
+    expect(pdfToText).toHaveBeenCalledTimes(1);
+    expect(ra.error).toContain('"report.pdf"');
+    expect(ra.error).not.toContain("scan.pdf");
+    expect(rb.error).toContain('"scan.pdf"');
+    expect(rb.error).not.toContain("report.pdf");
+  });
+});
+
+describe("source read failures", () => {
+  it("a non-404 failure reaches the model as a fixed text without the key or the error detail", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    uppy.getS3ObjectBytes.mockRejectedValueOnce(new Error("AccessDenied for exulu/user_7/sessions/s1/report.pdf"));
+    const out = await runTool({ filename: "report.pdf" });
+    expect(out).toEqual({ error: 'Could not read "report.pdf". Try again; if it keeps failing, tell the user.' });
+    const logged = [...warn.mock.calls, ...error.mock.calls].flat().join(" ");
+    expect(logged).toContain("AccessDenied");
+    warn.mockRestore();
+    error.mockRestore();
+  });
+});
+
+describe("tool description by configuration", () => {
+  const descriptionOf = (cfg: ExuluConfig) => createParseDocumentTool({ sessionID: "s1", user, exuluConfig: cfg })!.description;
+  const withProcessor = {
+    fileUploads: exuluConfig.fileUploads,
+    attachments: { documentProcessor: { processor: { name: "mistral" } } },
+  } as unknown as ExuluConfig;
+
+  it("without a processor keeps the original wording and adds one sentence about reuse", () => {
+    const d = descriptionOf(exuluConfig);
+    expect(d).toContain("Free and fast (no OCR): works only on documents with a real text layer. To SEE a page or an image inside a document, use view_document_page.");
+    expect(d).toMatch(/stored and reused|reused/);
+    expect(d).not.toMatch(/minutes/);
+  });
+
+  it("with a processor describes the long first read", () => {
+    const d = descriptionOf(withProcessor);
+    expect(d).toMatch(/first read of a long document can take minutes/);
+    expect(d).not.toContain("Free and fast");
+  });
 });
 
 describe("project files", () => {

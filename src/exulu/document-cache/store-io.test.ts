@@ -76,6 +76,29 @@ describe.each([[undefined], ["pre"]])("createStoreIo with s3prefix %p", (prefix)
   });
 });
 
+describe("object identity from the same response", () => {
+  it("head returns etag, lastModified and size; getBytes returns the GET's own values; getText returns metadata", async () => {
+    const io = createStoreIo(config());
+    const d = new Date("2026-01-02T00:00:00Z");
+    send.mockResolvedValueOnce({ ETag: '"h"', LastModified: d, ContentLength: 9 });
+    await expect(io.head("k")).resolves.toEqual({ etag: '"h"', lastModified: d, size: 9 });
+    send.mockResolvedValueOnce({
+      ETag: '"g"',
+      LastModified: d,
+      ContentLength: 3,
+      Body: { transformToByteArray: async () => new Uint8Array([1, 2, 3]) },
+    });
+    const got = await io.getBytes("k");
+    expect(got).toEqual({ bytes: Buffer.from([1, 2, 3]), etag: '"g"', lastModified: d, size: 3 });
+    send.mockResolvedValueOnce({
+      Body: { transformToString: async () => "t" },
+      LastModified: d,
+      Metadata: { "exulu-pages": "4" },
+    });
+    await expect(io.getText("k")).resolves.toEqual({ text: "t", lastModified: d, metadata: { "exulu-pages": "4" } });
+  });
+});
+
 describe("exact list and delete helpers", () => {
   it("list uses the prefix verbatim and maps the page", async () => {
     const { listS3ObjectsExact } = require("../../uppy/index");

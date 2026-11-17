@@ -8,7 +8,7 @@ import type { ExuluConfig } from "@SRC/exulu/app";
 import type { User } from "@EXULU_TYPES/models/user";
 import { convertLegacyOfficeToModern, isLegacyOfficeFormat, pdfToText } from "./document-render-helpers";
 import { resolveFileKey } from "./resolve-file-key";
-import { extractDocument } from "@SRC/exulu/attachment-text";
+import { extractDocument, tooLongForToolNotice } from "@SRC/exulu/attachment-text";
 import { throttleProgress, type ProgressFn, type ReadingStatus } from "@SRC/exulu/document-cache/progress";
 import { createStoreIo, readThroughDocument, type Extracted, type StoreIo } from "@SRC/exulu/document-cache/store";
 import { documentCacheDays, documentMaxPages, extractorFingerprint } from "@SRC/exulu/document-cache/keys";
@@ -53,13 +53,49 @@ const OFFICE_EXTENSIONS = new Set([
   ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".odt", ".ods", ".odp", ".rtf",
 ]);
 
-/** A result the model must see as a tool error; never stored, never retried as a failure. */
-class ExtractionRefusal extends Error {}
-
 /**
- * Keeps the pages in `range` of a text with `--- page N ---` markers, exactly as the
- * extraction would have joined them. Text without markers is returned whole.
+ * Why a read is refused. Carries kinds and numbers only, never a file name: an extraction is
+ * shared by every caller waiting on the same bytes, and each caller words the refusal
+ * with its own file name (see refusalMessage).
  */
+type RefusalInfo =
+  | { kind: "tooLong"; pageCount: number; maxPages: number }
+  | { kind: "garbledTextLayer" }
+  | { kind: "noTextLayer" }
+  | { kind: "notFound" }
+  | { kind: "readFailed" };
+
+/** A result the model must see as a tool error; never stored, never retried as a failure. */
+class ExtractionRefusal extends Error {
+  constructor(readonly info: RefusalInfo) {
+    super(info.kind);
+  }
+}
+
+function refusalMessage(info: RefusalInfo, name: string): string {
+  switch (info.kind) {
+    case "tooLong":
+      return tooLongForToolNotice(name, info.pageCount, info.maxPages);
+    case "garbledTextLayer":
+      return (
+        `"${name}" has a text layer that is unreadable (its font encoding maps glyphs to the wrong ` +
+        "characters, so words and especially numbers come out wrong or vanish). Do not use extracted " +
+        "text from this file. Use view_document_page to read the pages visually, or suggest the user add " +
+        "the document to a knowledge base with a document processor for full OCR."
+      );
+    case "noTextLayer":
+      return (
+        `"${name}" has no extractable text layer (likely a scan or image-based PDF). ` +
+        "Use view_document_page to look at pages visually, or suggest the user add the document " +
+        "to a knowledge base with a document processor for full OCR."
+      );
+    case "notFound":
+      return `Could not read session file "${name}" (status 404). Check the exact file name.`;
+    case "readFailed":
+      return `Could not read "${name}". Try again; if it keeps failing, tell the user.`;
+  }
+}
+
 /** [7,8,9,10,11,12,40] -> "7-12, 40" */
 export function collapsePageList(pages: number[]): string {
   const sorted = [...new Set(pages)].sort((a, b) => a - b);
@@ -73,6 +109,10 @@ export function collapsePageList(pages: number[]): string {
   return parts.join(", ");
 }
 
+/**
+ * Keeps the pages in `range` of a text with `--- page N ---` markers, exactly as the
+ * extraction would have joined them. Text without markers is returned whole.
+ */
 export function selectPages(fullText: string, range: [number, number]): string {
   const parts = fullText.split(/^(?=--- page \d+ ---$)/m);
   if (parts.length < 2 && !/^--- page \d+ ---$/m.test(fullText)) return fullText;
@@ -199,12 +239,10 @@ export const createParseDocumentTool = ({
           try {
             return await baseIo.getBytes(sourceKey);
           } catch (err) {
-            if (isS3NotFound(err)) {
-              throw new ExtractionRefusal(
-                `Could not read session file "${safeName}" (status 404). Check the exact file name.`,
-              );
-            }
-            throw err;
+            if (isS3NotFound(err)) throw new ExtractionRefusal({ kind: "notFound" });
+            // The detail can contain bucket keys; it stays in the server log.
+            console.error(`[EXULU] parse_document: could not read ${sourceKey}:`, err instanceof Error ? err.message : String(err));
+            throw new ExtractionRefusal({ kind: "readFailed" });
           }
         },
       };
@@ -226,7 +264,7 @@ export const createParseDocumentTool = ({
             onProgress,
           });
           if (extracted.tooLong) {
-            throw new ExtractionRefusal(extracted.text);
+            throw new ExtractionRefusal({ kind: "tooLong", ...extracted.tooLong });
           }
           if (extracted.engine === "document-processor") {
             const multiPage = extracted.pages.length > 1;
@@ -254,19 +292,10 @@ export const createParseDocumentTool = ({
           const pageCount = pageTexts.length;
           const nonWhitespace = raw.replace(/\s/g, "").length;
           if (looksLikeGarbledTextLayer(raw)) {
-            throw new ExtractionRefusal(
-              `"${safeName}" has a text layer that is unreadable (its font encoding maps glyphs to the wrong ` +
-                "characters, so words and especially numbers come out wrong or vanish). Do not use extracted " +
-                "text from this file. Use view_document_page to read the pages visually, or suggest the user add " +
-                "the document to a knowledge base with a document processor for full OCR.",
-            );
+            throw new ExtractionRefusal({ kind: "garbledTextLayer" });
           }
           if (nonWhitespace < pageCount * MIN_CHARS_PER_PAGE) {
-            throw new ExtractionRefusal(
-              `"${safeName}" has no extractable text layer (likely a scan or image-based PDF). ` +
-                "Use view_document_page to look at pages visually, or suggest the user add the document " +
-                "to a knowledge base with a document processor for full OCR.",
-            );
+            throw new ExtractionRefusal({ kind: "noTextLayer" });
           }
           return {
             totalPages: pageCount,
@@ -337,7 +366,7 @@ export const createParseDocumentTool = ({
         ...(stored.fromStore ? { fromStore: true } : {}),
       };
     } catch (err) {
-      if (err instanceof ExtractionRefusal) return { error: err.message };
+      if (err instanceof ExtractionRefusal) return { error: refusalMessage(err.info, safeName) };
       return { error: `Failed to parse "${safeName}": ${err instanceof Error ? err.message : "unknown error"}` };
     }
   };
@@ -392,13 +421,20 @@ export const createParseDocumentTool = ({
     id: "parse_document",
     name: PARSE_DOCUMENT_TOOL_NAME,
     needsApproval: false,
-    description:
-      "Extract the text of an uploaded PDF or Office document from this session's files, with " +
-      '"--- page N ---" markers for PDFs so you can locate content by page. Results are ' +
-      "stored and reused, so reading the same document again is fast, but the first read of a long document " +
-      "can take minutes. To SEE a page or an image inside a document, " +
-      "use view_document_page." +
-      " Files of the session's project are addressed as `project/<name>` and are read-only.",
+    // Without a document processor the tool reads the text layer only: say so, and keep the
+    // original wording so existing deployments see no change beyond the reuse sentence.
+    description: exuluConfig.attachments?.documentProcessor
+      ? "Extract the text of an uploaded PDF or Office document from this session's files, with " +
+        '"--- page N ---" markers for PDFs so you can locate content by page. Results are ' +
+        "stored and reused, so reading the same document again is fast, but the first read of a long document " +
+        "can take minutes. To SEE a page or an image inside a document, " +
+        "use view_document_page." +
+        " Files of the session's project are addressed as `project/<name>` and are read-only."
+      : "Extract the text of an uploaded PDF or Office document from this session's files, with " +
+        '"--- page N ---" markers for PDFs so you can locate content by page. Free and fast (no OCR): ' +
+        "works only on documents with a real text layer. To SEE a page or an image inside a document, " +
+        "use view_document_page. Extracted text is stored and reused, so reading the same document again is fast." +
+        " Files of the session's project are addressed as `project/<name>` and are read-only.",
     inputSchema: z.object({
       filename: z.string().describe('Exact session file name, e.g. "report.pdf"'),
       pages: z.string().optional().describe('PDF page or range to extract, e.g. "2" or "1-5" (default: all pages) (PDF only)'),
