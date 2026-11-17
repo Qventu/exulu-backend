@@ -243,7 +243,7 @@ describe("connectImp", () => {
     expect(progressCalls).toEqual(["turn"]);
   });
 
-  test("openPanel resolves true on an accepted ack and false on a rejected one", async () => {
+  test("openPanel resolves accepted on an accepted ack and not accepted on a rejected one", async () => {
     const { fakePort, connecting } = openChannel();
     fakePort.deliver(grantMessage());
     const channel = await connecting;
@@ -253,11 +253,11 @@ describe("connectImp", () => {
       { type: "exulu:panel:open", v: CHANNEL_V, slot: "analyse", prompt: "Summarise this" },
     ]);
     fakePort.deliver({ type: "exulu:panel:open:ack", v: CHANNEL_V, slot: "analyse", accepted: true });
-    expect(await accepted).toBe(true);
+    expect(await accepted).toEqual({ accepted: true });
 
     const rejected = channel.openPanel("other-slot");
     fakePort.deliver({ type: "exulu:panel:open:ack", v: CHANNEL_V, slot: "other-slot", accepted: false, reason: "unknown-slot" });
-    expect(await rejected).toBe(false);
+    expect(await rejected).toEqual({ accepted: false });
   });
 
   test("openPanel puts items and files on the wire, not just prompt", async () => {
@@ -284,7 +284,57 @@ describe("connectImp", () => {
       },
     ]);
     fakePort.deliver({ type: "exulu:panel:open:ack", v: CHANNEL_V, slot: "analyse", accepted: true });
-    expect(await opening).toBe(true);
+    expect(await opening).toEqual({ accepted: true });
+  });
+
+  async function openWithAck(
+    opts: { project?: string } | undefined,
+    ack: Record<string, unknown>,
+  ): Promise<{ result: unknown; sent: unknown[] }> {
+    const { fakePort, connecting } = openChannel();
+    fakePort.deliver(grantMessage());
+    const channel = await connecting;
+    const opening = channel.openPanel("analyse", opts);
+    fakePort.deliver({ type: "exulu:panel:open:ack", v: CHANNEL_V, slot: "analyse", ...ack });
+    return { result: await opening, sent: fakePort.sent };
+  }
+
+  test("openPanel posts project on the request", async () => {
+    const { sent } = await openWithAck({ project: "p-1" }, { accepted: true });
+    expect(sent).toEqual([{ type: "exulu:panel:open", v: 2, slot: "analyse", project: "p-1" }]);
+  });
+
+  test("resolves { accepted: true, project: attached } on an ack carrying that", async () => {
+    const { result } = await openWithAck({ project: "p-1" }, { accepted: true, project: "attached" });
+    expect(result).toEqual({ accepted: true, project: "attached" });
+  });
+
+  test("resolves { accepted: true, project: denied } on an ack carrying that", async () => {
+    const { result } = await openWithAck({ project: "p-1" }, { accepted: true, project: "denied" });
+    expect(result).toEqual({ accepted: true, project: "denied" });
+  });
+
+  test("an ack without project resolves { accepted: true } (an old host)", async () => {
+    const { result } = await openWithAck({ project: "p-1" }, { accepted: true });
+    expect(result).toEqual({ accepted: true });
+  });
+
+  test("an ack with an unknown project value drops the field", async () => {
+    const { result } = await openWithAck({ project: "p-1" }, { accepted: true, project: "maybe" });
+    expect(result).toEqual({ accepted: true });
+    expect("project" in (result as object)).toBe(false);
+  });
+
+  test("a rejected ack resolves { accepted: false } and carries no project", async () => {
+    const { result } = await openWithAck({ project: "p-1" }, { accepted: false, project: "attached", reason: "no-panel" });
+    expect(result).toEqual({ accepted: false });
+    expect("project" in (result as object)).toBe(false);
+  });
+
+  test("a request without project resolves { accepted: true } on a plain accepted ack", async () => {
+    const { result, sent } = await openWithAck(undefined, { accepted: true });
+    expect(result).toEqual({ accepted: true });
+    expect(sent).toEqual([{ type: "exulu:panel:open", v: 2, slot: "analyse" }]);
   });
 
   test("a panel:open:ack message stamped with the wrong version is ignored", async () => {
@@ -300,7 +350,7 @@ describe("connectImp", () => {
     const opening = channel.openPanel("analyse");
     fakePort.deliver({ type: "exulu:panel:open:ack", v: IDENTITY_V, slot: "analyse", accepted: false });
     fakePort.deliver({ type: "exulu:panel:open:ack", v: CHANNEL_V, slot: "analyse", accepted: true });
-    expect(await opening).toBe(true);
+    expect(await opening).toEqual({ accepted: true });
   });
 
   test("openPanel resolves false rather than hanging when no ack arrives", async () => {
@@ -317,7 +367,7 @@ describe("connectImp", () => {
     });
     await jest.advanceTimersByTimeAsync(1_000);
     expect(settled).toBe(true);
-    expect(await pending).toBe(false);
+    expect(await pending).toEqual({ accepted: false });
   });
 
   test("messages with the wrong version are ignored", async () => {

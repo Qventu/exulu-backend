@@ -36,8 +36,8 @@ grows past one hand-written file, switch to the Vite build
 | parent → iframe (over the port) | `{ type: "exulu:host:info", v: 2, panel: boolean, slots: [{ key, label }] }` |
 | parent → iframe (over the port) | `{ type: "exulu:panel:viewport", v: 2, width: number, open: boolean }` |
 | parent → iframe (over the port) | `{ type: "exulu:session:progress", v: 2, reason: "tool" \| "turn" }` |
-| iframe → parent (over the port) | `{ type: "exulu:panel:open", v: 2, slot, prompt?, items?, files? }` → answered with an ack |
-| parent → iframe (over the port) | `{ type: "exulu:panel:open:ack", v: 2, slot, accepted: boolean, reason? }` |
+| iframe → parent (over the port) | `{ type: "exulu:panel:open", v: 2, slot, prompt?, items?, files?, project? }` → answered with an ack |
+| parent → iframe (over the port) | `{ type: "exulu:panel:open:ack", v: 2, slot, accepted: boolean, reason?, project?: "attached" \| "denied" }` |
 
 Verify both `type` and `v` on every message — `connectImp` already does this
 for you. The identity credential only ever travels over the port, never over
@@ -173,7 +173,7 @@ something that assumes a prior state).
 
 ### Opening a panel: prefill never submits
 
-`openPanel(slot, { prompt?, items?, files? })` asks the host to open `slot`'s
+`openPanel(slot, { prompt?, items?, files?, project? })` asks the host to open `slot`'s
 panel with the composer prefilled and/or files attached. **It never sends
 anything on the user's behalf** — the user reads what was prepared and
 presses send themselves. There is no API for submitting a message from an
@@ -188,11 +188,33 @@ background routine.
   not arbitrary URLs, and not a way to hand the agent a file it doesn't
   already have permission to read.
 
-`openPanel` resolves `true` on an accepted ack, `false` on a rejected one
-(`reason` on the wire names why — e.g. `"no-panel"`, `"unknown-slot"`), and
-**`false` after a timeout if no ack ever arrives** — it never hangs. Re-enable
-your own "open" button on whatever `openPanel` resolves to, not only on
-`true`.
+`openPanel` resolves an object, `{ accepted: boolean; project?: "attached" |
+"denied" }`: `accepted: true` on an accepted ack, `accepted: false` on a
+rejected one (`reason` on the wire names why — e.g. `"no-panel"`,
+`"unknown-slot"`), and `{ accepted: false }` after a timeout if no ack ever
+arrives — it never hangs. **Read the result through `.accepted`: the object is
+always truthy, so a bare `if (await openPanel(...))` is true even when the host
+refused.** Re-enable your own "open" button on whatever `openPanel` resolves
+to, not only on acceptance.
+
+### Opening a panel inside a project
+
+`project` is a project uuid. When you pass it, the host tries to attach the
+new session to that project (its shared files) and reports the outcome in the
+ack's `project` field. The request only carries the key when you passed one.
+
+- `"attached"`: the session is in the project.
+- `"denied"`: it is not. This covers every reason (no access, unknown
+  project, anything else) and the artifact gets no detail. **The panel still
+  opens on `denied`, just without the project.** Show a hint that the viewer
+  needs access to the project.
+- Field absent: an old host that does not know `project`, or a request that
+  had none. Treat it as "no project outcome". Any value other than exactly
+  `"attached"` or `"denied"` is dropped by the template, and a rejected ack
+  never carries `project`.
+
+The host runs an access check before it acks, so the ack can take as long as
+that check; do not assume an instant answer.
 
 **Attachment limits — a seam to know about.** The backend's adopt step (what
 turns your `files` keys into session attachments) accepts at most **20 keys**

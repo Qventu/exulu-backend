@@ -80,6 +80,14 @@ export type IdentityResult = { ok: true; grant: Grant } | { ok: false; reason: s
 
 export const CHANNEL_V = 2;
 
+/**
+ * What `openPanel` resolves. Read it through `.accepted` — the result is an
+ * object, so a bare `if (await openPanel(...))` is always true. `project` is
+ * present only when the request carried one AND the host answered with
+ * exactly "attached" or "denied" (an old host omits it).
+ */
+export type OpenPanelResult = { accepted: boolean; project?: "attached" | "denied" };
+
 export interface PanelSlot {
   key: string;
   label: string;
@@ -100,8 +108,11 @@ export interface ImpChannel {
   onViewport(cb: (v: { width: number; open: boolean }) => void): () => void;
   /** Fires on every `exulu:session:progress` bump. Can fire immediately on connect — reopening a panel on a session with existing tool-call history bumps once on mount — so register this before doing anything else, not after a user action. Returns an unsubscribe. */
   onProgress(cb: (reason: "tool" | "turn") => void): () => void;
-  /** Asks the host to open `slot`'s panel with an optional prefilled prompt and knowledge items/files. Resolves `true`/`false` on the host's ack, or `false` if no ack arrives — never hangs, so a caller can safely re-enable its own button on settle. */
-  openPanel(slot: string, opts?: { prompt?: string; items?: string[]; files?: string[] }): Promise<boolean>;
+  /** Asks the host to open `slot`'s panel with an optional prefilled prompt and knowledge items/files. Optional `project` (a project uuid) asks the host to open the session inside that project. Resolves `{ accepted }` on the host's ack (plus `project: "attached" | "denied"` when the host reports it), or `{ accepted: false }` if no ack arrives — never hangs, so a caller can safely re-enable its own button on settle. Read `.accepted`: the object itself is always truthy. */
+  openPanel(
+    slot: string,
+    opts?: { prompt?: string; items?: string[]; files?: string[]; project?: string },
+  ): Promise<OpenPanelResult>;
 }
 
 /** Validates a `postMessage` payload as a v1 grant. Mirrors the v1 client's own `asGrant` exactly — not re-derived, so a future protocol change to one is a conscious change to both. */
@@ -155,7 +166,7 @@ export function connectImp(win: HandshakeWindow, timeoutMs = 10_000): Promise<Im
     const host: { panel: boolean; slots: PanelSlot[] } = { panel: false, slots: [] };
     const viewportSubs = new Set<(v: { width: number; open: boolean }) => void>();
     const progressSubs = new Set<(reason: "tool" | "turn") => void>();
-    const openWaiters = new Map<string, (accepted: boolean) => void>();
+    const openWaiters = new Map<string, (result: OpenPanelResult) => void>();
     // Whichever identity exchange is currently outstanding: the initial
     // grant this very promise is waiting on, or a later refresh() call.
     // Cleared the instant its answer arrives, by the dispatcher below — not
@@ -225,7 +236,14 @@ export function connectImp(win: HandshakeWindow, timeoutMs = 10_000): Promise<Im
           if (data.v !== CHANNEL_V) return;
           if (typeof data.slot !== "string") return;
           const resolveOpen = openWaiters.get(data.slot);
-          resolveOpen?.(data.accepted === true);
+          if (!resolveOpen) return;
+          if (data.accepted !== true) {
+            resolveOpen({ accepted: false });
+            return;
+          }
+          const result: OpenPanelResult = { accepted: true };
+          if (data.project === "attached" || data.project === "denied") result.project = data.project;
+          resolveOpen(result);
           return;
         }
         default:
@@ -278,27 +296,28 @@ export function connectImp(win: HandshakeWindow, timeoutMs = 10_000): Promise<Im
      */
     const openPanel = (
       slot: string,
-      opts?: { prompt?: string; items?: string[]; files?: string[] },
-    ): Promise<boolean> => {
-      return new Promise<boolean>((resolveOpen) => {
+      opts?: { prompt?: string; items?: string[]; files?: string[]; project?: string },
+    ): Promise<OpenPanelResult> => {
+      return new Promise<OpenPanelResult>((resolveOpen) => {
         if (!port) {
-          resolveOpen(false);
+          resolveOpen({ accepted: false });
           return;
         }
         let done = false;
-        const ackTimer = setTimeout(() => settle(false), timeoutMs);
-        function settle(accepted: boolean): void {
+        const ackTimer = setTimeout(() => settle({ accepted: false }), timeoutMs);
+        function settle(result: OpenPanelResult): void {
           if (done) return;
           done = true;
           clearTimeout(ackTimer);
           openWaiters.delete(slot);
-          resolveOpen(accepted);
+          resolveOpen(result);
         }
         openWaiters.set(slot, settle);
         const message: Record<string, unknown> = { type: "exulu:panel:open", v: CHANNEL_V, slot };
         if (opts?.prompt !== undefined) message.prompt = opts.prompt;
         if (opts?.items !== undefined) message.items = opts.items;
         if (opts?.files !== undefined) message.files = opts.files;
+        if (opts?.project !== undefined) message.project = opts.project;
         port.postMessage(message);
       });
     };
