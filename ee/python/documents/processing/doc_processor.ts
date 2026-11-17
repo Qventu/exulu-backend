@@ -33,8 +33,8 @@ export type DocumentProcessorConfig = {
   },
   /**
    * OCR settings. `concurrency` is how many OCR chunk calls ONE document runs
-   * at once (default 3, 1..8). All documents in the process additionally share
-   * a ceiling of 8 (see limits.ts).
+   * at once (default 3, 1..8). Reads in chat additionally share a process-wide
+   * ceiling of 8 (see limits.ts); knowledge-base processing does not.
    */
   ocr?: {
     concurrency?: number;
@@ -329,15 +329,14 @@ function reconstructHeadings(
 }
 
 /**
- * Validates and potentially corrects all chunks from a page using VLM
+ * Validates and potentially corrects all chunks from a page using VLM.
+ * `timeoutMs` is set on the chat path only (see ProviderLimiters.visionTimeoutMs).
  */
-/** Longest one vision (page validation) call may take; a timeout counts as a failed attempt for the retry logic. */
-export const VISION_CALL_TIMEOUT_MS = 120_000;
-
 async function validatePageWithVLM(
   page: ProcessedPage,
   imagePath: string,
-  model: LanguageModel
+  model: LanguageModel,
+  timeoutMs?: number,
 ): Promise<VLMValidationResult> {
   // Read the image as base64
   const imageBuffer = await fs.promises.readFile(imagePath);
@@ -422,8 +421,8 @@ If the page contains a flow-chart, schematic, technical drawing or control board
 
   const result = await generateText({
     model: model,
-    // A stalled provider must not pin a slot for the SDK's own, much longer, default.
-    abortSignal: AbortSignal.timeout(VISION_CALL_TIMEOUT_MS),
+    // Chat path only: a stalled provider must not pin a slot. Without it the SDK default applies, as before.
+    ...(timeoutMs ? { abortSignal: AbortSignal.timeout(timeoutMs) } : {}),
     output: Output.object({
       schema: z.object({
         needs_correction: z.boolean(),
@@ -644,7 +643,7 @@ async function validateWithVLM(
         console.log(`[EXULU] Validating page ${page.page} with VLM`);
         validation = await withRetry(async () => {
           // Process-wide ceiling (chat paths only), taken per attempt so a retry queues again.
-          const attempt = () => validatePageWithVLM(page, imagePath, model);
+          const attempt = () => validatePageWithVLM(page, imagePath, model, limiters?.visionTimeoutMs);
           return await (limiters ? limiters.vision(attempt) : attempt());
         }, 3);
 
@@ -842,6 +841,8 @@ async function processPdf(
       const resolved = await resolveOcr({
         model: config.processor.model ?? "mistral-ocr",
         ...config.attribution,
+        // Chat path only; knowledge-base processing passes no limiters and gets no explicit timeout.
+        ...(limiters?.ocrTimeoutMs ? { timeoutMs: limiters.ocrTimeoutMs } : {}),
       });
 
       // Split the PDF into ≤ N-page chunks before sending to OCR.

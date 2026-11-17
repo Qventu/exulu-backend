@@ -19,8 +19,8 @@ jest.mock("@SRC/exulu/resolve-model", () => ({ resolveModel: jest.fn(async () =>
 jest.mock("@llamaindex/liteparse", () => ({ LiteParse: jest.fn() }), { virtual: true });
 jest.mock("ai", () => ({ generateText: jest.fn(), Output: { object: (x: unknown) => x } }));
 
-import { documentProcessor, VISION_CALL_TIMEOUT_MS } from "./doc_processor";
-import { processWideLimiters } from "./limits";
+import { documentProcessor } from "./doc_processor";
+import { processWideLimiters, VISION_CALL_TIMEOUT_MS, OCR_CALL_TIMEOUT_MS } from "./limits";
 
 const { executePythonScript } = require("@SRC/utils/python-executor") as { executePythonScript: jest.Mock };
 const { resolveOcr } = require("@SRC/exulu/resolve-ocr") as { resolveOcr: jest.Mock };
@@ -160,6 +160,26 @@ describe("vision call time limit", () => {
     expect(VISION_CALL_TIMEOUT_MS).toBe(120_000);
   });
 
+  it("knowledge-base path: a direct call creates no abort signal for OCR or vision", async () => {
+    setupDocument(2);
+    const timeout = jest.spyOn(AbortSignal, "timeout");
+    await documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config: mistral() });
+    expect(timeout).not.toHaveBeenCalled();
+    expect(generateText).toHaveBeenCalled();
+    for (const [args] of generateText.mock.calls) expect(args.abortSignal).toBeUndefined();
+    expect(resolveOcr.mock.calls[0][0].timeoutMs).toBeUndefined();
+  });
+
+  it("chat path: OCR gets the 180 s timeout and vision calls carry a 120 s signal", async () => {
+    setupDocument(1);
+    const timeout = jest.spyOn(AbortSignal, "timeout");
+    await documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config: mistral(), limiters: processWideLimiters });
+    expect(resolveOcr.mock.calls[0][0].timeoutMs).toBe(OCR_CALL_TIMEOUT_MS);
+    expect(OCR_CALL_TIMEOUT_MS).toBe(180_000);
+    expect(timeout).toHaveBeenCalledWith(120_000);
+    expect(generateText.mock.calls[0][0].abortSignal).toBeInstanceOf(AbortSignal);
+  });
+
   it("every vision call carries a timeout signal; a stalled call that is aborted counts as a failed attempt", async () => {
     setupDocument(1);
     const controller = new AbortController();
@@ -171,7 +191,7 @@ describe("vision call time limit", () => {
           if (args.abortSignal?.aborted) reject(new Error("timed out"));
         }),
     );
-    const pending = documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config: mistral(), tolerateVisionFailures: true });
+    const pending = documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config: mistral(), tolerateVisionFailures: true, limiters: processWideLimiters });
     for (let i = 0; i < 200 && generateText.mock.calls.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
     expect(timeout).toHaveBeenCalledWith(120_000);
     controller.abort();

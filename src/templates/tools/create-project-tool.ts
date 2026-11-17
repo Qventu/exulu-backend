@@ -91,6 +91,15 @@ export const CREATE_PROJECT_PROMPT =
   "`files` listing exactly the session files (from the listing above) that should move into the project. " +
   "The user approves the call and sees that list; the project is private to them; unlisted files stay in the session.";
 
+/**
+ * LIKE pattern (for `LIKE ? ESCAPE '\\'`) matching every stored key under `sessionPrefix`.
+ * Stored share keys carry no leading slash, and `\`, `%` and `_` in the prefix are escaped so a
+ * user id or session id cannot act as a wildcard.
+ */
+export function sessionKeyLikePattern(sessionPrefix: string): string {
+  return `${sessionPrefix.replace(/^\/+/, "").replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
+
 /** Postgres regex: a serialized message that may contain a file part. */
 export const FILE_PART_PATTERN = '"type"[[:space:]]*:[[:space:]]*"file"';
 
@@ -266,10 +275,9 @@ export const createCreateProjectTool = ({
       // A share link serves whatever object its row points at, and a user may share any key under
       // their own user_<id>/ prefix, session files included: moving such a file would break the
       // public link. Stored keys never carry a leading slash (normalizeS3Key), so match without it.
-      const likePrefix = sessionPrefix.replace(/^\/+/, "").replace(/[\\%_]/g, (c) => `\\${c}`);
       const shares: { s3key: string }[] = await db
         .from("shared_artifacts")
-        .whereRaw("s3key LIKE ? ESCAPE '\\'", [`${likePrefix}%`])
+        .whereRaw("s3key LIKE ? ESCAPE '\\'", [sessionKeyLikePattern(sessionPrefix)])
         .select("s3key");
       for (const share of shares) if (share?.s3key) keys.add(String(share.s3key).replace(/^\/+/, ""));
       return keys;

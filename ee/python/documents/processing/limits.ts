@@ -22,10 +22,29 @@ export const visionLimiter = pLimit(PROCESS_WIDE_LIMIT);
 
 /** Runs `fn` under a ceiling. */
 export type ProviderLimiter = <T>(fn: () => Promise<T>) => Promise<T>;
-export type ProviderLimiters = { ocr: ProviderLimiter; vision: ProviderLimiter };
+/**
+ * What the chat paths pass to documentProcessor. The call time limits travel with the limiters:
+ * a stalled provider must not pin chat slots, while knowledge-base processing (which passes
+ * none) keeps the transport's own, longer limit exactly as before.
+ */
+export type ProviderLimiters = {
+  ocr: ProviderLimiter;
+  vision: ProviderLimiter;
+  /** Longest one OCR request may take; a timeout counts as a failed attempt for the retry logic. */
+  ocrTimeoutMs?: number;
+  /** Longest one vision (page validation) call may take; same retry treatment. */
+  visionTimeoutMs?: number;
+};
 
-/** What the chat paths pass to documentProcessor. */
-export const processWideLimiters: ProviderLimiters = { ocr: ocrLimiter, vision: visionLimiter };
+export const OCR_CALL_TIMEOUT_MS = 180_000;
+export const VISION_CALL_TIMEOUT_MS = 120_000;
+
+export const processWideLimiters: ProviderLimiters = {
+  ocr: ocrLimiter,
+  vision: visionLimiter,
+  ocrTimeoutMs: OCR_CALL_TIMEOUT_MS,
+  visionTimeoutMs: VISION_CALL_TIMEOUT_MS,
+};
 
 /** Per-document OCR concurrency from `documentProcessor.ocr.concurrency`: default 3, clamped to 1..8. */
 export function ocrConcurrency(config?: { ocr?: { concurrency?: number } }): number {

@@ -6,6 +6,7 @@ import {
   PRIVATE_PROJECT_SENTENCE,
   createCreateProjectPickerTool,
   CREATE_PROJECT_PROMPT,
+  sessionKeyLikePattern,
 } from "./create-project-tool";
 import { postgresClient } from "@SRC/postgres/client";
 import { createTurnProject } from "@SRC/exulu/turn-project";
@@ -349,6 +350,15 @@ describe("history lookup", () => {
     expect(re.test('{"parts":[{ "type" :\n "file" }]}')).toBe(true);
     expect(re.test('{"parts":[{"type":"text"}]}')).toBe(false);
     expect(log.filter((l) => l.startsWith("remove"))).toEqual(["remove a.pdf", "remove b.docx"]);
+  });
+});
+
+describe("sessionKeyLikePattern", () => {
+  it("escapes backslash, percent and underscore, strips leading slashes, appends the wildcard", () => {
+    expect(sessionKeyLikePattern("exulu/user_7/sessions/s1/")).toBe("exulu/user\\_7/sessions/s1/%");
+    expect(sessionKeyLikePattern("/pre/user_7/sessions/s1/")).toBe("pre/user\\_7/sessions/s1/%");
+    expect(sessionKeyLikePattern("a%b\\c_d/")).toBe("a\\%b\\\\c\\_d/%");
+    expect(sessionKeyLikePattern("plain/")).toBe("plain/%");
   });
 });
 

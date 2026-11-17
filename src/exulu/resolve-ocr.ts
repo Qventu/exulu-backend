@@ -24,13 +24,6 @@ import { resolveLiteLLMTarget } from "./litellm/env";
  *   https://docs.mistral.ai/capabilities/vision/#optical-character-recognition-ocr
  */
 
-/**
- * Longest one OCR request may take. A stalled provider would otherwise pin the caller's
- * slots (per-document and process-wide) for as long as the connection stays open; a timeout
- * rejects the call and counts as a failed attempt for the caller's retry logic.
- */
-export const OCR_CALL_TIMEOUT_MS = 180_000;
-
 export type ResolveOcrInput = {
   /** LiteLLM model_name of the OCR model (e.g. "mistral-ocr"). */
   model: string;
@@ -44,6 +37,11 @@ export type ResolveOcrInput = {
   project?: Project;
   agent?: ExuluAgent;
   routine?: { id: string; name: string };
+  /**
+   * Abort an OCR request after this long (a timeout rejects, which the caller's retry logic treats
+   * as a failed attempt). Omitted = no explicit timeout, as before.
+   */
+  timeoutMs?: number;
 };
 
 /**
@@ -101,7 +99,7 @@ export class ResolveOcrError extends Error {
 }
 
 export async function resolveOcr(input: ResolveOcrInput): Promise<ResolvedOcr> {
-  const { model, contextId, contextName, user, userId, roleId, project, agent, routine } =
+  const { model, contextId, contextName, user, userId, roleId, project, agent, routine, timeoutMs } =
     input;
 
   if (!isLiteLLMEnabled()) {
@@ -158,7 +156,7 @@ export async function resolveOcr(input: ResolveOcrInput): Promise<ResolvedOcr> {
   const ocr: ResolvedOcr["ocr"] = async (document, opts) => {
     const res = await fetch(endpoint, {
       method: "POST",
-      signal: AbortSignal.timeout(OCR_CALL_TIMEOUT_MS),
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       headers: {
         ...authHeaders,
         "Content-Type": "application/json",
