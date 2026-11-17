@@ -182,6 +182,82 @@ describe("createContextWriteTools", () => {
     });
   });
 
+  describe("merge delete marker (explicit null at the first level of a json field)", () => {
+    const entry = z.object({ plan_tage: z.number().optional() });
+    const buildFor = (schema: z.ZodTypeAny, opts = { create: false, update: true }): z.ZodObject<any> => {
+      const fields = BASE_FIELDS.map((f) => (f.name === "specs" ? { ...f, schema } : f));
+      const tools = createContextWriteTools(makeContext({ fields }), opts, false);
+      return tools[0].inputSchema as z.ZodObject<any>;
+    };
+    const recordSchema = z.record(z.string(), entry);
+    // `b` is optional: a required declared key a patch omits is refused by transport
+    // already (pre-existing, unrelated to null entries).
+    const objectSchema = z.object({ a: entry, b: z.string().optional() });
+
+    it("record-rooted: a null entry parses under merge and survives parsing", () => {
+      const result: any = buildFor(recordSchema).safeParse({
+        specs: { keep: { plan_tage: 2 }, gone: null },
+        merge: ["specs"],
+      });
+      expect(result.success).toBe(true);
+      expect(result.data.specs).toEqual({ keep: { plan_tage: 2 }, gone: null });
+      expect("gone" in result.data.specs).toBe(true);
+    });
+
+    it("record-rooted: a wrong type for an entry is still rejected", () => {
+      expect(buildFor(recordSchema).safeParse({ specs: { k: "x" } }).success).toBe(false);
+      expect(buildFor(recordSchema).safeParse({ specs: { k: { plan_tage: "x" } } }).success).toBe(false);
+    });
+
+    it("record-rooted: a null one level deeper is still refused by transport as before", () => {
+      expect(buildFor(recordSchema).safeParse({ specs: { k: { plan_tage: null } } }).success).toBe(false);
+    });
+
+    it("record-rooted: an unknown key inside an entry still passes transport", () => {
+      const result: any = buildFor(recordSchema).safeParse({ specs: { k: { plan_tage: 1, extra: "KEEP" } } });
+      expect(result.success).toBe(true);
+      expect(result.data.specs.k.extra).toBe("KEEP");
+    });
+
+    it("object-rooted: a null for a declared key parses and survives; a wrong type is still rejected", () => {
+      const result: any = buildFor(objectSchema).safeParse({ specs: { a: null }, merge: ["specs"] });
+      expect(result.success).toBe(true);
+      expect(result.data.specs).toEqual({ a: null });
+      expect(buildFor(objectSchema).safeParse({ specs: { b: 1 } }).success).toBe(false);
+      expect(buildFor(objectSchema).safeParse({ specs: { a: { plan_tage: null } } }).success).toBe(false);
+    });
+
+    it("the create tool does not accept null entries (no merge there)", () => {
+      const create = buildFor(recordSchema, { create: true, update: false });
+      expect(create.safeParse({ price: 1, specs: { gone: null } }).success).toBe(false);
+    });
+
+    it("write step: merge with a null entry deletes that key and keeps the others", async () => {
+      const { prepareItemWrite } = await import("@SRC/exulu/item-write");
+      const fields = [{ name: "specs", type: "json", schema: recordSchema }] as any;
+      const result = prepareItemWrite({
+        fields,
+        existing: { specs: { keep: { plan_tage: 1 }, gone: { plan_tage: 5 } } },
+        input: { specs: { keep: { plan_tage: 2 }, gone: null } },
+        merge: ["specs"],
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.values.specs).toEqual({ keep: { plan_tage: 2 } });
+    });
+
+    it("write step: the same null entry WITHOUT merge is refused, never stored", async () => {
+      const { prepareItemWrite } = await import("@SRC/exulu/item-write");
+      for (const [schema, input] of [
+        [recordSchema, { keep: { plan_tage: 2 }, gone: null }],
+        [objectSchema, { a: null, b: "x" }],
+      ] as const) {
+        const fields = [{ name: "specs", type: "json", schema }] as any;
+        const result = prepareItemWrite({ fields, existing: null, input: { specs: input } });
+        expect(result.ok).toBe(false);
+      }
+    });
+  });
+
   describe("create execute", () => {
     const run = async (params: Record<string, unknown>, context = makeContext()) => {
       const [tool] = createContextWriteTools(context, { create: true, update: false }, false);

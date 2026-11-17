@@ -165,8 +165,11 @@ const buildWriteSchema = (
         // is the one thing this feature must never do (see json-field-
         // schema.ts for the full reasoning); the actual accept/reject
         // decision on an unknown key still belongs to the write chokepoint.
+        // On update the first level also accepts an explicit null, because
+        // that is the delete marker the `merge` parameter promises; without
+        // it the SDK would refuse the whole call before the write step runs.
         schema = field.schema
-          ? loosenForTransport(field.schema).describe(`The ${field.name} of the item.`)
+          ? loosenForTransport(field.schema, { nullableEntries: mode === "update" }).describe(`The ${field.name} of the item.`)
           : z.string().describe(`The ${field.name} of the item, as a valid JSON string.`);
         break;
       case "markdown":
