@@ -361,7 +361,7 @@ Next to `upload`, `sessionID` and `routine`, the platform context carries `saveS
 - It only writes to the session folder. Moving a file into a project stays with the `create_project` and `save_to_project` tools.
 
 ```typescript
-execute: async ({ saveSessionFile }, inputs) => {
+execute: async ({ saveSessionFile, ...inputs }) => {
   const saved = await saveSessionFile?.({ name: "report.pdf", data: pdfBytes });
   if (!saved || "error" in saved) return { result: saved?.error ?? "Saving is not available here." };
   return { result: `Saved ${saved.name}. Use parse_document with this name to read it.` };
