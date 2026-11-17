@@ -87,6 +87,35 @@ export const CREATE_PROJECT_PROMPT =
   "`files` listing exactly the session files (from the listing above) that should move into the project. " +
   "The user approves the call and sees that list; the project is private to them; unlisted files stay in the session.";
 
+/** Postgres regex: a serialized message that may contain a file part. */
+export const FILE_PART_PATTERN = '"type"[[:space:]]*:[[:space:]]*"file"';
+
+/**
+ * Full S3 keys that stored messages refer to through file parts. A row that cannot be parsed
+ * might hold a reference we cannot see, so it fails the whole lookup (the caller then keeps
+ * every original).
+ */
+export function referencedFileKeys(
+  rows: { content: string }[],
+  store: { endpoint?: string; bucket?: string },
+): Set<string> {
+  const keys = new Set<string>();
+  for (const row of rows) {
+    let message: { parts?: { type?: string; url?: string }[] };
+    try {
+      message = JSON.parse(row.content);
+    } catch {
+      throw new Error("A stored message could not be parsed.");
+    }
+    for (const part of message?.parts ?? []) {
+      if (part?.type !== "file") continue;
+      const at = parseStoredFileUrl(part.url, store);
+      if (at) keys.add(at.key);
+    }
+  }
+  return keys;
+}
+
 type Deps = {
   /** The session row (project, user) or undefined. */
   loadSession: (id: string) => Promise<{ project?: string | null; user?: number | string | null; metadata?: unknown } | undefined>;
@@ -212,22 +241,15 @@ export const createCreateProjectTool = ({
     createAndAttach: createProjectAndAttach,
     referencedKeys: async (id) => {
       const { db } = await postgresClient();
-      const rows: { content: string }[] = await db.from("agent_messages").where({ session: id }).select("content");
-      const keys = new Set<string>();
-      for (const row of rows) {
-        let message: { parts?: { type?: string; url?: string }[] };
-        try {
-          message = JSON.parse(row.content);
-        } catch {
-          continue;
-        }
-        for (const part of message.parts ?? []) {
-          if (part?.type !== "file") continue;
-          const at = parseStoredFileUrl(part.url, { endpoint: uploads.s3endpoint, bucket: uploads.s3Bucket });
-          if (at) keys.add(at.key);
-        }
-      }
-      return keys;
+      // Only rows that can hold a file part. content is a text column written by
+      // JSON.stringify (no spaces), but other writers may format it, so the pattern
+      // tolerates whitespace; a superset is fine, a missed row is not.
+      const rows: { content: string }[] = await db
+        .from("agent_messages")
+        .where({ session: id })
+        .whereRaw("content ~ ?", [FILE_PART_PATTERN])
+        .select("content");
+      return referencedFileKeys(rows, { endpoint: uploads.s3endpoint, bucket: uploads.s3Bucket });
     },
     listSessionFiles: async (prefix) => {
       const objects = await listS3ObjectsByPrefix(prefix, exuluConfig);

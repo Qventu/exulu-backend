@@ -1032,7 +1032,9 @@ ${skillsList}
         });
         if (listing) system += "\n\n" + listing;
     }
-    if (canRegisterCreateProject({ sessionID: session, exuluConfig, agentTools: agent?.tools, project: resolvedProject, sessionProjectId: project, ownerId: sessionOwnerId, routineRun: Boolean(routineRun) || isRunSessionMetadata(sessionMetadata), req, user, disabled: disabledTools })) {
+    // One decision for the converter's registration and the prompt sentence.
+    const inRoutineRun = Boolean(routineRun) || isRunSessionMetadata(sessionMetadata);
+    if (canRegisterCreateProject({ sessionID: session, exuluConfig, agentTools: agent?.tools, project: resolvedProject, sessionProjectId: project, ownerId: sessionOwnerId, routineRun: inRoutineRun, req, user, disabled: disabledTools })) {
         system += "\n\n" + CREATE_PROJECT_PROMPT;
     }
 
@@ -1084,6 +1086,7 @@ ${skillsList}
         skillDecisions,
         routineHandleFactory,
         resolvedProject,
+        inRoutineRun,
     )
     console.log("[EXULU] Converted tools", Object.keys(tools));
 

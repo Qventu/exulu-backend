@@ -7,6 +7,7 @@ import {
   createCreateProjectPickerTool,
   CREATE_PROJECT_PROMPT,
 } from "./create-project-tool";
+import { postgresClient } from "@SRC/postgres/client";
 import { createTurnProject } from "@SRC/exulu/turn-project";
 import { createParseDocumentTool } from "./parse-document-tool";
 import { createSessionFileReadTool } from "./session-file-read-tool";
@@ -18,6 +19,13 @@ const PREFIX = "exulu/user_7/sessions/s1/";
 const agentTools = [{ id: "create_project", type: "function", config: [] }];
 const ALL = ["a.pdf", "b.docx"];
 const base = { sessionID: "s1", user: { id: 7 } as never, ownerId: 7, exuluConfig, agentTools };
+
+jest.mock("@SRC/postgres/client", () => ({ postgresClient: jest.fn() }));
+const mockMessages = (rows: { content: string }[]) => {
+  const whereRaw = jest.fn(() => ({ select: async () => rows }));
+  (postgresClient as jest.Mock).mockResolvedValue({ db: { from: () => ({ where: () => ({ whereRaw }) }) } });
+  return whereRaw;
+};
 
 const finalOf = async (r: unknown): Promise<unknown> => {
   if (r && typeof r === "object" && Symbol.asyncIterator in r) {
@@ -263,6 +271,49 @@ describe("execute", () => {
     await run(m.tool, { name: "Alpha", files: ALL });
     expect(JSON.stringify(await call(parse, { filename: "project/a.pdf" }))).not.toMatch(NONE);
     expect(JSON.stringify(await call(read, { filename: "project/a.pdf" }))).not.toMatch(NONE);
+  });
+});
+
+describe("history lookup", () => {
+  const withDefaultLookup = () => {
+    const m = make();
+    // rebuild without the referencedKeys override so the real query path runs
+    const tool = createCreateProjectTool({
+      ...base,
+      turnProject: m.turnProject,
+      deps: {
+        loadSession: async () => ({ project: null, user: 7 }),
+        createAndAttach: m.create as never,
+        listSessionFiles: async () => ["a.pdf", "b.docx"].map((n) => ({ key: `${PREFIX}${n}`, name: n, size: 10 })),
+        s3: {
+          listProjectNames: async () => [],
+          sizeOf: async () => 10,
+          copy: async (a: string) => void m.log.push(`copy ${a.slice(PREFIX.length)}`),
+          remove: async (k: string) => void m.log.push(`remove ${k.slice(PREFIX.length)}`),
+        },
+        db: async () => ({}),
+      },
+    })!;
+    return { tool, log: m.log };
+  };
+  it("one unparseable message row counts as a failed lookup: nothing is deleted, files are reported kept", async () => {
+    mockMessages([{ content: "{not json" }]);
+    const { tool, log } = withDefaultLookup();
+    const { result } = await run(tool, { name: "Alpha", files: ALL });
+    expect(log.filter((l) => l.startsWith("remove"))).toEqual([]);
+    expect(result).toMatch(/also kept in the session.*a\.pdf/);
+  });
+  it("only rows that can hold a file part are selected, whitespace-tolerant", async () => {
+    const whereRaw = mockMessages([]);
+    const { tool, log } = withDefaultLookup();
+    await run(tool, { name: "Alpha", files: ALL });
+    const [sql, [pattern]] = whereRaw.mock.calls[0] as unknown as [string, string[]];
+    expect(sql).toContain("content ~");
+    const re = new RegExp(pattern.replace(/\[\[:space:\]\]/g, "\\s"));
+    expect(re.test('{"parts":[{"type":"file","url":"x"}]}')).toBe(true);
+    expect(re.test('{"parts":[{ "type" :\n "file" }]}')).toBe(true);
+    expect(re.test('{"parts":[{"type":"text"}]}')).toBe(false);
+    expect(log.filter((l) => l.startsWith("remove"))).toEqual(["remove a.pdf", "remove b.docx"]);
   });
 });
 

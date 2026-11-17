@@ -229,6 +229,8 @@ export const convertExuluToolsToAiSdkTools = async (
    * also needs its name for the prompt). Omit to have it resolved here; null = no project.
    */
   resolvedProject?: ResolvedSessionProject | null,
+  /** One decision per turn (generate-stream computes it): this turn is part of a routine run. */
+  inRoutineRun?: boolean,
 ): Promise<Record<string, Tool>> => {
   if (!currentTools) return {};
 
@@ -420,7 +422,7 @@ export const convertExuluToolsToAiSdkTools = async (
     agentTools: agent?.tools,
     project: turnProject,
     sessionProjectId: project,
-    routineRun: Boolean(routineHandleFactory),
+    routineRun: inRoutineRun ?? Boolean(routineHandleFactory),
     disabled,
     turnProject: turnProjectHolder,
   });

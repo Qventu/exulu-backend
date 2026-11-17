@@ -628,6 +628,14 @@ describe("create_project registration", () => {
     expect(Object.keys(tools)).toContain("create_project");
     expect(await (tools.create_project as any).needsApproval({}, { toolCallId: "c1", messages: [] })).toBe(true);
   });
+  it("a run session whose routine handle factory is gone (inRoutineRun, no factory) still has no create_project", async () => {
+    const tools = await convertExuluToolsToAiSdkTools(
+      [], [], [], [], [], undefined, { id: 7 } as never, { fileUploads: { s3Bucket: "b" } } as never,
+      "session-1", undefined, undefined, undefined, undefined, { id: "a1", tools: withEntry } as never, undefined, undefined, undefined,
+      7, undefined, undefined, undefined, null, true,
+    );
+    expect(Object.keys(tools)).not.toContain("create_project");
+  });
   it("is absent without the opt-in entry, for a non-owner, and in a routine run", async () => {
     expect(Object.keys(await run({ id: "a1", tools: [] }))).not.toContain("create_project");
     expect(Object.keys(await run({ id: "a1" }))).not.toContain("create_project");
