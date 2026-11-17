@@ -63,11 +63,16 @@ export const serializeForSummary = (messages: UIMessage[]): string =>
             output?: { value?: unknown } | unknown;
             filename?: string;
             url?: string;
+            preliminary?: boolean;
           };
           if (p.type === "text") return p.text ?? "";
           if (p.type === "file") return `[file: ${p.filename ?? p.url ?? "attachment"}]`;
           if (p.type === "reasoning" || p.type === "step-start") return "";
           if (p.type?.startsWith("tool-") || p.type === "dynamic-tool") {
+            // A part left in output-available with preliminary: true is an interim status of a call
+            // whose final result never arrived (e.g. a read whose stream died). The summary must not
+            // present it as something the model saw.
+            if (p.preliminary === true) return "";
             const out = (p.output as { value?: unknown } | undefined)?.value ?? p.output;
             const outText = typeof out === "string" ? out : JSON.stringify(out ?? "");
             return `[tool ${p.type}: ${JSON.stringify(p.input ?? {}).slice(0, SUMMARY_TOOL_INPUT_SLICE)}] → ${outText.slice(0, SUMMARY_TOOL_OUTPUT_SLICE)}`;
