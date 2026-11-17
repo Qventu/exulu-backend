@@ -127,13 +127,12 @@ Requested by the product owner: the user should see clearly what is happening du
 
 **Server helpers** (new module, no GraphQL dependency): `createProjectForUser(db, user, { name, description? })` mirroring `projectsCreateOne` (`rights_mode: "private"`, `created_by` = user), and `attachSessionToProject(db, { sessionId, projectId, user })`, which verifies that the user may write the session and read the project before setting the column (the GraphQL path's missing check is not copied).
 
-**Tool `create_project`.** Input `{ name, description?, files?: string[] }`; `files` defaults to all of the session's files except ignored paths and tool-output offloads. Always requires approval (the approval card names the project and lists the files). It:
-1. creates the project;
-2. attaches the current session to it;
-3. moves the files: copy into the project folder in batches (respecting 20 keys / 50 MB per batch and the 200-file cap), then delete the session originals that were copied. Stored Markdown needs no handling; the moved files have the same content. A file that fails to copy stays in the session and is named in the result;
+**Tool `create_project`.** Input `{ name, description?, files: string[] }`. `files` is required and lists exactly the session files to move (bare names; an empty list creates the project without moving anything; unlisted files stay in the session), so the approval card always shows what will move. Always requires approval; "allow for this chat" does not apply. It:
+1. creates the project and attaches the current session to it, in one database transaction (a lost race or a refused attach leaves no project behind);
+3. moves the files: copy into the project folder in batches (respecting 20 keys / 50 MB per batch and the 200-file cap), then delete the session originals that were copied. An original that a stored message of this conversation refers to through a file part (for example attachments of a session created from an e-mail) is copied but kept, so replaying the history keeps working; if the history cannot be read, every original is kept. Stored Markdown needs no handling; the moved files have the same content. A file that fails to copy stays in the session and is named in the result;
 4. returns: the project's name and id, how many files moved, which did not and why, the sentence "Only you can see this project. Invite colleagues on the project page.", and the link `/projects/<id>`.
 
-**Registration.** Offered only when: the agent has the tool enabled (opt-in per agent, off for every existing agent; how the switch is stored is left to the builder), the session exists and has no project, the speaker is the session's owner and not a guest, and file uploads are configured. The prompt mentions the tool only when it is registered (one shared predicate, as for `save_to_project`).
+**Registration.** Offered only when: the agent has the tool enabled (opt-in per agent, off for every existing agent: an entry `{ id: "create_project", type: "function", config: [] }` in `agent.tools`, added through the generic tools picker like `skill_author`), the turn is not a routine run, the session exists and has no project, the speaker is the session's owner and not a guest, and file uploads are configured. The prompt mentions the tool only when it is registered (one shared predicate, as for `save_to_project`).
 
 **Same-turn continuity.** After the tool ran, the document tools of the same turn resolve `project/<name>` against the new project (one mutable holder per turn, shared by the tool factories and set by `create_project`; the system prompt of that turn is not rebuilt, the tool result is what tells the model), so the agent can go on reading immediately. The sandbox's `project/` directory and the prompt listing follow on the next turn; the tool result says so.
 
@@ -168,7 +167,8 @@ In a project session the scope sentence and the listing header read `project <na
 - Degraded results are returned but not stored.
 - The process-wide limiter applies to all processor callers and queues.
 - Ceiling of 300 pages for tool reads; process-wide limits of 8.
-- `create_project` moves files rather than copying them; it is opt-in per agent; it is not offered in shared sessions to non-owners.
+- `create_project` moves files rather than copying them; it is opt-in per agent; it is not offered in shared sessions to non-owners or in routine runs; `files` is required; originals referenced by the history are kept.
+- The final `parse_document` result carries `fromStore: true` when stored text was used, so the UI badge does not have to be inferred.
 - No cache for inline attachments.
 
 ## Left to the builder
