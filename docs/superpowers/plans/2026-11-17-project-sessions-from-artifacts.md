@@ -30,7 +30,7 @@
 
 - **Name clash in `saveSessionFile`:** a file of the same name is overwritten. This is what a user upload does (`POST /sessions/:id/files/upload-sign` signs a PUT for the sanitised name). The returned name differs from the input only through sanitising.
 - **Docs:** `mintlify-docs` has no artifact panel protocol page. The protocol reference is `src/skills/bundled/imp-artifact-apps/references/identity-handshake.md`, and that is what gets updated. No new mintlify page for the protocol.
-- **Template API:** `openPanel` keeps returning `Promise<boolean>`, so artifacts that copy the new template do not break. The project status comes from a new `openPanelDetailed`.
+- **Template API (Daniel, 2026-11-17: one function, not two):** `openPanel` returns `Promise<{ accepted: boolean; project?: "attached" | "denied" }>` instead of `Promise<boolean>`. Published artifacts carry their own copy of the template and are not affected. An artifact that copies the new template must read `.accepted`: a bare `if (await openPanel(...))` would always be true. The reference says so in bold, and the type is named `OpenPanelResult` so the change shows up in a typecheck wherever the result is typed.
 - **`ExuluProjects.create` throws on invalid input, `addFile` returns `{ error }`.** A script creates one project and adds many files; a bad file must not abort the loop.
 
 ## Review Focus
@@ -206,36 +206,37 @@ export const ExuluProjects: {
 **Files:**
 - Modify: `src/skills/bundled/imp-artifact-apps/templates/imp-channel.ts`
 - Test: `src/skills/bundled/imp-artifact-apps/templates/imp-channel.test.ts`
-- Modify: `src/skills/bundled/imp-artifact-apps/references/identity-handshake.md`, and `SKILL.md` where `openPanel` is described
+- Modify: `src/skills/bundled/imp-artifact-apps/references/identity-handshake.md`, and `SKILL.md` and `templates/app.html` where `openPanel` is used or described
 
 **Interfaces:**
 - Produces, on `ImpChannel`:
 
 ```ts
-openPanel(slot: string, opts?: { prompt?: string; items?: string[]; files?: string[]; project?: string }): Promise<boolean>;
-openPanelDetailed(
+export type OpenPanelResult = { accepted: boolean; project?: "attached" | "denied" };
+openPanel(
   slot: string,
   opts?: { prompt?: string; items?: string[]; files?: string[]; project?: string },
-): Promise<{ accepted: boolean; project?: "attached" | "denied" }>;
+): Promise<OpenPanelResult>;
 ```
 
 - [ ] **Step 1: Write the failing tests** in the existing test file's style:
 
-  - `openPanelDetailed posts project on the request` with `v: 2`.
+  - `openPanel posts project on the request` with `v: 2`.
   - `resolves { accepted: true, project: "attached" }` on an ack carrying that.
   - `resolves { accepted: true, project: "denied" }` likewise.
   - `an ack without project resolves { accepted: true }` (an old host).
   - `an ack with an unknown project value drops the field`.
   - `resolves { accepted: false } on timeout`.
-  - `openPanel still resolves a boolean` and still sends `project` when given.
+  - `a rejected ack resolves { accepted: false }` and carries no `project`.
+  - `a request without project resolves { accepted: true }` on a plain accepted ack.
 
 - [ ] **Step 2: Run** `npx jest src/skills/bundled/imp-artifact-apps/templates/imp-channel.test.ts`. Expected: the new tests FAIL.
 
-- [ ] **Step 3: Implement.** `openPanel` delegates to `openPanelDetailed` and returns `accepted`. `CHANNEL_V` is not changed.
+- [ ] **Step 3: Implement.** One function. Update every existing test in the file that expects `true` or `false` from `openPanel` to expect the object. `CHANNEL_V` is not changed.
 
 - [ ] **Step 4: Run** the test file. Expected: PASS.
 
-- [ ] **Step 5: Reference.** In `identity-handshake.md`, add `project` to the `exulu:panel:open` and `exulu:panel:open:ack` rows and a short section: what `attached` and `denied` mean, that `denied` covers every reason and the artifact gets no detail, that the panel still opens on `denied` without a project, that an old host answers without the field, that the ack can now take as long as the access check, and what an artifact should show on `denied` (a hint that the viewer needs access to the project). Mention `openPanelDetailed` in `SKILL.md`.
+- [ ] **Step 5: Reference.** In `identity-handshake.md`, add `project` to the `exulu:panel:open` and `exulu:panel:open:ack` rows and a short section: what `attached` and `denied` mean, that `denied` covers every reason and the artifact gets no detail, that the panel still opens on `denied` without a project, that an old host answers without the field, that the ack can now take as long as the access check, and what an artifact should show on `denied` (a hint that the viewer needs access to the project). Rewrite the `openPanel` paragraphs of the reference (the ones saying it resolves `true` or `false`) for the object result, with the warning that the result must be read through `.accepted`. Check `templates/app.html` and `SKILL.md` for uses of the old boolean and update them.
 
 - [ ] **Step 6: Commit** `feat(artifacts): template can open the agent panel in a project`.
 
@@ -368,7 +369,7 @@ export const PROBE_PROJECT_ACCESS = gql`query ProbeProjectAccess($id: ID!) { pro
 
 Needs Daniel's go for starting servers.
 
-- [ ] A test artifact with one agent slot and two buttons: one calls `openPanelDetailed` with a project the viewer owns, one with a random uuid.
+- [ ] A test artifact with one agent slot and two buttons: one calls `openPanel` with a project the viewer owns, one with a random uuid.
 - [ ] Own project: the ack says `attached`, the header chip shows the project, the agent lists `project/<name>` files, the session appears in the project's sessions tab.
 - [ ] Random uuid: the ack says `denied`, the panel opens with the prompt, no chip, and `select count(*) from agent_sessions where project = '<that uuid>'` returns 0.
 - [ ] Project button, then a button without project: a new session starts, the project conversation is still in the history rail.
