@@ -175,6 +175,19 @@ In a session that belongs to a project, the project's shared folder is available
 - **Prompt** — the system prompt lists the project's files with size, age and a `NEW` marker, like the session files, and explains the two scopes. The listing shows the 25 newest files and says how many more exist. If the speaker cannot write, the prompt says so and points to the sidebar instead of the tool.
 - **Limits** — 200 files per project; a promote of several files at once is capped at 20 files and 50 MB in total.
 
+- **Project id in the prompt** — in a project session the prompt gives the project as `project <name> (id <uuid>)`, so the agent can link to it. Sessions without a project are unchanged.
+- **Reading** — long PDFs and repeated reads are covered in [Reading cache](/self-hosting/services/s3-storage#reading-cache).
+
+### Creating a project from a conversation
+
+`create_project` lets an agent turn a conversation into a project. It is off for every agent. To switch it on, open the agent's **Tools & skills** section, click **Add tools** and tick **Create project from chat** (category **Default**). It has no parameters.
+
+- **Input** — `name`, an optional `description` and `files`, the bare names of the session files to move. `files` is required: an empty list creates the project and moves nothing. The tool moves exactly the files named, and the approval card shows that list.
+- **Approval** — every call asks. **Allow for this chat** does not apply, even in a chat where other tools are allowed.
+- **Registered only when** the agent has it enabled, the session exists and has no project, the speaker is the session's owner and not a guest, and file uploads are configured. It is never offered in routine runs. The system prompt mentions it only when it is registered.
+- **What it does** — creates a private project owned by the speaker (the project and the session attachment are one transaction), then copies the files into the project folder in batches of at most 20 files and 50 MB, and deletes each original after a successful copy. Files an earlier message in the conversation refers to are copied and the original is kept. A file that clashes after name sanitising, is over 50 MB, does not exist, is in a subfolder, or would take the project over 200 files is not moved and is named in the result.
+- **Same turn** — the document tools of the same turn resolve `project/<name>` against the new project right away. The system prompt of that turn is not rebuilt; the sandbox `project/` folder and the prompt listing follow on the next turn.
+
 If the session's owner has lost read access to the project, or the project was deleted or detached, the session behaves as if it had no project.
 
 ## Sub-agents as tools

@@ -127,6 +127,18 @@ Transcription requires a running Whisper server. See [Whisper service](/self-hos
 
 ---
 
+## Document reading
+
+Settings for how the agent reads PDF and Office documents. See [Reading cache](/self-hosting/services/s3-storage#reading-cache) for what is stored and where.
+
+| Variable | Required? | Component | Purpose | Example |
+|---|---|---|---|---|
+| `EXULU_DOCUMENT_CACHE_DAYS` | No | Server | Days that the extracted text of a document is kept and reused. Default `365`. `0` switches the store off: nothing is read from it or written to it, and the daily sweep removes everything stored under `derived/`. A value that is not a whole number of 0 or more stops the server at start. | `365` |
+| `EXULU_DOCUMENT_MAX_PAGES` | No | Server | Longest PDF, in pages, that `parse_document` reads when a document processor is configured. Default `300`. Longer PDFs are refused with a note. Must be a positive whole number, otherwise the server does not start. | `300` |
+| `EXULU_ATTACHMENT_MAX_PAGES` | No | Server | Longest PDF, in pages, that is read when it is attached directly to a chat message (or a routine mail) and a document processor is configured. Default `50`. Does not apply to `parse_document`. Must be a positive whole number, otherwise the server does not start. | `50` |
+
+---
+
 ## Claim check
 
 Claim check (`POST /claims/check`) verifies an answer's claims against the sources supplied with the request. See the [Claim Check API](/api-reference/rest/claim-check).

@@ -83,3 +83,28 @@ COMPANION_S3_BUCKET=<your-bucket-name>
 **Bucket policy.** The bucket does not need to be public. Presigned URLs grant time-limited read and write access to individual objects without a bucket-level public policy.
 
 **Signature expiry.** IMP presigns URLs with a 1-day expiry (`expiresIn = 86400`). Uploads or downloads attempted after the signature expires will receive a 403 from S3.
+
+## Reading cache
+
+When the agent reads a PDF or Office document with `parse_document`, the extracted text is stored in the same bucket and reused by every later read of the same content on this instance. Reading a scanned or long document costs OCR and vision calls, so this is done once per document and not once per chat.
+
+**Where it lives.** Under a `derived/` prefix at the top of the bucket (after `COMPANION_S3_PREFIX`, if set):
+
+| Key | Content |
+|---|---|
+| `derived/content/<sha256>/<id>.md` | The extracted text. `<sha256>` is the hash of the file's bytes, `<id>` identifies the reading configuration. |
+| `derived/pointers/<hash>.json` | A small record per file (ETag and `sha256`) so a repeat read does not have to download the file to hash it. |
+
+Do not delete, expose or point other tools at `derived/` by mistake: it is created and managed by IMP. No file list, project page, prompt listing or sandbox shows it, the browser upload policy cannot write to it, and the generic `/s3/*` routes refuse it. It is not served by any route. The agent's read tools return its text only after they have resolved a file the caller can read, so text is given only to someone who holds a file with the same content. The one thing it reveals indirectly is that someone on the instance read the same document before: the read is immediate and the progress card says **already read**.
+
+**What the key contains.** The text is stored per content and per reading configuration: the engine, the OCR model name and the vision model of `attachments.documentProcessor`, or `pdftotext` / `officeparser` when no processor is configured. Changing the engine, the OCR model or the vision model therefore makes every document be read once more on its next use. Concurrency settings are not part of the key. A replaced file has different content and so a different entry.
+
+**What is not stored.** Refusals and failures (too many pages, scan without a processor, unreadable text layer, processor error), results that fell back to the text layer when a processor is configured, and results where the vision pass failed for some pages. The next read tries again.
+
+**Expiry.** `EXULU_DOCUMENT_CACHE_DAYS` (default `365`) is how long text is kept, counted from when it was written. An older entry is treated as absent and read again. The server process runs a sweep about a minute after start and then once a day, listing `derived/` one page at a time and deleting expired text and pointer objects. With `0` the store is off and the next sweep deletes everything under `derived/`.
+
+<Warning>
+Deleting a file, a session or a project does not delete the stored text of its content: other files may have the same content, so the text stays until it expires or the sweep removes it. For data-protection requests, set `EXULU_DOCUMENT_CACHE_DAYS=0` (the next daily sweep empties the store), or delete the objects under `derived/` in the bucket. Deleting them is safe: nothing else depends on them, and documents are simply read again when they are next used.
+</Warning>
+
+**Long first reads.** With a document processor configured, `parse_document` reads PDFs up to `EXULU_DOCUMENT_MAX_PAGES` pages (default `300`), in OCR chunks run in parallel (`attachments.documentProcessor.ocr.concurrency`, default 3, 1 to 8). The process runs at most 8 OCR and 8 vision calls at once across all users; more wait in a queue. The first read of a long document takes minutes. It keeps running and stores its result even if the user leaves the conversation. The 50-page limit `EXULU_ATTACHMENT_MAX_PAGES` still applies to files attached directly to a chat message. If two users read the same uncached document at once on different backend replicas, both extract it and the later write wins. See [Environment variables](/self-hosting/environment-variables#document-reading) and [Configuration](/developers/core/exulu-app/configuration#attachments).

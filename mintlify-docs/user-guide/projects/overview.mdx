@@ -38,6 +38,21 @@ Every project has one shared folder. Whatever is in it is available in every ses
 Project files are only reachable through the project, so deleting a project makes its files unreachable. Session files stay private to their session until someone adds them to the project.
 </Note>
 
+## Create a project from a conversation
+
+If your administrator enabled it for the agent, the agent can offer to turn the current conversation into a project. This works only in a conversation of yours that is not in a project yet.
+
+1. The agent agrees a project name with you and calls **Create project from chat**.
+2. An approval card shows the project name and the list of files that would move. Approve it each time: **Allow for this chat** does not apply to this tool.
+3. IMP creates the project, attaches the conversation to it and moves the listed files into the project's shared folder. Only the listed files move; every other file stays in the conversation.
+4. The agent tells you what moved, what did not and why, and gives a link to the project page (`/projects/<id>`).
+
+- **Files an earlier message refers to** are copied into the project and also kept in the conversation, so the history keeps working. The agent's reply names them.
+- **Visibility** — the new project is private. Only you can see it until you invite colleagues on the project page.
+- **Limits** — a project holds up to 200 files and 50 MB per file. A file that cannot be copied stays in the conversation and is named in the reply. If the move is interrupted after a copy, a file can exist in both places; nothing is lost.
+- The agent can read the moved files straight away as `project/<name>`. The files sidebar and the project section show them from your next message.
+- The tool is not offered in routine runs, in shared conversations (only the owner can use it), in guest chats, or in a conversation that already belongs to a project.
+
 ## The projects screen
 
 Open **Projects** from the app sidebar. The page shows "Workspaces that group your conversations and shared context." — your projects are listed below a search bar.
