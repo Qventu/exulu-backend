@@ -25,6 +25,8 @@ import { createMemoryTools } from "@SRC/exulu/memory/tools";
 import { checkMemoryBase } from "@SRC/exulu/memory/memory-base";
 import { isMemoryToolId, type MemoryDecision } from "@SRC/exulu/memory/decisions";
 import { collectKbWriteTools } from "./context-write-tools";
+import { createTurnProject } from "@SRC/exulu/turn-project";
+import { createCreateProjectTool } from "./create-project-tool";
 import { createSaveToProjectTool } from "./save-to-project-tool";
 import { collectSkillAuthorTools } from "./skill-author-tools";
 import type { SkillDecision } from "@SRC/exulu/skills/decisions";
@@ -33,6 +35,7 @@ import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
 import { resolveSessionProject, type ResolvedSessionProject } from "@SRC/exulu/resolve-session-project";
 import type { RoutineHandleInternal } from "@SRC/exulu/routines/routine-handle";
+import { buildSaveSessionFile, getMimeType } from "@SRC/exulu/session-file-write";
 import { createRoutineStatusTool } from "./routine-status-tool";
 import { getPresignedUrl } from "@SRC/uppy";
 import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
@@ -44,6 +47,14 @@ import { createViewDocumentPageTool } from "./view-document-page-tool";
 import { deriveContextBudget } from "@SRC/exulu/context-budget";
 import { getAuditLogger } from "@SRC/exulu/audit/logger";
 import { emitToolCallAudit } from "@SRC/exulu/audit/emit-tool-call";
+import { isInterimToolStatus } from "@SRC/exulu/document-cache/progress";
+
+/** Full-shape check, so a real tool output that merely has `status: "reading"` is not mistaken for progress. */
+const isReadingProgress = (value: unknown): boolean => {
+  if (!isInterimToolStatus(value)) return false;
+  const v = value as unknown as Record<string, unknown>;
+  return typeof v.filename === "string" && typeof v.pagesDone === "number" && typeof v.pagesTotal === "number";
+};
 import { extractClientInfo } from "@SRC/exulu/audit/client-info";
 
 /**
@@ -72,53 +83,6 @@ const generateS3Key = (filename) => `${randomUUID()}-${filename}`;
  * @type {S3Client}
  */
 let s3Client: S3Client | undefined;
-
-const getMimeType = (type: allFileTypes) => {
-  switch (type) {
-    case ".png":
-      return "image/png";
-    case ".jpg":
-      return "image/jpg";
-    case ".jpeg":
-      return "image/jpeg";
-    case ".gif":
-      return "image/gif";
-    case ".webp":
-      return "image/webp";
-    case ".pdf":
-      return "application/pdf";
-    case ".docx":
-      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    case ".xlsx":
-      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    case ".xls":
-      return "application/vnd.ms-excel";
-    case ".csv":
-      return "text/csv";
-    case ".pptx":
-      return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-    case ".ppt":
-      return "application/vnd.ms-powerpoint";
-    case ".m4a":
-      return "audio/mp4";
-    case ".mp4":
-      return "audio/mp4";
-    case ".mpeg":
-      return "audio/mpeg";
-    case ".mp3":
-      return "audio/mp3";
-    case ".wav":
-      return "audio/wav";
-    case ".txt":
-      return "text/plain";
-    case ".md":
-      return "text/markdown";
-    case ".json":
-      return "application/json";
-    default:
-      return "";
-  }
-};
 
 export const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentToolConfig> => {
   const { db } = await postgresClient();
@@ -219,6 +183,8 @@ export const convertExuluToolsToAiSdkTools = async (
    * also needs its name for the prompt). Omit to have it resolved here; null = no project.
    */
   resolvedProject?: ResolvedSessionProject | null,
+  /** One decision per turn (generate-stream computes it): this turn is part of a routine run. */
+  inRoutineRun?: boolean,
 ): Promise<Record<string, Tool>> => {
   if (!currentTools) return {};
 
@@ -250,6 +216,9 @@ export const convertExuluToolsToAiSdkTools = async (
         ? await resolveSessionProject({ projectId: project, ownerId: sessionOwnerId ?? user?.id, owner: user, speaker: user })
         : null;
   const sandboxProjectId = turnProject?.id ?? null;
+  // One mutable holder per turn, shared by the file tools and the project tools: create_project
+  // sets it, so project/<name> resolves against the new project later in the same turn.
+  const turnProjectHolder = createTurnProject(turnProject);
 
   let sharedSessionSandbox:
     | Awaited<ReturnType<typeof createSessionSandbox>>
@@ -357,12 +326,12 @@ export const convertExuluToolsToAiSdkTools = async (
     }
   }
 
-  const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });
+  const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId, turnProject: turnProjectHolder });
   if (sessionFileReadTool && !disabled.has(sessionFileReadTool.id)) {
     currentTools.push(sessionFileReadTool);
   }
 
-  const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });
+  const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId, turnProject: turnProjectHolder });
   if (parseDocumentTool && !disabled.has(parseDocumentTool.id)) {
     currentTools.push(parseDocumentTool);
   }
@@ -390,12 +359,32 @@ export const convertExuluToolsToAiSdkTools = async (
     ownerId: sessionOwnerId,
     project: turnProject,
     disabled,
+    turnProject: turnProjectHolder,
   });
   if (saveToProjectTool) {
     currentTools.push(saveToProjectTool);
   }
 
-  const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId });
+  // Opt-in per agent (an entry with id "create_project" in agent.tools), session owner only, only
+  // while the session has no project. The same predicate decides the prompt sentence.
+  const createProjectTool = createCreateProjectTool({
+    sessionID,
+    user,
+    req,
+    exuluConfig,
+    ownerId: sessionOwnerId,
+    agentTools: agent?.tools,
+    project: turnProject,
+    sessionProjectId: project,
+    routineRun: inRoutineRun ?? Boolean(routineHandleFactory),
+    disabled,
+    turnProject: turnProjectHolder,
+  });
+  if (createProjectTool) {
+    currentTools.push(createProjectTool);
+  }
+
+  const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId, projectId: sandboxProjectId, turnProject: turnProjectHolder });
   if (viewDocumentPageTool && !disabled.has(viewDocumentPageTool.id)) {
     currentTools.push(viewDocumentPageTool);
   }
@@ -714,6 +703,15 @@ export const convertExuluToolsToAiSdkTools = async (
                 user,
                 contexts: contextsMap,
                 upload,
+                // Writes a file into this session's folder (undefined without a session, uploads, a signed-in user, or outside routines/public surface).
+                saveSessionFile: buildSaveSessionFile({
+                  sessionID,
+                  ownerId: sessionOwnerId,
+                  user,
+                  req,
+                  exuluConfig,
+                  inRoutineRun: inRoutineRun ?? Boolean(routineHandleFactory),
+                }),
                 exuluConfig,
                 toolVariablesConfig: toolVariablesConfigData,
                 // Present only inside a routine run: routine.runs.current.update({ status }).
@@ -747,16 +745,28 @@ export const convertExuluToolsToAiSdkTools = async (
             // Check if response is an async generator
             if (response && typeof response === "object" && Symbol.asyncIterator in response) {
               let lastValue;
-              // Iterate through all yielded values from the generator
+              let lastYieldWasInterim = false;
+              // Iterate through all yielded values from the generator.
+              // AI SDK v6 (provider-utils executeTool) reports every yielded value as a
+              // preliminary result and the LAST one as the final result; only the final
+              // one is recorded for the model, so progress objects are safe to yield.
               for await (const value of response) {
                 yield value;
-                lastValue = value;
+                // Interim "reading" status is UI-only: it is never the result, so it is
+                // neither guarded nor audited.
+                lastYieldWasInterim = isReadingProgress(value);
+                if (!lastYieldWasInterim) lastValue = value;
               }
-              if (offloadExempt) { __auditOutput = lastValue; return lastValue; }
+              if (offloadExempt) {
+                __auditOutput = lastValue;
+                // A trailing interim would otherwise be taken as the result.
+                if (lastYieldWasInterim) yield lastValue;
+                return lastValue;
+              }
               // Cap + offload the FINAL value — that is what becomes the
               // persisted tool result and what every later turn re-sends.
               const guarded = await guardToolOutput(lastValue, guardCtx);
-              if (guarded !== lastValue) {
+              if (guarded !== lastValue || lastYieldWasInterim) {
                 yield guarded;
               }
               __auditOutput = guarded;

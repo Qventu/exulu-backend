@@ -86,18 +86,22 @@ export function promptSafeProjectName(name: string): string {
   return name.replace(/\s+/g, " ").trim().slice(0, MAX_PROMPT_NAME);
 }
 
+/** `<name> (id <uuid>)`: the model needs the id to link or refer to the project. */
+function projectLabel(project: { id: string; name: string }): string {
+  return `${promptSafeProjectName(project.name)} (id ${project.id})`;
+}
+
 /** The project block of the prompt: 25 newest project files, read as `project/<name>`. */
 export function describeProjectFiles(
   files: ListedFile[],
-  projectName: string,
+  project: { id: string; name: string },
   opts: { now?: Date; lastTurnAt?: Date; max?: number } = {},
 ): string {
   const { lines, omitted, total } = listingLines(files, opts);
   if (total === 0) return "";
   if (omitted > 0) lines.push(`+${omitted} more (list them with \`ls project/\`).`);
-  const name = promptSafeProjectName(projectName);
   return (
-    `Project files (shared with everyone on project ${name}):\n` +
+    `Project files (shared with everyone on project ${projectLabel(project)}):\n` +
     lines.join("\n") +
     `\nRead them by passing \`${PROJECT_DIR}/<name>\` as the filename to parse_document, view_document_page ` +
     "or read_session_file. They are read-only."
@@ -110,14 +114,13 @@ export function describeProjectFiles(
  * and indentation come from the template literal it was cut out of) — pinned by a test.
  */
 export function sessionFilesScopeSentence(
-  projectName: string | null | undefined,
+  project: { id: string; name: string } | null | undefined,
   /** True when save_to_project is registered this turn (the speaker may write to the project). */
   canSaveToProject = false,
 ): string {
-  if (!projectName) {
+  if (!project) {
     return "These files are scoped to\n        this single session; they are NOT visible in other sessions, projects, or knowledge bases.";
   }
-  const name = promptSafeProjectName(projectName);
   const route = canSaveToProject
     ? "A session file gets into the project with the save_to_project tool (the user approves each save) or " +
       "by the user in the sidebar."
@@ -125,7 +128,7 @@ export function sessionFilesScopeSentence(
       "file to it in the sidebar.";
   return (
     "Files you see by their plain name are private to this session. " +
-    `Project files are shared with everyone on project ${name} and appear under \`${PROJECT_DIR}/\`; ` +
+    `Project files are shared with everyone on project ${projectLabel(project)} and appear under \`${PROJECT_DIR}/\`; ` +
     `they are read-only for you — do not write into \`${PROJECT_DIR}/\`, changes there are discarded. ` +
     route
   );
@@ -172,7 +175,7 @@ export async function loadSessionFileListing(opts: {
     // Flat names only, like the sandbox sync: anything nested is not addressable.
     projectBlock = describeProjectFiles(
       files.filter((f) => !f.name.includes("/")),
-      opts.project.name,
+      opts.project,
       { lastTurnAt: opts.lastTurnAt },
     );
   } catch (err) {

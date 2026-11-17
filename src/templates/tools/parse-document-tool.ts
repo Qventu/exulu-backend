@@ -1,13 +1,17 @@
+import { currentProjectId, type TurnProject } from "@SRC/exulu/turn-project";
 import { z } from "zod";
 import { extname } from "node:path";
 import { parseOfficeAsync } from "officeparser";
 import { ExuluTool } from "@SRC/exulu/tool";
-import { getPresignedUrl } from "@SRC/uppy";
+import { isS3NotFound } from "@SRC/uppy";
 import type { ExuluConfig } from "@SRC/exulu/app";
 import type { User } from "@EXULU_TYPES/models/user";
 import { convertLegacyOfficeToModern, isLegacyOfficeFormat, pdfToText } from "./document-render-helpers";
 import { resolveFileKey } from "./resolve-file-key";
-import { extractDocument } from "@SRC/exulu/attachment-text";
+import { extractDocument, tooLongForToolNotice } from "@SRC/exulu/attachment-text";
+import { throttleProgress, type ProgressFn, type ReadingStatus } from "@SRC/exulu/document-cache/progress";
+import { createStoreIo, readThroughDocument, type Extracted, type StoreIo } from "@SRC/exulu/document-cache/store";
+import { documentCacheDays, documentMaxPages, extractorFingerprint } from "@SRC/exulu/document-cache/keys";
 
 const DEFAULT_LIMIT = 250;
 const MAX_CONTENT_CHARS = 16_000;
@@ -48,6 +52,81 @@ export function looksLikeGarbledTextLayer(text: string): boolean {
 const OFFICE_EXTENSIONS = new Set([
   ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".odt", ".ods", ".odp", ".rtf",
 ]);
+
+/**
+ * Why a read is refused. Carries kinds and numbers only, never a file name: an extraction is
+ * shared by every caller waiting on the same bytes, and each caller words the refusal
+ * with its own file name (see refusalMessage).
+ */
+type RefusalInfo =
+  | { kind: "tooLong"; pageCount: number; maxPages: number }
+  | { kind: "garbledTextLayer" }
+  | { kind: "noTextLayer" }
+  | { kind: "notFound" }
+  | { kind: "readFailed" };
+
+/** A result the model must see as a tool error; never stored, never retried as a failure. */
+class ExtractionRefusal extends Error {
+  constructor(readonly info: RefusalInfo) {
+    super(info.kind);
+  }
+}
+
+function refusalMessage(info: RefusalInfo, name: string): string {
+  switch (info.kind) {
+    case "tooLong":
+      return tooLongForToolNotice(name, info.pageCount, info.maxPages);
+    case "garbledTextLayer":
+      return (
+        `"${name}" has a text layer that is unreadable (its font encoding maps glyphs to the wrong ` +
+        "characters, so words and especially numbers come out wrong or vanish). Do not use extracted " +
+        "text from this file. Use view_document_page to read the pages visually, or suggest the user add " +
+        "the document to a knowledge base with a document processor for full OCR."
+      );
+    case "noTextLayer":
+      return (
+        `"${name}" has no extractable text layer (likely a scan or image-based PDF). ` +
+        "Use view_document_page to look at pages visually, or suggest the user add the document " +
+        "to a knowledge base with a document processor for full OCR."
+      );
+    case "notFound":
+      return `Could not read session file "${name}" (status 404). Check the exact file name.`;
+    case "readFailed":
+      return `Could not read "${name}". Try again; if it keeps failing, tell the user.`;
+  }
+}
+
+/** [7,8,9,10,11,12,40] -> "7-12, 40" */
+export function collapsePageList(pages: number[]): string {
+  const sorted = [...new Set(pages)].sort((a, b) => a - b);
+  const parts: string[] = [];
+  for (let i = 0; i < sorted.length; ) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1]! === sorted[j]! + 1) j++;
+    parts.push(j > i ? `${sorted[i]}-${sorted[j]}` : String(sorted[i]));
+    i = j + 1;
+  }
+  return parts.join(", ");
+}
+
+/**
+ * Keeps the pages in `range` of a text with `--- page N ---` markers, exactly as the
+ * extraction would have joined them. Text without markers is returned whole.
+ */
+export function selectPages(fullText: string, range: [number, number]): string {
+  const parts = fullText.split(/^(?=--- page \d+ ---$)/m);
+  if (parts.length < 2 && !/^--- page \d+ ---$/m.test(fullText)) return fullText;
+  const kept: string[] = [];
+  parts.forEach((part, i) => {
+    const m = /^--- page (\d+) ---$/m.exec(part);
+    if (!m) return;
+    const page = Number(m[1]);
+    if (page < range[0] || page > range[1]) return;
+    // Every part but the last still carries the "\n" that joined it to the next page.
+    kept.push(i < parts.length - 1 ? part.replace(/\n$/, "") : part);
+  });
+  return kept.join("\n");
+}
 
 const pagesPattern = /^(\d+)(?:-(\d+))?$/;
 
@@ -105,6 +184,7 @@ export const createParseDocumentTool = ({
   exuluConfig,
   ownerId,
   projectId,
+  turnProject,
 }: {
   sessionID?: string;
   user?: User;
@@ -113,6 +193,8 @@ export const createParseDocumentTool = ({
   ownerId?: number | string;
   /** The access-checked project id (never the raw session.project); null/undefined = no project files. */
   projectId?: string | null;
+  /** The turn's project holder; when given it wins over `projectId` and is read per call (create_project may set it mid-turn). */
+  turnProject?: TurnProject;
 }): ExuluTool | undefined => {
   if (!sessionID || !exuluConfig?.fileUploads?.s3Bucket) return undefined;
 
@@ -126,12 +208,12 @@ export const createParseDocumentTool = ({
     pages?: string;
     offset?: number;
     limit?: number;
-  }) => {
+  }, onProgress?: ProgressFn) => {
     const resolvedKey = resolveFileKey({
       filename,
       ownerId: ownerId ?? user?.id ?? "api",
       sessionId: sessionID,
-      projectId: projectId ?? null,
+      projectId: currentProjectId(turnProject, projectId),
       s3prefix: exuluConfig.fileUploads!.s3prefix,
     });
     if ("error" in resolvedKey) return { error: resolvedKey.error };
@@ -150,76 +232,110 @@ export const createParseDocumentTool = ({
 
     const uploads = exuluConfig.fileUploads!;
     try {
-      const url = await getPresignedUrl(uploads.s3Bucket!, key, exuluConfig);
-      const res = await fetch(url);
-      if (!res.ok) {
-        return { error: `Could not read session file "${safeName}" (status ${res.status}). Check the exact file name.` };
-      }
-      const bytes = Buffer.from(await res.arrayBuffer());
+      const baseIo = createStoreIo(exuluConfig);
+      const io: StoreIo = {
+        ...baseIo,
+        getBytes: async (sourceKey) => {
+          try {
+            return await baseIo.getBytes(sourceKey);
+          } catch (err) {
+            if (isS3NotFound(err)) throw new ExtractionRefusal({ kind: "notFound" });
+            // The detail can contain bucket keys; it stays in the server log.
+            console.error(`[EXULU] parse_document: could not read ${sourceKey}:`, err instanceof Error ? err.message : String(err));
+            throw new ExtractionRefusal({ kind: "readFailed" });
+          }
+        },
+      };
 
-      let fullText: string | undefined;
-      let totalPages: number | undefined;
-
-      // An instance with attachments.documentProcessor (OCR + VLM, the engine
-      // the knowledge bases use) reads scans and images inside pages too; the
-      // text-layer paths below stay as the fallback.
-      if (exuluConfig.attachments?.documentProcessor) {
-        const extracted = await extractDocument({ bytes, filename: safeName, exuluConfig, attribution: { user } });
-        if (extracted.tooLong) {
-          return { error: extracted.text };
+      /** The whole document as marked text: processor path, then pdftotext / Office. */
+      const extractFull = async (bytes: Buffer, onProgress?: ProgressFn): Promise<Extracted> => {
+        // An instance with attachments.documentProcessor (OCR + VLM, the engine
+        // the knowledge bases use) reads scans and images inside pages too; the
+        // text-layer paths below stay as the fallback.
+        let processorFellBack = false;
+        if (exuluConfig.attachments?.documentProcessor) {
+          const extracted = await extractDocument({
+            bytes,
+            filename: safeName,
+            exuluConfig,
+            attribution: { user },
+            maxPages: documentMaxPages(),
+            tolerateVisionFailures: true,
+            onProgress,
+          });
+          if (extracted.tooLong) {
+            throw new ExtractionRefusal({ kind: "tooLong", ...extracted.tooLong });
+          }
+          if (extracted.engine === "document-processor") {
+            const multiPage = extracted.pages.length > 1;
+            const degraded = extracted.degradedPages ?? [];
+            // A result with unverified pages is returned but never stored: a later
+            // read must get the chance to verify them. The text itself carries no note;
+            // the caller reports the pages inside the requested range.
+            return {
+              totalPages: extracted.pages.length,
+              storable: degraded.length === 0,
+              ...(degraded.length > 0 ? { degradedPages: degraded } : {}),
+              text: extracted.pages
+                .map(({ page, text }) => (multiPage ? `--- page ${page} ---\n${text.trim()}` : text.trim()))
+                .join("\n"),
+            };
+          }
+          // The processor gave nothing usable: what follows is the text-layer fallback,
+          // which must not stand in for the processor's output in the store.
+          processorFellBack = extracted.engine === "officeparser";
         }
-        if (extracted.engine === "document-processor") {
-          totalPages = extracted.pages.length;
-          const range = resolvePageRange(pages, totalPages, safeName);
-          if (!Array.isArray(range)) return range;
-          const multiPage = totalPages > 1;
-          fullText = extracted.pages
-            .filter(({ page }) => page >= range[0] && page <= range[1])
-            .map(({ page, text }) => (multiPage ? `--- page ${page} ---\n${text.trim()}` : text.trim()))
-            .join("\n");
-        }
-      }
 
-      if (fullText === undefined && ext === ".pdf") {
-        const raw = await pdfToText(bytes);
-        const pageTexts = raw.replace(/\f$/, "").split("\f");
-        totalPages = pageTexts.length;
-        const nonWhitespace = raw.replace(/\s/g, "").length;
-        if (looksLikeGarbledTextLayer(raw)) {
+        if (ext === ".pdf") {
+          const raw = await pdfToText(bytes);
+          const pageTexts = raw.replace(/\f$/, "").split("\f");
+          const pageCount = pageTexts.length;
+          const nonWhitespace = raw.replace(/\s/g, "").length;
+          if (looksLikeGarbledTextLayer(raw)) {
+            throw new ExtractionRefusal({ kind: "garbledTextLayer" });
+          }
+          if (nonWhitespace < pageCount * MIN_CHARS_PER_PAGE) {
+            throw new ExtractionRefusal({ kind: "noTextLayer" });
+          }
           return {
-            error:
-              `"${safeName}" has a text layer that is unreadable (its font encoding maps glyphs to the wrong ` +
-              "characters, so words and especially numbers come out wrong or vanish). Do not use extracted " +
-              "text from this file. Use view_document_page to read the pages visually, or suggest the user add " +
-              "the document to a knowledge base with a document processor for full OCR.",
+            totalPages: pageCount,
+            storable: !processorFellBack,
+            text: pageTexts.map((text, i) => `--- page ${i + 1} ---\n${text.trim()}`).join("\n"),
           };
         }
-        if (nonWhitespace < totalPages * MIN_CHARS_PER_PAGE) {
-          return {
-            error:
-              `"${safeName}" has no extractable text layer (likely a scan or image-based PDF). ` +
-              "Use view_document_page to look at pages visually, or suggest the user add the document " +
-              "to a knowledge base with a document processor for full OCR.",
-          };
-        }
-        const range = resolvePageRange(pages, totalPages, safeName);
-        if (!Array.isArray(range)) return range;
-        fullText = pageTexts
-          .map((text, i) => ({ page: i + 1, text }))
-          .filter(({ page }) => page >= range[0] && page <= range[1])
-          .map(({ page, text }) => `--- page ${page} ---\n${text.trim()}`)
-          .join("\n");
-      } else if (fullText === undefined) {
+
         // officeparser only reads the modern XML formats; .doc/.xls/.ppt/.rtf
         // need converting first even though OFFICE_EXTENSIONS accepts them.
-        const officeBytes = isLegacyOfficeFormat(ext)
-          ? await convertLegacyOfficeToModern(bytes, ext)
-          : bytes;
-        const extracted = await parseOfficeAsync(officeBytes, {
+        const officeBytes = isLegacyOfficeFormat(ext) ? await convertLegacyOfficeToModern(bytes, ext) : bytes;
+        const parsed = await parseOfficeAsync(officeBytes, {
           outputErrorToConsole: false,
           newlineDelimiter: "\n",
         });
-        fullText = String(extracted);
+        return { text: String(parsed), storable: !processorFellBack };
+      };
+
+      const stored = await readThroughDocument({
+        io,
+        bucket: uploads.s3Bucket!,
+        sourceKey: key,
+        s3prefix: uploads.s3prefix,
+        fingerprint: extractorFingerprint({ filename: safeName, exuluConfig }),
+        cacheDays: documentCacheDays(),
+        extract: extractFull,
+        ...(onProgress ? { onProgress } : {}),
+      });
+
+      let fullText = stored.text;
+      let degradedInRange: number[] = [];
+      // Single-page processor output carries no markers, so a stored copy has no page count.
+      const totalPages = stored.totalPages ?? (ext === ".pdf" ? 1 : undefined);
+      if (ext === ".pdf" && totalPages !== undefined) {
+        const range = resolvePageRange(pages, totalPages, safeName);
+        if (!Array.isArray(range)) return range;
+        if (pages) fullText = selectPages(fullText, range);
+        degradedInRange = (stored.degradedPages ?? []).filter((p) => p >= range[0] && p <= range[1]);
+      } else {
+        degradedInRange = stored.degradedPages ?? [];
       }
 
       const lines = (fullText ?? "").split("\n");
@@ -233,28 +349,92 @@ export const createParseDocumentTool = ({
         linesReturned = Math.max(1, content.split("\n").length - 1);
         content = content + "\n[slice truncated — request fewer lines]";
       }
+      // After slicing and the cap, so neither can remove it; the line counts describe the text only.
+      if (degradedInRange.length > 0) {
+        content +=
+          `\n[Note: figures and tables on page(s) ${collapsePageList(degradedInRange)} could not be verified; ` +
+          "the text for those pages is OCR only.]";
+      }
       return {
         content,
         ...(totalPages !== undefined ? { totalPages } : {}),
         totalLines: lines.length,
         offset: start + 1,
         linesReturned,
+        // Only when the text came from the store; the key is absent otherwise, so results of
+        // uncached reads stay byte-identical to what they were.
+        ...(stored.fromStore ? { fromStore: true } : {}),
       };
     } catch (err) {
+      if (err instanceof ExtractionRefusal) return { error: refusalMessage(err.info, safeName) };
       return { error: `Failed to parse "${safeName}": ${err instanceof Error ? err.message : "unknown error"}` };
     }
   };
+
+  /**
+   * Generator facade over the promise-based body: progress callbacks arrive from
+   * concurrent work, so they are queued and yielded as interim `reading` objects;
+   * the body's result is yielded last (the AI SDK treats the last yield as the
+   * tool result). Leaving early never cancels the extraction, which other
+   * callers may be waiting on and which must still reach the store.
+   */
+  async function* parseDocumentStream(args: {
+    filename: string;
+    pages?: string;
+    offset?: number;
+    limit?: number;
+  }): AsyncGenerator<ReadingStatus | Awaited<ReturnType<typeof parseDocumentExecute>>> {
+    const filename = String(args.filename).trim();
+    const queue: ReadingStatus[] = [];
+    let wake: (() => void) | undefined;
+    let finished = false;
+    let closed = false;
+    const onProgress = throttleProgress((p) => {
+      if (closed) return;
+      queue.push({ status: "reading", filename, ...p });
+      wake?.();
+    });
+    const run = parseDocumentExecute(args, onProgress).finally(() => {
+      finished = true;
+      wake?.();
+    });
+    // Consumed below; this keeps a rejection from going unhandled if the consumer left first.
+    run.catch(() => undefined);
+    try {
+      while (true) {
+        while (queue.length > 0) yield queue.shift()!;
+        if (finished) break;
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+        wake = undefined;
+      }
+      yield await run;
+    } finally {
+      // The consumer is gone (or done): stop queueing; the extraction keeps running.
+      closed = true;
+      queue.length = 0;
+    }
+  }
 
   return ExuluTool.internal({
     id: "parse_document",
     name: PARSE_DOCUMENT_TOOL_NAME,
     needsApproval: false,
-    description:
-      "Extract the text of an uploaded PDF or Office document from this session's files, with " +
-      '"--- page N ---" markers for PDFs so you can locate content by page. Free and fast (no OCR): ' +
-      "works only on documents with a real text layer. To SEE a page or an image inside a document, " +
-      "use view_document_page." +
-      " Files of the session's project are addressed as `project/<name>` and are read-only.",
+    // Without a document processor the tool reads the text layer only: say so, and keep the
+    // original wording so existing deployments see no change beyond the reuse sentence.
+    description: exuluConfig.attachments?.documentProcessor
+      ? "Extract the text of an uploaded PDF or Office document from this session's files, with " +
+        '"--- page N ---" markers for PDFs so you can locate content by page. Results are ' +
+        "stored and reused, so reading the same document again is fast, but the first read of a long document " +
+        "can take minutes. To SEE a page or an image inside a document, " +
+        "use view_document_page." +
+        " Files of the session's project are addressed as `project/<name>` and are read-only."
+      : "Extract the text of an uploaded PDF or Office document from this session's files, with " +
+        '"--- page N ---" markers for PDFs so you can locate content by page. Free and fast (no OCR): ' +
+        "works only on documents with a real text layer. To SEE a page or an image inside a document, " +
+        "use view_document_page. Extracted text is stored and reused, so reading the same document again is fast." +
+        " Files of the session's project are addressed as `project/<name>` and are read-only.",
     inputSchema: z.object({
       filename: z.string().describe('Exact session file name, e.g. "report.pdf"'),
       pages: z.string().optional().describe('PDF page or range to extract, e.g. "2" or "1-5" (default: all pages) (PDF only)'),
@@ -267,6 +447,6 @@ export const createParseDocumentTool = ({
     // Same shape mismatch as read_session_file / memory-tool: internal utility
     // tools return richer objects than ExuluTool's retrieval-flavored execute
     // type; the AI SDK passes the object through verbatim.
-    execute: parseDocumentExecute as never,
+    execute: parseDocumentStream as never,
   });
 };

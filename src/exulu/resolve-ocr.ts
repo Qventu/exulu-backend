@@ -37,6 +37,11 @@ export type ResolveOcrInput = {
   project?: Project;
   agent?: ExuluAgent;
   routine?: { id: string; name: string };
+  /**
+   * Abort an OCR request after this long (a timeout rejects, which the caller's retry logic treats
+   * as a failed attempt). Omitted = no explicit timeout, as before.
+   */
+  timeoutMs?: number;
 };
 
 /**
@@ -94,7 +99,7 @@ export class ResolveOcrError extends Error {
 }
 
 export async function resolveOcr(input: ResolveOcrInput): Promise<ResolvedOcr> {
-  const { model, contextId, contextName, user, userId, roleId, project, agent, routine } =
+  const { model, contextId, contextName, user, userId, roleId, project, agent, routine, timeoutMs } =
     input;
 
   if (!isLiteLLMEnabled()) {
@@ -151,6 +156,7 @@ export async function resolveOcr(input: ResolveOcrInput): Promise<ResolvedOcr> {
   const ocr: ResolvedOcr["ocr"] = async (document, opts) => {
     const res = await fetch(endpoint, {
       method: "POST",
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       headers: {
         ...authHeaders,
         "Content-Type": "application/json",

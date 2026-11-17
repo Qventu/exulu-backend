@@ -13,6 +13,7 @@ import {
 import { promptSafeProjectName } from "@SRC/exulu/session-file-listing";
 import { createPromoteS3 } from "@SRC/exulu/project-files-s3";
 import { listS3ObjectsByPrefix } from "@SRC/uppy";
+import { currentProjectId, type TurnProject } from "@SRC/exulu/turn-project";
 import type { ResolvedSessionProject } from "@SRC/exulu/resolve-session-project";
 
 export const SAVE_TO_PROJECT_TOOL_NAME = "save_to_project";
@@ -62,6 +63,7 @@ export const createSaveToProjectTool = ({
   project,
   disabled,
   deps,
+  turnProject,
 }: {
   sessionID?: string;
   user?: User;
@@ -72,6 +74,8 @@ export const createSaveToProjectTool = ({
   project?: ResolvedSessionProject | null;
   disabled?: Set<string> | string[];
   deps?: Deps;
+  /** The turn's project holder; its id wins over `project.id` at call time. */
+  turnProject?: TurnProject;
 }): ExuluTool | undefined => {
   if (!canRegisterSaveToProject({ sessionID, exuluConfig, project, req, user, disabled })) return undefined;
   if (!sessionID || !exuluConfig || !project) return undefined;
@@ -83,7 +87,7 @@ export const createSaveToProjectTool = ({
     promote: promoteSessionFiles,
     s3: createPromoteS3(exuluConfig),
     projectModified: async (name) => {
-      const { projectPrefix } = projectFilePrefix(project.id, uploads.s3prefix);
+      const { projectPrefix } = projectFilePrefix(currentProjectId(turnProject, project.id) ?? project.id, uploads.s3prefix);
       const objects = await listS3ObjectsByPrefix(projectPrefix, exuluConfig);
       const hit = objects.find((o) => o.key.split("/").pop() === name);
       return hit ? new Date(hit.lastModified) : undefined;
@@ -108,7 +112,7 @@ export const createSaveToProjectTool = ({
     let outcome: PromoteResult;
     try {
       outcome = await resolvedDeps.promote({
-        projectId: project.id,
+        projectId: currentProjectId(turnProject, project.id) ?? project.id,
         s3prefix: uploads.s3prefix,
         keys: [`${ownerPrefix}${name}`],
         fullSessionPrefix: ownerPrefix,

@@ -4,6 +4,7 @@ import { dropEmptyMessages } from "./stored-messages";
 import { mayResignStoredFileKey, resolveFreshFileUrl } from "./stored-file-url";
 import { loadFilePartBytes } from "./file-part-fetch";
 import { canRegisterSaveToProject } from "@SRC/templates/tools/save-to-project-tool";
+import { canRegisterCreateProject, CREATE_PROJECT_PROMPT } from "@SRC/templates/tools/create-project-tool";
 import { loadSessionFileListing, sessionFilesScopeSentence } from "./session-file-listing";
 import { resolveSessionProject, type ResolvedSessionProject } from "./resolve-session-project";
 import { getPresignedUrl } from "@SRC/uppy";
@@ -552,7 +553,7 @@ export const generateSync = async ({
         The user can upload files to this session through a side panel in the chat UI. Any such
         file appears in your working directory by its original filename — list them with \`ls\` or
         read them with the readFile tool. Files you produce yourself (via writeFile or via shell
-        commands like \`node create_doc.js\`) live in the same place. ${sessionFilesScopeSentence(resolvedProject?.name, canRegisterSaveToProject({ sessionID: session, exuluConfig, project: resolvedProject, req, user, disabled: disabledTools }))}
+        commands like \`node create_doc.js\`) live in the same place. ${sessionFilesScopeSentence(resolvedProject, canRegisterSaveToProject({ sessionID: session, exuluConfig, project: resolvedProject, req, user, disabled: disabledTools }))}
       `
     if (session) {
         const listing = await loadSessionFileListing({
@@ -563,6 +564,9 @@ export const generateSync = async ({
             project: resolvedProject,
         });
         if (listing) system += "\n\n" + listing;
+    }
+    if (canRegisterCreateProject({ sessionID: session, exuluConfig, agentTools: agent?.tools, project: resolvedProject, sessionProjectId: project, ownerId: sessionOwnerId, routineRun: false, req, user, disabled: disabledTools })) {
+        system += "\n\n" + CREATE_PROJECT_PROMPT;
     }
 
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
@@ -672,6 +676,7 @@ export const generateSync = async ({
             // tools: applies each tool's toModelOutput to historical tool results;
             // sanitize: guarantees auth payloads never reach the model regardless
             // of part encoding (spec 2026-07-22 §1.2).
+            // ignoreIncompleteToolCalls keeps persisted preliminary tool parts (e.g. a read aborted mid-way) out of model messages.
             messages: await convertToModelMessages(sanitizeAuthPayloadsInUiMessages(messages), {
                 ignoreIncompleteToolCalls: true,
                 tools,
@@ -1010,7 +1015,7 @@ ${skillsList}
         The user can upload files to this session through a side panel in the chat UI. Any such
         file appears in your working directory by its original filename — list them with \`ls\` or
         read them with the readFile tool. Files you produce yourself (via writeFile or via shell
-        commands like \`node create_doc.js\`) live in the same place. ${sessionFilesScopeSentence(resolvedProject?.name, canRegisterSaveToProject({ sessionID: session, exuluConfig, project: resolvedProject, req, user, disabled: disabledTools }))}
+        commands like \`node create_doc.js\`) live in the same place. ${sessionFilesScopeSentence(resolvedProject, canRegisterSaveToProject({ sessionID: session, exuluConfig, project: resolvedProject, req, user, disabled: disabledTools }))}
 
         Note on large outputs: oversized tool outputs and large uploaded documents are automatically
         truncated in the conversation; the FULL content is saved as a session file (named in the
@@ -1026,6 +1031,11 @@ ${skillsList}
             project: resolvedProject,
         });
         if (listing) system += "\n\n" + listing;
+    }
+    // One decision for the converter's registration and the prompt sentence.
+    const inRoutineRun = Boolean(routineRun) || isRunSessionMetadata(sessionMetadata);
+    if (canRegisterCreateProject({ sessionID: session, exuluConfig, agentTools: agent?.tools, project: resolvedProject, sessionProjectId: project, ownerId: sessionOwnerId, routineRun: inRoutineRun, req, user, disabled: disabledTools })) {
+        system += "\n\n" + CREATE_PROJECT_PROMPT;
     }
 
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
@@ -1076,6 +1086,7 @@ ${skillsList}
         skillDecisions,
         routineHandleFactory,
         resolvedProject,
+        inRoutineRun,
     )
     console.log("[EXULU] Converted tools", Object.keys(tools));
 
@@ -1151,6 +1162,7 @@ ${skillsList}
         // tools: applies each tool's toModelOutput to historical tool results;
         // sanitize: guarantees auth payloads never reach the model regardless
         // of part encoding (spec 2026-07-22 §1.2).
+        // ignoreIncompleteToolCalls keeps persisted preliminary tool parts (e.g. a read aborted mid-way) out of model messages.
         messages: await convertToModelMessages(sanitizeAuthPayloadsInUiMessages(messages), {
             ignoreIncompleteToolCalls: true,
             tools,

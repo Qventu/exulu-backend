@@ -1,7 +1,9 @@
 import { parseOfficeAsync } from "officeparser";
 import type { ExuluConfig } from "./app";
 import { pdfPageCount } from "@SRC/templates/tools/document-render-helpers";
+import type { ProgressFn } from "./document-cache/progress";
 import type { DocumentProcessorConfig, ProcessedDocument } from "@EE/python/documents/processing/doc_processor.ts";
+import { processWideLimiters, type ProviderLimiters } from "@EE/python/documents/processing/limits.ts";
 
 /**
  * Text extraction for documents the model receives inline: chat uploads,
@@ -28,6 +30,11 @@ export type ExtractedDocument = {
    * `text` holds the notice the model (and so the user) sees instead.
    */
   tooLong?: { pageCount: number; maxPages: number };
+  /**
+   * Pages whose vision pass failed after its retries; their text is OCR only.
+   * Only set when the caller passed `tolerateVisionFailures`.
+   */
+  degradedPages?: number[];
 };
 
 /**
@@ -57,11 +64,27 @@ export function tooLongNotice(filename: string, pageCount: number, maxPages: num
   );
 }
 
+/** Same refusal for the tool path (EXULU_DOCUMENT_MAX_PAGES), phrased for reading rather than attaching. */
+export function tooLongForToolNotice(filename: string, pageCount: number, maxPages: number): string {
+  return (
+    `[Document too long: "${filename}" has ${pageCount} pages, the limit for reading a document is ${maxPages} pages ` +
+    `(EXULU_DOCUMENT_MAX_PAGES). The document was NOT read. Tell the user plainly and suggest splitting the file.]`
+  );
+}
+
 export type ExtractDocumentInput = {
   bytes: Buffer;
   /** File name with extension — the processor derives the type from it. */
   filename: string;
   exuluConfig?: ExuluConfig;
+  /**
+   * Page cap for PDFs. Omitted = the inline attachment cap (attachmentMaxPages(),
+   * with the attachment notice). parse_document passes documentMaxPages().
+   */
+  maxPages?: number;
+  /** A page whose vision pass failed keeps its OCR text and is listed in `degradedPages` instead of failing the document. */
+  tolerateVisionFailures?: boolean;
+  onProgress?: ProgressFn;
   /** Cost attribution forwarded to LiteLLM (user / agent / routine tags). */
   attribution?: DocumentProcessorConfig["attribution"];
   /** Test seams. */
@@ -74,6 +97,9 @@ type DocumentProcess = (input: {
   file: string | Buffer;
   name: string;
   config?: DocumentProcessorConfig;
+  tolerateVisionFailures?: boolean;
+  onProgress?: ProgressFn;
+  limiters?: ProviderLimiters;
 }) => Promise<ProcessedDocument | undefined>;
 
 /**
@@ -98,6 +124,10 @@ function pagesFromProcessor(result: ProcessedDocument | undefined): ExtractedPag
   }));
 }
 
+function degradedPagesOf(result: ProcessedDocument | undefined): number[] {
+  return (result ?? []).filter((p) => p.vlm_failed).map((p) => p.page);
+}
+
 const defaultOfficeParse = async (bytes: Buffer): Promise<string> =>
   String(await parseOfficeAsync(bytes, { outputErrorToConsole: false, newlineDelimiter: "\n" }));
 
@@ -105,7 +135,8 @@ export async function extractDocument(input: ExtractDocumentInput): Promise<Extr
   const config = input.exuluConfig?.attachments?.documentProcessor;
   if (config) {
     if (input.filename.toLowerCase().endsWith(".pdf")) {
-      const maxPages = attachmentMaxPages();
+      const forTool = input.maxPages !== undefined;
+      const maxPages = input.maxPages ?? attachmentMaxPages();
       let pageCount: number | undefined;
       try {
         pageCount = await (input.countPages ?? pdfPageCount)(input.bytes);
@@ -114,10 +145,10 @@ export async function extractDocument(input: ExtractDocumentInput): Promise<Extr
         console.warn(`[EXULU] Could not count pages of ${input.filename}:`, error instanceof Error ? error.message : String(error));
       }
       if (pageCount !== undefined && pageCount > maxPages) {
-        console.warn(`[EXULU] ${input.filename} has ${pageCount} pages, over the attachment cap of ${maxPages}; not read.`);
+        console.warn(`[EXULU] ${input.filename} has ${pageCount} pages, over the ${forTool ? "document" : "attachment"} cap of ${maxPages}; not read.`);
         return {
           pages: [],
-          text: tooLongNotice(input.filename, pageCount, maxPages),
+          text: (forTool ? tooLongForToolNotice : tooLongNotice)(input.filename, pageCount, maxPages),
           engine: "document-processor",
           tooLong: { pageCount, maxPages },
         };
@@ -129,10 +160,21 @@ export async function extractDocument(input: ExtractDocumentInput): Promise<Extr
         file: input.bytes,
         name: input.filename,
         config: { ...config, attribution: { ...config.attribution, ...input.attribution } },
+        ...(input.tolerateVisionFailures ? { tolerateVisionFailures: true } : {}),
+        ...(input.onProgress ? { onProgress: input.onProgress } : {}),
+        // Chat reads (parse_document, inline attachments) share the process-wide OCR/vision
+        // ceilings; knowledge-base processing calls the processor directly without them.
+        limiters: processWideLimiters,
       });
       const pages = pagesFromProcessor(result);
       if (pages.some((p) => p.text.length > 0)) {
-        return { pages, text: pagesToText(pages), engine: "document-processor" };
+        const degradedPages = input.tolerateVisionFailures ? degradedPagesOf(result) : [];
+        return {
+          pages,
+          text: pagesToText(pages),
+          engine: "document-processor",
+          ...(degradedPages.length > 0 ? { degradedPages } : {}),
+        };
       }
       console.warn(`[EXULU] Document processor returned no text for ${input.filename}; falling back to officeparser.`);
     } catch (error) {
@@ -160,9 +202,18 @@ export function validateAttachmentsConfig(
   config: ExuluConfig | undefined,
   license: { "advanced-document-processing": boolean },
 ): string[] {
-  const processorConfig = config?.attachments?.documentProcessor;
-  if (!processorConfig) return [];
   const problems: string[] = [];
+  // Env settings of the document store are checked even without an attachments config.
+  const rawDays = process.env.EXULU_DOCUMENT_CACHE_DAYS;
+  if (rawDays !== undefined && rawDays.trim() !== "" && !(Number.isInteger(Number(rawDays)) && Number(rawDays) >= 0)) {
+    problems.push(`EXULU_DOCUMENT_CACHE_DAYS must be a non-negative integer, 0 disables the cache (got ${JSON.stringify(rawDays)}; default 365)`);
+  }
+  const rawDocPages = process.env.EXULU_DOCUMENT_MAX_PAGES;
+  if (rawDocPages !== undefined && rawDocPages.trim() !== "" && !(Number.isInteger(Number(rawDocPages)) && Number(rawDocPages) > 0)) {
+    problems.push(`EXULU_DOCUMENT_MAX_PAGES must be a positive integer (got ${JSON.stringify(rawDocPages)}; default 300)`);
+  }
+  const processorConfig = config?.attachments?.documentProcessor;
+  if (!processorConfig) return problems;
   const name = processorConfig.processor?.name;
   if (!name || !PROCESSOR_NAMES.has(name)) {
     problems.push(`attachments.documentProcessor.processor.name must be one of ${[...PROCESSOR_NAMES].join(", ")} (got ${JSON.stringify(name)})`);
@@ -177,6 +228,10 @@ export function validateAttachmentsConfig(
     if (!(Number.isInteger(processorConfig.vlm.concurrency) && processorConfig.vlm.concurrency > 0)) {
       problems.push("attachments.documentProcessor.vlm.concurrency must be a positive integer");
     }
+  }
+  const ocrConcurrencySetting = processorConfig.ocr?.concurrency;
+  if (ocrConcurrencySetting !== undefined && !(Number.isInteger(ocrConcurrencySetting) && ocrConcurrencySetting >= 1 && ocrConcurrencySetting <= 8)) {
+    problems.push("attachments.documentProcessor.ocr.concurrency must be an integer from 1 to 8");
   }
   if (!license["advanced-document-processing"]) {
     problems.push("attachments.documentProcessor needs the enterprise licence (advanced-document-processing); set EXULU_ENTERPRISE_LICENSE or remove the attachments config");

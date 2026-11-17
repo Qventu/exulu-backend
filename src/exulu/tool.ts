@@ -3,6 +3,7 @@ import type { Tool } from "ai";
 import { tool } from "ai";
 import { z } from "zod";
 import type { ExuluConfig } from "./app";
+import type { ReadingStatus } from "./document-cache/progress";
 import type { User } from "@EXULU_TYPES/models/user";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { randomUUID } from "node:crypto";
@@ -116,11 +117,16 @@ export class ExuluTool {
           job?: string;
           items?: Item[];
         }>
-      | AsyncGenerator<{
-          result?: string;
-          job?: string;
-          items?: Item[];
-        }>;
+      | AsyncGenerator<
+          | {
+              result?: string;
+              job?: string;
+              items?: Item[];
+            }
+          // Interim "reading document" progress: the AI SDK shows it as a preliminary
+          // result; the last yielded value is the real one.
+          | ReadingStatus
+        >;
   }) {
     // Guard for JS consumers (no compile-time check) and for any cast that
     // sneaks a framework-managed type past the narrowed param type above.

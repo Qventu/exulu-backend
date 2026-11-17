@@ -136,7 +136,9 @@ Registration site: `src/templates/tools/session-file-read-tool.ts`.
 parse_document(filename, pages?, offset?, limit?)
 ```
 
-Extracts the text layer of an uploaded PDF or Office document (`.docx`, `.xlsx`, `.pptx`, and more). PDFs are returned with `--- page N ---` markers so the model can locate content by page. Scanned or image-only PDFs are detected and rejected with a hint to use `view_document_page` or a knowledge-base processor instead.
+Extracts the text of an uploaded PDF or Office document (`.docx`, `.xlsx`, `.pptx`, and more). PDFs are returned with `--- page N ---` markers so the model can locate content by page. Scanned or image-only PDFs are detected and rejected with a hint to use `view_document_page` or a knowledge-base processor instead.
+
+With a document processor configured, PDFs up to `EXULU_DOCUMENT_MAX_PAGES` pages (default 300) are read with OCR and the vision pass; the result is stored per instance and reused (see [Reading cache](/self-hosting/services/s3-storage#reading-cache)). The tool yields interim `reading` status objects (`filename`, `phase`, `pagesDone`, `pagesTotal`) that the chat shows as a progress card; only the final result reaches the model. If the vision pass failed for some pages, the result ends with a note naming them and is not stored.
 
 Registration site: `src/templates/tools/parse-document-tool.ts`.
 

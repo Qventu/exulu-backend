@@ -508,24 +508,46 @@ function preserveDescription(original: z.ZodTypeAny, rebuilt: z.ZodTypeAny): z.Z
  * validates against is untouched. This is a transport concern only; it has
  * no opinion on whether an unknown key is OK — that answer still comes from
  * `unknownPaths` against the original, un-loosened schema.
+ *
+ * `options.nullableEntries` additionally lets an explicit `null` through at the
+ * FIRST level only (each entry of a record, each declared key of an object),
+ * because that is the merge patch's delete marker. Off by default; only the
+ * update tool's merge-capable json fields ask for it. A null in a non-merge
+ * write is still refused by the write step's own shape checks.
  */
-export function loosenForTransport(schema: z.ZodTypeAny): z.ZodTypeAny {
+export function loosenForTransport(
+  schema: z.ZodTypeAny,
+  options: { nullableEntries?: boolean } = {},
+): z.ZodTypeAny {
+  return loosen(schema, options.nullableEntries === true);
+}
+
+/**
+ * The recursive worker behind `loosenForTransport`. `nullEntries` is true
+ * only while still at the schema's ROOT (through optional/nullable/default
+ * wrappers): the first level of a json field is where a merge patch treats an
+ * explicit `null` as "delete this key" (`mergeJson`, `omitNullEntries`), so
+ * that is the only place the transport schema is asked to let `null` through.
+ * Every recursive step below into anything deeper passes `false`, so a null
+ * nested deeper is judged exactly as before.
+ */
+function loosen(schema: z.ZodTypeAny, nullEntries: boolean): z.ZodTypeAny {
   const def = schema.def as AnyDef;
 
   switch (def.type) {
     case "optional":
-      return preserveDescription(schema, z.optional(loosenForTransport(def.innerType as z.ZodTypeAny)));
+      return preserveDescription(schema, z.optional(loosen(def.innerType as z.ZodTypeAny, nullEntries)));
     case "nullable":
-      return preserveDescription(schema, z.nullable(loosenForTransport(def.innerType as z.ZodTypeAny)));
+      return preserveDescription(schema, z.nullable(loosen(def.innerType as z.ZodTypeAny, nullEntries)));
     case "default":
       return preserveDescription(
         schema,
-        (loosenForTransport(def.innerType as z.ZodTypeAny) as z.ZodTypeAny & { default: (v: unknown) => z.ZodTypeAny }).default(
+        (loosen(def.innerType as z.ZodTypeAny, nullEntries) as z.ZodTypeAny & { default: (v: unknown) => z.ZodTypeAny }).default(
           def.defaultValue,
         ),
       );
     case "array":
-      return preserveDescription(schema, z.array(loosenForTransport(def.element as z.ZodTypeAny)));
+      return preserveDescription(schema, z.array(loosen(def.element as z.ZodTypeAny, false)));
     case "record": {
       // A record never strips keys itself — every key is dynamically valid
       // against `valueType`, which is the thing that can itself be (or
@@ -533,7 +555,8 @@ export function loosenForTransport(schema: z.ZodTypeAny): z.ZodTypeAny {
       // (rebuilding it through the public `z.record()` factory would also
       // need it narrowed to zod's `$ZodRecordKey` constraint, which
       // `z.ZodTypeAny` doesn't satisfy); `.clone()` swaps only `valueType`.
-      const loosenedValue = loosenForTransport(def.valueType as z.ZodTypeAny);
+      const innerValue = loosen(def.valueType as z.ZodTypeAny, false);
+      const loosenedValue = nullEntries ? z.nullable(innerValue) : innerValue;
       return preserveDescription(
         schema,
         (schema as z.ZodTypeAny & { clone: (def: AnyDef) => z.ZodTypeAny }).clone({ ...def, valueType: loosenedValue }),
@@ -542,7 +565,7 @@ export function loosenForTransport(schema: z.ZodTypeAny): z.ZodTypeAny {
     case "union":
       return preserveDescription(
         schema,
-        z.union((def.options as z.ZodTypeAny[]).map((option) => loosenForTransport(option)) as [
+        z.union((def.options as z.ZodTypeAny[]).map((option) => loosen(option, false)) as [
           z.ZodTypeAny,
           z.ZodTypeAny,
           ...z.ZodTypeAny[],
@@ -554,7 +577,8 @@ export function loosenForTransport(schema: z.ZodTypeAny): z.ZodTypeAny {
       for (const key of Object.keys(shape)) {
         const child = shape[key];
         if (!child) continue;
-        loosenedShape[key] = loosenForTransport(child);
+        const loosenedChild = loosen(child, false);
+        loosenedShape[key] = nullEntries ? preserveDescription(child, z.nullable(loosenedChild)) : loosenedChild;
       }
       return preserveDescription(
         schema,

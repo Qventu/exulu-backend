@@ -1,3 +1,4 @@
+import { currentProjectId, type TurnProject } from "@SRC/exulu/turn-project";
 import { z } from "zod";
 import { resolveFileKey } from "./resolve-file-key";
 import { ExuluTool } from "@SRC/exulu/tool";
@@ -29,6 +30,7 @@ export const createSessionFileReadTool = ({
   exuluConfig,
   ownerId,
   projectId,
+  turnProject,
 }: {
   sessionID?: string;
   user?: User;
@@ -37,6 +39,8 @@ export const createSessionFileReadTool = ({
   ownerId?: number | string;
   /** The access-checked project id (never the raw session.project); null/undefined = no project files. */
   projectId?: string | null;
+  /** The turn's project holder; when given it wins over `projectId` and is read per call (create_project may set it mid-turn). */
+  turnProject?: TurnProject;
 }): ExuluTool | undefined => {
   if (!sessionID || !exuluConfig?.fileUploads?.s3Bucket) return undefined;
 
@@ -46,7 +50,7 @@ export const createSessionFileReadTool = ({
       filename,
       ownerId: ownerId ?? user?.id ?? "api",
       sessionId: sessionID,
-      projectId: projectId ?? null,
+      projectId: currentProjectId(turnProject, projectId),
       s3prefix: uploads.s3prefix,
     });
     if ("error" in resolved) return { error: resolved.error };

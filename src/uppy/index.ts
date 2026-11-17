@@ -16,12 +16,14 @@ import {
   ListObjectsV2Command,
   HeadObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   type ListObjectsV2CommandOutput,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { STSClient, GetFederationTokenCommand } from "@aws-sdk/client-sts";
 import { randomUUID } from "node:crypto";
 import { isProjectKey } from "../exulu/project-files";
+import { isDerivedKey } from "../exulu/document-cache/keys";
 
 const expiresIn = 60 * 60 * 24 * 1; // S3 signature expires within 1 day.
 
@@ -438,6 +440,8 @@ export function mayUseGenericS3Route(
   user: { type?: string; super_admin?: boolean },
   s3prefix?: string | null,
 ): boolean {
+  // The derived/ store is backend-internal: nobody reads or writes it here.
+  if (isDerivedKey(key, s3prefix)) return false;
   if (user.type === "api" || user.super_admin) return true;
   return !isProjectKey(key, s3prefix);
 }
@@ -587,6 +591,118 @@ export const getS3ObjectBytes = async (
 };
 
 /**
+ * Read a text object by its exact key (no user or general prefix is added) together with
+ * its last-modified time. A missing object yields null; other errors throw.
+ */
+export const getS3ObjectTextExact = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<{ text: string; lastModified: Date; metadata: Record<string, string> } | null> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  try {
+    const response = await client.send(
+      new GetObjectCommand({ Bucket: config.fileUploads.s3Bucket, Key: key }),
+    );
+    if (!response.Body) return null;
+    return {
+      text: await response.Body.transformToString("utf-8"),
+      lastModified: response.LastModified ?? new Date(0),
+      metadata: response.Metadata ?? {},
+    };
+  } catch (err) {
+    if (isS3NotFound(err)) return null;
+    throw err;
+  }
+};
+
+/**
+ * Read an object's bytes together with the identity (ETag, last-modified, size) of the
+ * exact version that was returned, so a caller can bind what it computed from the bytes
+ * to what it read. The key is used as given by getS3ObjectBytes (bucket from config).
+ */
+export const getS3ObjectBytesWithInfo = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<{ bytes: Buffer; etag: string | null; lastModified: Date | null; size: number | null }> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const response = await client.send(
+    new GetObjectCommand({ Bucket: config.fileUploads.s3Bucket, Key: key }),
+  );
+  if (!response.Body) {
+    throw new Error(`Empty body for S3 key: ${key}`);
+  }
+  const bytes = Buffer.from(await response.Body.transformToByteArray());
+  return {
+    bytes,
+    etag: response.ETag ?? null,
+    lastModified: response.LastModified ?? null,
+    size: response.ContentLength ?? bytes.length,
+  };
+};
+
+/** HeadObject by exact key. A missing object yields null; other errors throw. */
+export const headS3ObjectExact = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<{ etag: string | null; lastModified: Date | null; size: number | null } | null> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  try {
+    const response = await client.send(
+      new HeadObjectCommand({ Bucket: config.fileUploads.s3Bucket, Key: key }),
+    );
+    return {
+      etag: response.ETag ?? null,
+      lastModified: response.LastModified ?? null,
+      size: response.ContentLength ?? null,
+    };
+  } catch (err) {
+    if (isS3NotFound(err)) return null;
+    throw err;
+  }
+};
+
+/**
+ * Write a text object at exactly `key`: unlike uploadFile, no `user_<id>` segment and no
+ * general prefix is added. Metadata values that are not printable ASCII are URL-encoded.
+ */
+export const putS3ObjectTextExact = async (
+  key: string,
+  text: string,
+  metadata: Record<string, string>,
+  config: ExuluConfig,
+  contentType = "text/markdown; charset=utf-8",
+): Promise<void> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const body = Buffer.from(text, "utf-8");
+  const safeMetadata: Record<string, string> = {};
+  for (const [k, v] of Object.entries(metadata)) {
+    safeMetadata[k] = /^[\x20-\x7e]*$/.test(v) ? v : encodeURIComponent(v);
+  }
+  await client.send(
+    new PutObjectCommand({
+      Bucket: config.fileUploads.s3Bucket,
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+      ContentLength: body.byteLength,
+      Metadata: safeMetadata,
+    }),
+  );
+};
+
+/**
  * Delete a single object from S3 by its full key (no bucket prefix).
  */
 export const deleteS3Object = async (
@@ -600,6 +716,52 @@ export const deleteS3Object = async (
   const bucket = config.fileUploads.s3Bucket;
   const command = new DeleteObjectCommand({ Bucket: bucket, Key: key });
   await client.send(command);
+};
+
+/**
+ * One ListObjectsV2 page for exactly `prefix` (no user or general prefix is added).
+ * `next` is the continuation token while more pages remain.
+ */
+export const listS3ObjectsExact = async (
+  prefix: string,
+  token: string | undefined,
+  config: ExuluConfig,
+): Promise<{ items: { key: string; lastModified: Date }[]; next?: string }> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const response = await client.send(
+    new ListObjectsV2Command({
+      Bucket: config.fileUploads.s3Bucket,
+      Prefix: prefix,
+      ...(token && { ContinuationToken: token }),
+    }),
+  );
+  const items: { key: string; lastModified: Date }[] = [];
+  for (const obj of response.Contents ?? []) {
+    if (obj.Key && obj.LastModified) items.push({ key: obj.Key, lastModified: obj.LastModified });
+  }
+  return { items, next: response.IsTruncated ? response.NextContinuationToken : undefined };
+};
+
+/** Delete exact keys (no prefix added), at most 1000 per request. Missing keys are not an error. */
+export const deleteS3ObjectsExact = async (keys: string[], config: ExuluConfig): Promise<void> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  for (let i = 0; i < keys.length; i += 1000) {
+    const response = await client.send(
+      new DeleteObjectsCommand({
+        Bucket: config.fileUploads.s3Bucket,
+        Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true },
+      }),
+    );
+    if (response?.Errors?.length) {
+      throw new Error(`S3 refused to delete ${response.Errors.length} object(s): ${response.Errors[0]?.Message}`);
+    }
+  }
 };
 
 /**

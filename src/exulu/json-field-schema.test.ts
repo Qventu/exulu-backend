@@ -288,6 +288,25 @@ describe("loosenForTransport", () => {
   });
 });
 
+describe("loosenForTransport nullableEntries", () => {
+  const entry = z.object({ n: z.number().optional() });
+
+  test("off by default: a null entry is refused", () => {
+    expect(loosenForTransport(z.record(z.string(), entry)).safeParse({ k: null }).success).toBe(false);
+  });
+
+  test("on: first level accepts null, deeper levels and wrong types do not", () => {
+    const loose = loosenForTransport(z.record(z.string(), entry), { nullableEntries: true });
+    expect(loose.safeParse({ k: null }).success).toBe(true);
+    expect(loose.safeParse({ k: { n: null } }).success).toBe(false);
+    expect(loose.safeParse({ k: "x" }).success).toBe(false);
+  });
+
+  test("on: an array-rooted schema gets no null entries", () => {
+    expect(loosenForTransport(z.array(entry), { nullableEntries: true }).safeParse([null]).success).toBe(false);
+  });
+});
+
 describe("mergeJson", () => {
   test("mergeJson keeps keys the patch does not mention", () => {
     expect(mergeJson({ a: 1, b: 2 }, { a: 9 })).toEqual({ a: 9, b: 2 });
