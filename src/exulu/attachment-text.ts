@@ -3,6 +3,7 @@ import type { ExuluConfig } from "./app";
 import { pdfPageCount } from "@SRC/templates/tools/document-render-helpers";
 import type { ProgressFn } from "./document-cache/progress";
 import type { DocumentProcessorConfig, ProcessedDocument } from "@EE/python/documents/processing/doc_processor.ts";
+import { processWideLimiters, type ProviderLimiters } from "@EE/python/documents/processing/limits.ts";
 
 /**
  * Text extraction for documents the model receives inline: chat uploads,
@@ -98,6 +99,7 @@ type DocumentProcess = (input: {
   config?: DocumentProcessorConfig;
   tolerateVisionFailures?: boolean;
   onProgress?: ProgressFn;
+  limiters?: ProviderLimiters;
 }) => Promise<ProcessedDocument | undefined>;
 
 /**
@@ -160,6 +162,9 @@ export async function extractDocument(input: ExtractDocumentInput): Promise<Extr
         config: { ...config, attribution: { ...config.attribution, ...input.attribution } },
         ...(input.tolerateVisionFailures ? { tolerateVisionFailures: true } : {}),
         ...(input.onProgress ? { onProgress: input.onProgress } : {}),
+        // Chat reads (parse_document, inline attachments) share the process-wide OCR/vision
+        // ceilings; knowledge-base processing calls the processor directly without them.
+        limiters: processWideLimiters,
       });
       const pages = pagesFromProcessor(result);
       if (pages.some((p) => p.text.length > 0)) {

@@ -29,6 +29,10 @@ describe("extractDocument", () => {
     expect(call.name).toBe("Anfrage.pdf");
     expect(call.config.processor).toEqual({ name: "mistral", model: "vertex-ocr" });
     expect(call.config.attribution).toEqual({ userId: 14 });
+    // Chat reads share the process-wide provider ceilings; knowledge-base callers do not pass them.
+    const { processWideLimiters } = require("@EE/python/documents/processing/limits");
+    expect(processWideLimiters).toBeDefined();
+    expect(call.limiters).toBe(processWideLimiters);
   });
 
   it("falls back to officeparser when no processor is configured", async () => {

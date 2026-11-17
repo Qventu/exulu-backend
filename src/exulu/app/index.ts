@@ -330,10 +330,12 @@ export class ExuluApp {
     // Attachments through the OCR + VLM processor are opt-in and must be
     // configured completely (engine, OCR model, VLM model, licence) — an
     // incomplete config fails the boot instead of silently reading only the
-    // text layer at run time.
+    // text layer at run time. The same check also covers the document-reading
+    // env settings (EXULU_DOCUMENT_CACHE_DAYS, EXULU_DOCUMENT_MAX_PAGES), so each
+    // problem names the setting it is about.
     const attachmentProblems = validateAttachmentsConfig(config, license);
     if (attachmentProblems.length > 0) {
-      throw new Error(`[EXULU] Invalid attachments.documentProcessor config:\n- ${attachmentProblems.join("\n- ")}`);
+      throw new Error(`[EXULU] Invalid document reading settings:\n- ${attachmentProblems.join("\n- ")}`);
     }
     if (config?.attachments?.documentProcessor) {
       const { processor, vlm } = config.attachments.documentProcessor;

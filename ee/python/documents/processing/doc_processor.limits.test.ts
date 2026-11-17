@@ -19,7 +19,8 @@ jest.mock("@SRC/exulu/resolve-model", () => ({ resolveModel: jest.fn(async () =>
 jest.mock("@llamaindex/liteparse", () => ({ LiteParse: jest.fn() }), { virtual: true });
 jest.mock("ai", () => ({ generateText: jest.fn(), Output: { object: (x: unknown) => x } }));
 
-import { documentProcessor } from "./doc_processor";
+import { documentProcessor, VISION_CALL_TIMEOUT_MS } from "./doc_processor";
+import { processWideLimiters } from "./limits";
 
 const { executePythonScript } = require("@SRC/utils/python-executor") as { executePythonScript: jest.Mock };
 const { resolveOcr } = require("@SRC/exulu/resolve-ocr") as { resolveOcr: jest.Mock };
@@ -75,18 +76,70 @@ const mistral = (extra: Record<string, unknown> = {}) => ({
 });
 
 describe("document processor limits", () => {
-  it("never runs more than 8 OCR calls at once across two concurrent documents, and both finish", async () => {
+  it("chat path: with the process-wide limiters never more than 8 OCR calls at once across two documents, and both finish", async () => {
     setupDocument(12);
     setupDocument(12);
     const config = mistral({ ocr: { concurrency: 8 } });
     const [a, b] = await Promise.all([
-      documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config }),
-      documentProcessor({ file: Buffer.from("%PDF"), name: "b.pdf", config }),
+      documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config, limiters: processWideLimiters }),
+      documentProcessor({ file: Buffer.from("%PDF"), name: "b.pdf", config, limiters: processWideLimiters }),
     ]);
     expect(a).toHaveLength(12);
     expect(b).toHaveLength(12);
     expect(maxRunning).toBeGreaterThan(3);
     expect(maxRunning).toBeLessThanOrEqual(8);
+  });
+
+  it("knowledge-base path: a direct call is not capped globally, two documents run 16 OCR calls at once", async () => {
+    setupDocument(12);
+    setupDocument(12);
+    const config = mistral({ ocr: { concurrency: 8 } });
+    await Promise.all([
+      documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config }),
+      documentProcessor({ file: Buffer.from("%PDF"), name: "b.pdf", config }),
+    ]);
+    expect(maxRunning).toBeGreaterThan(8);
+  });
+
+  it("knowledge-base path: vision calls follow vlm.concurrency per document with no global cap", async () => {
+    setupDocument(10);
+    setupDocument(10);
+    let visionRunning = 0;
+    let visionMax = 0;
+    generateText.mockImplementation(async () => {
+      visionRunning++;
+      visionMax = Math.max(visionMax, visionRunning);
+      await new Promise((r) => setTimeout(r, 15));
+      visionRunning--;
+      return { output: { needs_correction: false, corrected_text: null, current_page_table: null, confidence: "high", reasoning: "ok" } };
+    });
+    const config = mistral({ ocr: { concurrency: 8 }, vlm: { model: "vlm", concurrency: 10 } });
+    await Promise.all([
+      documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config }),
+      documentProcessor({ file: Buffer.from("%PDF"), name: "b.pdf", config }),
+    ]);
+    expect(visionMax).toBeGreaterThan(8);
+  });
+
+  it("chat path: vision calls across two documents are capped at 8", async () => {
+    setupDocument(10);
+    setupDocument(10);
+    let visionRunning = 0;
+    let visionMax = 0;
+    generateText.mockImplementation(async () => {
+      visionRunning++;
+      visionMax = Math.max(visionMax, visionRunning);
+      await new Promise((r) => setTimeout(r, 15));
+      visionRunning--;
+      return { output: { needs_correction: false, corrected_text: null, current_page_table: null, confidence: "high", reasoning: "ok" } };
+    });
+    const config = mistral({ ocr: { concurrency: 8 }, vlm: { model: "vlm", concurrency: 10 } });
+    await Promise.all([
+      documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config, limiters: processWideLimiters }),
+      documentProcessor({ file: Buffer.from("%PDF"), name: "b.pdf", config, limiters: processWideLimiters }),
+    ]);
+    expect(visionMax).toBeGreaterThan(3);
+    expect(visionMax).toBeLessThanOrEqual(8);
   });
 
   it("honours documentProcessor.ocr.concurrency for one document", async () => {
@@ -99,6 +152,33 @@ describe("document processor limits", () => {
     setupDocument(9);
     await documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config: mistral() });
     expect(maxRunning).toBe(3);
+  });
+});
+
+describe("vision call time limit", () => {
+  it("is 120 seconds", () => {
+    expect(VISION_CALL_TIMEOUT_MS).toBe(120_000);
+  });
+
+  it("every vision call carries a timeout signal; a stalled call that is aborted counts as a failed attempt", async () => {
+    setupDocument(1);
+    const controller = new AbortController();
+    const timeout = jest.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    generateText.mockImplementation(
+      (args: { abortSignal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          args.abortSignal?.addEventListener("abort", () => reject(new Error("timed out")));
+          if (args.abortSignal?.aborted) reject(new Error("timed out"));
+        }),
+    );
+    const pending = documentProcessor({ file: Buffer.from("%PDF"), name: "a.pdf", config: mistral(), tolerateVisionFailures: true });
+    for (let i = 0; i < 200 && generateText.mock.calls.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(timeout).toHaveBeenCalledWith(120_000);
+    controller.abort();
+    const result = await pending;
+    // Three attempts (the existing retry count), then the page is flagged instead of hanging.
+    expect(generateText).toHaveBeenCalledTimes(3);
+    expect(result![0].vlm_failed).toBe(true);
   });
 });
 
