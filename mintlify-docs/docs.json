@@ -325,6 +325,13 @@
                 ]
               },
               {
+                "group": "ExuluProjects",
+                "pages": [
+                  "developers/core/exulu-projects/introduction",
+                  "developers/core/exulu-projects/api-reference"
+                ]
+              },
+              {
                 "group": "ExuluChunkers",
                 "pages": [
                   "developers/core/exulu-chunkers/introduction",
