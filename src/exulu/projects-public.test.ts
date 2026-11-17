@@ -73,6 +73,23 @@ describe("addProjectFileCore", () => {
     expect(await result).toEqual({ name: "a_b.pdf" });
     expect(put.mock.calls[0][0]).toBe("projects/p1/files/a_b.pdf");
   });
+  it("returns PROJECT_NOT_FOUND, not a throw, when the project lookup rejects (non-uuid id)", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const db: any = { from: () => ({ where: () => ({ first: async () => { throw new Error("invalid input syntax for type uuid"); } }) }) };
+    const { put, result } = run({ db, projectId: "not-a-uuid" });
+    expect(await result).toEqual({ error: PROJECT_NOT_FOUND });
+    expect(put).not.toHaveBeenCalled();
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+  it("returns SAVE_FAILED, not a throw, when the S3 listing rejects", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const { put, result } = run({ listProjectNames: async () => { throw new Error("S3 down"); } });
+    expect(await result).toEqual({ error: SAVE_FAILED });
+    expect(put).not.toHaveBeenCalled();
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
   it("returns PROJECT_NOT_FOUND for an unknown project", async () => {
     const { put, result } = run({ projectId: "nope" });
     expect(await result).toEqual({ error: PROJECT_NOT_FOUND });

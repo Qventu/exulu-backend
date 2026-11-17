@@ -1,6 +1,7 @@
 import {
   CHANNEL_V,
   IDENTITY_V,
+  PROJECT_OPEN_MIN_WAIT_MS,
   connectImp,
   type HandshakeWindow,
   type MessageLike,
@@ -337,12 +338,46 @@ describe("connectImp", () => {
     expect(sent).toEqual([{ type: "exulu:panel:open", v: 2, slot: "analyse" }]);
   });
 
+  test("a project request waits out the host's access probe even when timeoutMs is short", async () => {
+    jest.useFakeTimers();
+    const { fakePort, connecting } = openChannel();
+    fakePort.deliver(grantMessage());
+    const channel = await connecting;
+
+    const opening = channel.openPanel("analyse", { project: "p-1" });
+    await jest.advanceTimersByTimeAsync(5_000);
+    fakePort.deliver({ type: "exulu:panel:open:ack", v: CHANNEL_V, slot: "analyse", accepted: true, project: "attached" });
+    expect(await opening).toEqual({ accepted: true, project: "attached" });
+  });
+
+  test("a project request still times out, after PROJECT_OPEN_MIN_WAIT_MS", async () => {
+    jest.useFakeTimers();
+    const { fakePort, connecting } = openChannel();
+    fakePort.deliver(grantMessage());
+    const channel = await connecting;
+
+    const opening = channel.openPanel("analyse", { project: "p-1" });
+    await jest.advanceTimersByTimeAsync(PROJECT_OPEN_MIN_WAIT_MS);
+    expect(await opening).toEqual({ accepted: false });
+  });
+
+  test("a request without project keeps waiting only timeoutMs", async () => {
+    jest.useFakeTimers();
+    const { fakePort, connecting } = openChannel();
+    fakePort.deliver(grantMessage());
+    const channel = await connecting;
+
+    const opening = channel.openPanel("analyse");
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(await opening).toEqual({ accepted: false });
+  });
+
   test("a panel:open:ack message stamped with the wrong version is ignored", async () => {
     // Same `data.v !== CHANNEL_V` guard, applied to the ack specifically. If
     // the wrong-version message below were read, it would resolve `opening`
-    // to `false` right away and delete the slot's waiter — leaving the
+    // to `{ accepted: false }` right away and delete the slot's waiter — leaving the
     // correctly versioned ack that follows with nothing to settle, so
-    // `await opening` would come back `false` instead of `true`.
+    // `await opening` would come back `{ accepted: false }` instead of `{ accepted: true }`.
     const { fakePort, connecting } = openChannel();
     fakePort.deliver(grantMessage());
     const channel = await connecting;
@@ -353,7 +388,7 @@ describe("connectImp", () => {
     expect(await opening).toEqual({ accepted: true });
   });
 
-  test("openPanel resolves false rather than hanging when no ack arrives", async () => {
+  test("openPanel resolves { accepted: false } rather than hanging when no ack arrives", async () => {
     // Review Focus 5 from the artifact's side — the button must re-enable.
     jest.useFakeTimers();
     const { fakePort, connecting } = openChannel();

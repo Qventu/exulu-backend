@@ -37,7 +37,14 @@ export async function addProjectFileCore(args: {
   listProjectNames: (projectPrefix: string) => Promise<string[]>;
   put: (key: string, data: Uint8Array | Buffer, contentType: string) => Promise<void>;
 }): Promise<AddFileResult> {
-  const project = await args.db.from("projects").where({ id: args.projectId }).first();
+  let project: unknown;
+  try {
+    project = await args.db.from("projects").where({ id: args.projectId }).first();
+  } catch (err) {
+    // A non-uuid projectId makes Postgres throw; to the caller that is simply "no such project".
+    console.error("[EXULU] ExuluProjects.addFile project lookup failed", err);
+    return { error: PROJECT_NOT_FOUND };
+  }
   if (!project) return { error: PROJECT_NOT_FOUND };
   const name = sanitizeFilename(args.name);
   if (!name) return { error: SAVE_INVALID_NAME };
@@ -45,7 +52,13 @@ export async function addProjectFileCore(args: {
   if (args.data.length > MAX_ADOPT_UPLOAD_BYTES) return { error: SKIP_TOO_LARGE };
 
   const { projectPrefix } = projectFilePrefix(args.projectId, args.s3prefix);
-  const existing = await args.listProjectNames(projectPrefix);
+  let existing: string[];
+  try {
+    existing = await args.listProjectNames(projectPrefix);
+  } catch (err) {
+    console.error("[EXULU] ExuluProjects.addFile listing failed", err);
+    return { error: SAVE_FAILED };
+  }
   if (existing.includes(name)) {
     return args.ifExists === "skip" ? { name, skipped: true } : { error: FILE_EXISTS };
   }

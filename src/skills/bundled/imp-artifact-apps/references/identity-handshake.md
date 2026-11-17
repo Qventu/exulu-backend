@@ -208,13 +208,22 @@ ack's `project` field. The request only carries the key when you passed one.
   project, anything else) and the artifact gets no detail. **The panel still
   opens on `denied`, just without the project.** Show a hint that the viewer
   needs access to the project.
-- Field absent: an old host that does not know `project`, or a request that
-  had none. Treat it as "no project outcome". Any value other than exactly
+- Field absent: an old host that does not know `project`, a request that
+  had none, or a `project` that was not a uuid (the host drops it and opens
+  the panel without a project). Treat it as "no project outcome". Any value other than exactly
   `"attached"` or `"denied"` is dropped by the template, and a rejected ack
   never carries `project`.
 
 The host runs an access check before it acks, so the ack can take as long as
-that check; do not assume an instant answer.
+that check: up to about 8 s. The template therefore waits at least 10 s for
+the ack of a project request, even if you connected with a shorter
+`timeoutMs`; requests without a project still wait `timeoutMs`. Do not assume
+an instant answer.
+
+**One `openPanel` in flight per slot.** A second call for the same slot before
+the first ack replaces the first call's waiter, and with overlapping project
+requests the status of one can be reported for the other. Disable your button
+until the promise settles.
 
 **Attachment limits — a seam to know about.** The backend's adopt step (what
 turns your `files` keys into session attachments) accepts at most **20 keys**

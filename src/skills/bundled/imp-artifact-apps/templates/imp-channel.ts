@@ -81,6 +81,15 @@ export type IdentityResult = { ok: true; grant: Grant } | { ok: false; reason: s
 export const CHANNEL_V = 2;
 
 /**
+ * Minimum time `openPanel` waits for an ack when the request carries a
+ * `project`. The host probes the viewer's access to the project for up to 8 s
+ * before it acks (and opens the panel regardless), so waiting only the
+ * handshake's `timeoutMs` could report "not opened" for a panel that then opens.
+ * Kept above that 8 s with margin for the round trip.
+ */
+export const PROJECT_OPEN_MIN_WAIT_MS = 10_000;
+
+/**
  * What `openPanel` resolves. Read it through `.accepted` — the result is an
  * object, so a bare `if (await openPanel(...))` is always true. `project` is
  * present only when the request carried one AND the host answered with
@@ -304,7 +313,8 @@ export function connectImp(win: HandshakeWindow, timeoutMs = 10_000): Promise<Im
           return;
         }
         let done = false;
-        const ackTimer = setTimeout(() => settle({ accepted: false }), timeoutMs);
+        const ackWaitMs = opts?.project !== undefined ? Math.max(timeoutMs, PROJECT_OPEN_MIN_WAIT_MS) : timeoutMs;
+        const ackTimer = setTimeout(() => settle({ accepted: false }), ackWaitMs);
         function settle(result: OpenPanelResult): void {
           if (done) return;
           done = true;
