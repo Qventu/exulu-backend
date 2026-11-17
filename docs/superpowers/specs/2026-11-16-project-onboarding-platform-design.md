@@ -72,7 +72,7 @@ Decided by the product owner: the store is global per instance and keyed by cont
 
 **Where.** Two kinds of objects under one top-level prefix `[<s3prefix>/]derived/`:
 - the text: `derived/content/<sha256 of the source bytes>/<extractor fingerprint>.md`
-- a small pointer per source object, so a read does not have to download the source just to hash it: `derived/pointers/<sha256 of bucket + key>.json` holding `{ etag, sha256 }`
+- a small pointer per source object, so a read does not have to download the source just to hash it: `derived/pointers/<sha256 of bucket + key>.json` holding `{ etag, lastModified, size, sha256 }`, all taken from the download that was hashed and all required to match the object's current state (an ETag alone is an MD5 and can be made to collide)
 
 The prefix is outside `user_<id>/` and `projects/`: the browser upload policy (`buildStsPolicy`) cannot write there, and the generic `/s3/*` routes refuse it like project keys (`mayUseGenericS3Route` is widened). Nothing lists, syncs, counts or promotes it, so the Markdown never appears in the sidebar, the project page, the prompt listing or the sandbox, and users cannot edit it.
 
@@ -104,7 +104,8 @@ Two reads of the same content at the same moment in one process share one extrac
 - For `parse_document` a separate ceiling applies: `EXULU_DOCUMENT_MAX_PAGES`, default 300. Above it the tool refuses with a notice that names both numbers and suggests splitting the file.
 - OCR chunk parallelism becomes configurable (`documentProcessor.ocr.concurrency`, default 3, max 8) and is additionally bounded by one process-wide limiter (default 8 concurrent OCR chunk calls, 8 concurrent vision calls) so one long document cannot starve other users' reads.
 - On the tool path, a page whose vision pass fails after its retries keeps its OCR text instead of failing the whole document. The result is returned with a one-line note naming the affected pages, and it is not stored, so a later read retries. Other callers of the processor (knowledge-base processing) keep today's fail-whole behaviour.
-- The process-wide limiter is a queue, not a refusal, and applies to every in-process caller of the processor. A caller that already runs at most 3 OCR chunks at a time only notices it when several documents are processed at once.
+- The process-wide limiter is a queue, not a refusal, and applies to the chat paths only (`parse_document` and inline attachments, through `extractDocument`). Knowledge-base processing calls the processor directly and keeps its previous concurrency; capping it would have cut worker throughput (found in the final review).
+- Every OCR call has a time limit of 180 s and every vision call 120 s; a timeout counts as a failed attempt for the existing retries, so a stalled provider cannot hold slots indefinitely.
 - An extraction that has started runs to completion and stores its result even when the client disconnects or the turn is aborted; the in-flight entry is removed when it settles. There is no tool-level timeout today and none is added; the per-step timeouts of the processor stay.
 - `pages` on a document that is not cached yet still processes the whole document once (so the result can be stored), then returns the requested pages. On a cached document it costs nothing.
 
@@ -132,7 +133,7 @@ Requested by the product owner: the user should see clearly what is happening du
 3. moves the files: copy into the project folder in batches (respecting 20 keys / 50 MB per batch and the 200-file cap), then delete the session originals that were copied. An original that a stored message of this conversation refers to through a file part (for example attachments of a session created from an e-mail) is copied but kept, so replaying the history keeps working; if the history cannot be read, every original is kept. Stored Markdown needs no handling; the moved files have the same content. A file that fails to copy stays in the session and is named in the result;
 4. returns: the project's name and id, how many files moved, which did not and why, the sentence "Only you can see this project. Invite colleagues on the project page.", and the link `/projects/<id>`.
 
-**Registration.** Offered only when: the agent has the tool enabled (opt-in per agent, off for every existing agent: an entry `{ id: "create_project", type: "function", config: [] }` in `agent.tools`, added through the generic tools picker like `skill_author`), the turn is not a routine run, the session exists and has no project, the speaker is the session's owner and not a guest, and file uploads are configured. The prompt mentions the tool only when it is registered (one shared predicate, as for `save_to_project`).
+**Registration.** Offered only when: the agent has the tool enabled (opt-in per agent, off for every existing agent: an entry `{ id: "create_project", type: "function", config: [] }` in `agent.tools`, added through the generic tools picker like `skill_author`), the turn is not a routine run, the deployment has the RBAC licence (without it every signed-in user can read any project's files, so "private" would be untrue), the session exists and has no project, the speaker is the session's owner and not a guest, and file uploads are configured. The prompt mentions the tool only when it is registered (one shared predicate, as for `save_to_project`).
 
 **Same-turn continuity.** After the tool ran, the document tools of the same turn resolve `project/<name>` against the new project (one mutable holder per turn, shared by the tool factories and set by `create_project`; the system prompt of that turn is not rebuilt, the tool result is what tells the model), so the agent can go on reading immediately. The sandbox's `project/` directory and the prompt listing follow on the next turn; the tool result says so.
 
@@ -165,7 +166,7 @@ In a project session the scope sentence and the listing header read `project <na
 - The UI wording "bereits gelesen".
 - The extractor fingerprint is part of the key; changing the processor's engine or models re-reads every document once.
 - Degraded results are returned but not stored.
-- The process-wide limiter applies to all processor callers and queues.
+- The process-wide limiter applies to chat reads only and queues; OCR and vision calls have time limits.
 - Ceiling of 300 pages for tool reads; process-wide limits of 8.
 - `create_project` moves files rather than copying them; it is opt-in per agent; it is not offered in shared sessions to non-owners or in routine runs; `files` is required; originals referenced by the history are kept.
 - The final `parse_document` result carries `fromStore: true` when stored text was used, so the UI badge does not have to be inferred.
