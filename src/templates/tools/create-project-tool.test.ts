@@ -21,10 +21,30 @@ const ALL = ["a.pdf", "b.docx"];
 const base = { sessionID: "s1", user: { id: 7 } as never, ownerId: 7, exuluConfig, agentTools };
 
 jest.mock("@SRC/postgres/client", () => ({ postgresClient: jest.fn() }));
-const mockMessages = (rows: { content: string }[]) => {
+// create_project is offered only where access control is licensed (see canRegisterCreateProject).
+const LICENSE = process.env.EXULU_ENTERPRISE_LICENSE;
+beforeAll(() => {
+  process.env.EXULU_ENTERPRISE_LICENSE = "EXULU_EE_test";
+});
+afterAll(() => {
+  if (LICENSE === undefined) delete process.env.EXULU_ENTERPRISE_LICENSE;
+  else process.env.EXULU_ENTERPRISE_LICENSE = LICENSE;
+});
+const mockMessages = (rows: { content: string }[], shares: { s3key: string }[] | Error = []) => {
   const whereRaw = jest.fn(() => ({ select: async () => rows }));
-  (postgresClient as jest.Mock).mockResolvedValue({ db: { from: () => ({ where: () => ({ whereRaw }) }) } });
-  return whereRaw;
+  const shareWhereRaw = jest.fn(() => ({
+    select: async () => {
+      if (shares instanceof Error) throw shares;
+      return shares;
+    },
+  }));
+  (postgresClient as jest.Mock).mockResolvedValue({
+    db: {
+      from: (table: string) =>
+        table === "shared_artifacts" ? { whereRaw: shareWhereRaw } : { where: () => ({ whereRaw }) },
+    },
+  });
+  return Object.assign(whereRaw, { shareWhereRaw });
 };
 
 const finalOf = async (r: unknown): Promise<unknown> => {
@@ -97,6 +117,21 @@ describe("registration", () => {
     ["the user switched it off for this chat", { disabled: ["create_project"] }],
   ])("is not created when %s", (_label, over) => {
     expect(createCreateProjectTool({ ...base, ...(over as object) })).toBeUndefined();
+  });
+  it("is not offered, and execute refuses, without the rbac licence: projects would not be private", async () => {
+    const m = make();
+    delete process.env.EXULU_ENTERPRISE_LICENSE;
+    try {
+      expect(canRegisterCreateProject(base)).toBe(false);
+      expect(createCreateProjectTool(base)).toBeUndefined();
+      const { result } = await run(m.tool, { name: "Alpha", files: ALL });
+      expect(result).toMatch(/access control/i);
+      expect(m.create).not.toHaveBeenCalled();
+      expect(m.log).toEqual([]);
+    } finally {
+      process.env.EXULU_ENTERPRISE_LICENSE = "EXULU_EE_test";
+    }
+    expect(canRegisterCreateProject(base)).toBe(true);
   });
   it("the prompt and the registration share the predicate", () => {
     const a = { ...base, user: base.user };
@@ -314,6 +349,83 @@ describe("history lookup", () => {
     expect(re.test('{"parts":[{ "type" :\n "file" }]}')).toBe(true);
     expect(re.test('{"parts":[{"type":"text"}]}')).toBe(false);
     expect(log.filter((l) => l.startsWith("remove"))).toEqual(["remove a.pdf", "remove b.docx"]);
+  });
+});
+
+describe("share links", () => {
+  const withDefaultLookup = (over: Record<string, unknown> = {}) => {
+    const m = make();
+    const tool = createCreateProjectTool({
+      ...base,
+      turnProject: m.turnProject,
+      deps: {
+        loadSession: async () => ({ project: null, user: 7 }),
+        createAndAttach: m.create as never,
+        listSessionFiles: async () => ["a.pdf", "b.docx"].map((n) => ({ key: `${PREFIX}${n}`, name: n, size: 10 })),
+        s3: {
+          listProjectNames: async () => [],
+          sizeOf: async () => 10,
+          copy: async (a: string) => void m.log.push(`copy ${a.slice(PREFIX.length)}`),
+          remove: async (k: string) => void m.log.push(`remove ${k.slice(PREFIX.length)}`),
+        },
+        db: async () => ({}),
+        ...over,
+      },
+    })!;
+    return { tool, log: m.log };
+  };
+
+  it("a file that a share link points at is copied but its original is kept, and the result says so", async () => {
+    const whereRaw = mockMessages([], [{ s3key: `${PREFIX}a.pdf` }]);
+    const { tool, log } = withDefaultLookup();
+    const { result } = await run(tool, { name: "Alpha", files: ALL });
+    expect(log).toEqual(["copy a.pdf", "copy b.docx", "remove b.docx"]);
+    expect(result).toMatch(/also kept in the session.*a\.pdf/);
+    expect(result).toMatch(/share link/);
+    // The share lookup is scoped to this session's prefix (LIKE, with wildcards escaped).
+    const [sql, [pattern]] = whereRaw.shareWhereRaw.mock.calls[0] as unknown as [string, string[]];
+    expect(sql).toMatch(/s3key LIKE/);
+    expect(pattern).toBe("exulu/user\\_7/sessions/s1/%");
+  });
+
+  it("when the share lookup fails, no original is deleted", async () => {
+    mockMessages([], new Error("db down"));
+    const { tool, log } = withDefaultLookup();
+    const { result } = await run(tool, { name: "Alpha", files: ALL });
+    expect(log.filter((l) => l.startsWith("remove"))).toEqual([]);
+    expect(result).toMatch(/also kept in the session/);
+  });
+});
+
+describe("an interrupted move", () => {
+  it("does not claim that files were not moved when it is unknown", async () => {
+    const m = make({
+      deps: {
+        move: async () => {
+          throw new Error("connection reset");
+        },
+      },
+    });
+    const { result } = await run(m.tool, { name: "Alpha", files: ALL });
+    expect(result).toMatch(/interrupted/i);
+    expect(result).toMatch(/check the project/i);
+    expect(result).not.toMatch(/Moved 0 files/);
+    expect(result).not.toMatch(/Not moved/);
+    expect(result).not.toContain("Copying the file into the project failed");
+    expect(result).toContain("/projects/proj-1");
+  });
+
+  it("still lists files that were skipped at planning, which are known not to have moved", async () => {
+    const m = make({
+      deps: {
+        move: async () => {
+          throw new Error("connection reset");
+        },
+      },
+    });
+    const { result } = await run(m.tool, { name: "Alpha", files: ["a.pdf", "missing.pdf"] });
+    expect(result).toMatch(/Not moved .*missing\.pdf/);
+    expect(result).toMatch(/interrupted/i);
   });
 });
 

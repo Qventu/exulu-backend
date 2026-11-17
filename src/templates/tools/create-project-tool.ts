@@ -4,6 +4,8 @@ import type { ExuluConfig } from "@SRC/exulu/app";
 import type { User } from "@EXULU_TYPES/models/user";
 import { treatAsGuest } from "@SRC/exulu/public-surface";
 import { postgresClient } from "@SRC/postgres/client";
+import { checkLicense } from "@EE/entitlements";
+import { sameEntityId } from "@SRC/exulu/project-access";
 import { sessionFilePrefix } from "@SRC/exulu/session-files";
 import { PROJECT_DIR } from "@SRC/exulu/project-files";
 import {
@@ -44,13 +46,14 @@ export function isCreateProjectEnabledOnAgent(tools: unknown): boolean {
   return Array.isArray(entries) && entries.some((t) => (t as { id?: unknown } | null)?.id === CREATE_PROJECT_TOOL_ID);
 }
 
-const sameId = (a: unknown, b: unknown) => a != null && b != null && String(a) === String(b);
-
 /**
  * The one answer to "is create_project offered this turn?", shared by the tool factory, the
  * tool's own execute (so a direct call that skipped registration is refused too) and the system
  * prompt. Offered only when the agent enabled it, the session exists and has no project, the
- * speaker is the session's owner and not a guest, and file uploads are configured.
+ * speaker is the session's owner and not a guest, file uploads are configured, and access
+ * control is licensed: without the rbac licence RBACResolver reports every project as "public",
+ * so any signed-in user could read the files of a project by id and "only you can see this
+ * project" would be false.
  */
 export function canRegisterCreateProject(args: {
   sessionID?: string;
@@ -70,11 +73,12 @@ export function canRegisterCreateProject(args: {
   disabled?: Set<string> | string[];
 }): boolean {
   if (args.routineRun) return false;
+  if (!checkLicense().rbac) return false;
   if (!args.sessionID || !args.exuluConfig?.fileUploads?.s3Bucket) return false;
   if (treatAsGuest(args.req, args.user)) return false;
   if (!isCreateProjectEnabledOnAgent(args.agentTools)) return false;
   if (args.project || args.sessionProjectId) return false;
-  if (!sameId(args.ownerId, args.user?.id)) return false;
+  if (!sameEntityId(args.ownerId, args.user?.id)) return false;
   const disabled = args.disabled instanceof Set ? args.disabled : new Set(args.disabled ?? []);
   return !disabled.has(CREATE_PROJECT_TOOL_ID);
 }
@@ -121,8 +125,12 @@ type Deps = {
   loadSession: (id: string) => Promise<{ project?: string | null; user?: number | string | null; metadata?: unknown } | undefined>;
   /** Creates the project and attaches the session in one transaction. */
   createAndAttach: typeof createProjectAndAttach;
-  /** Full S3 keys that stored messages of this session refer to (file parts): never deleted. */
-  referencedKeys: (sessionId: string) => Promise<Set<string>>;
+  /**
+   * Full S3 keys under `sessionPrefix` that something outside the session still refers to: stored
+   * messages of this session (file parts) and share links (shared_artifacts.s3key). Never deleted.
+   * Any failure rejects, and the caller then keeps every original.
+   */
+  referencedKeys: (sessionId: string, sessionPrefix: string) => Promise<Set<string>>;
   listSessionFiles: (prefix: string) => Promise<MoveCandidate[]>;
   move: typeof moveSessionFiles;
   s3: MoveS3;
@@ -139,14 +147,19 @@ export function formatCreateProjectResult(args: {
   moved: MoveResult;
   skipped: { name: string; reason: string }[];
   leftInSession: number;
+  /** The move threw part-way: what reached the project is unknown, so no per-file claim is made. */
+  interrupted?: boolean;
 }): string {
-  const { name, id, moved, skipped, leftInSession } = args;
+  const { name, id, moved, skipped, leftInSession, interrupted } = args;
   const notMoved = [...skipped, ...moved.notMoved];
   const lines = [
     `Created project "${promptSafeProjectName(name)}" (id ${id}) and attached this conversation to it.`,
-    moved.moved.length > 0
-      ? `Moved ${moved.moved.length} file${moved.moved.length === 1 ? "" : "s"} into the project: ${listNames(moved.moved)}.`
-      : "Moved 0 files into the project.",
+    interrupted
+      ? "Moving the files was interrupted by an error, so it is not known which of them reached the project. " +
+        "Tell the user to check the project's files and this conversation's file list."
+      : moved.moved.length > 0
+        ? `Moved ${moved.moved.length} file${moved.moved.length === 1 ? "" : "s"} into the project: ${listNames(moved.moved)}.`
+        : "Moved 0 files into the project.",
   ];
   if (notMoved.length > 0) {
     lines.push(
@@ -158,7 +171,7 @@ export function formatCreateProjectResult(args: {
   }
   if (moved.keptForHistory.length > 0) {
     lines.push(
-      `Copied into the project and also kept in the session, because an earlier message in this conversation refers to them: ${listNames(moved.keptForHistory)}.`,
+      `Copied into the project and also kept in the session, because an earlier message in this conversation or a share link refers to them: ${listNames(moved.keptForHistory)}.`,
     );
   }
   if (moved.originalsKept.length > 0) {
@@ -239,7 +252,7 @@ export const createCreateProjectTool = ({
       return db.from("agent_sessions").where({ id }).first();
     },
     createAndAttach: createProjectAndAttach,
-    referencedKeys: async (id) => {
+    referencedKeys: async (id, sessionPrefix) => {
       const { db } = await postgresClient();
       // Only rows that can hold a file part. content is a text column written by
       // JSON.stringify (no spaces), but other writers may format it, so the pattern
@@ -249,7 +262,17 @@ export const createCreateProjectTool = ({
         .where({ session: id })
         .whereRaw("content ~ ?", [FILE_PART_PATTERN])
         .select("content");
-      return referencedFileKeys(rows, { endpoint: uploads.s3endpoint, bucket: uploads.s3Bucket });
+      const keys = referencedFileKeys(rows, { endpoint: uploads.s3endpoint, bucket: uploads.s3Bucket });
+      // A share link serves whatever object its row points at, and a user may share any key under
+      // their own user_<id>/ prefix, session files included: moving such a file would break the
+      // public link. Stored keys never carry a leading slash (normalizeS3Key), so match without it.
+      const likePrefix = sessionPrefix.replace(/^\/+/, "").replace(/[\\%_]/g, (c) => `\\${c}`);
+      const shares: { s3key: string }[] = await db
+        .from("shared_artifacts")
+        .whereRaw("s3key LIKE ? ESCAPE '\\'", [`${likePrefix}%`])
+        .select("s3key");
+      for (const share of shares) if (share?.s3key) keys.add(String(share.s3key).replace(/^\/+/, ""));
+      return keys;
     },
     listSessionFiles: async (prefix) => {
       const objects = await listS3ObjectsByPrefix(prefix, exuluConfig);
@@ -278,6 +301,9 @@ export const createCreateProjectTool = ({
     if (session.project) return { result: "This conversation already belongs to a project." };
     if (isRunSessionMetadata((session as { metadata?: unknown }).metadata)) {
       return { result: "A routine run cannot be turned into a project." };
+    }
+    if (!checkLicense().rbac) {
+      return { result: "Projects are private only where access control is licensed, so this conversation cannot be turned into a project here." };
     }
     if (!gate(session.user, turnProject?.current ?? null, null)) {
       return { result: "Only the owner of this conversation can turn it into a project, and only where this agent has the tool enabled." };
@@ -317,13 +343,15 @@ export const createCreateProjectTool = ({
     // When the lookup fails, assume every file is referenced.
     let keepOriginalKeys: Set<string>;
     try {
-      keepOriginalKeys = await resolvedDeps.referencedKeys(sessionID);
+      keepOriginalKeys = await resolvedDeps.referencedKeys(sessionID, ownerPrefix);
     } catch (err) {
-      console.error("[PROJECT-CREATE] could not read the session's messages", err);
+      console.error("[PROJECT-CREATE] could not read the references to the session's files", err);
       keepOriginalKeys = new Set(plan.batches.flat().map((f) => f.key));
     }
 
     let moved: MoveResult = { moved: [], notMoved: [], originalsKept: [], keptForHistory: [] };
+    // A move that throws may have copied or deleted files before it did: nothing is known about them.
+    let interrupted = false;
     try {
       moved = await resolvedDeps.move({
         projectId: created.id,
@@ -335,12 +363,7 @@ export const createCreateProjectTool = ({
       });
     } catch (err) {
       console.error("[PROJECT-CREATE] moving files failed", err);
-      moved = {
-        moved: [],
-        notMoved: plan.batches.flat().map((f) => ({ name: f.name, reason: "Copying the file into the project failed." })),
-        originalsKept: [],
-        keptForHistory: [],
-      };
+      interrupted = true;
     }
 
     const asked = new Set(requested.map((n) => String(n ?? "").trim()));
@@ -352,6 +375,7 @@ export const createCreateProjectTool = ({
         moved,
         skipped: plan.skipped,
         leftInSession,
+        interrupted,
       }),
     };
   };

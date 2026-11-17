@@ -127,4 +127,22 @@ describe("moveSessionFiles", () => {
     expect(all).toEqual(["a.pdf", "b.pdf", "c.pdf", "d.pdf"]);
     expect(r.keptForHistory).toEqual(["d.pdf"]);
   });
+
+  it("compares keys with their leading slashes stripped on both sides: a history-referenced original under a '/pre' prefix is kept", async () => {
+    const { s3, removed, copies } = mk();
+    const PRE = "pre/user_7/sessions/s1/";
+    // The listing returns the key with a leading slash; the references come from parseStoredFileUrl without one.
+    const files = ["a.pdf", "b.pdf"].map((n) => ({ key: `/${PRE}${n}`, name: n }));
+    const r = await moveSessionFiles({
+      projectId: "p1",
+      fullSessionPrefix: PRE,
+      batches: [files],
+      s3,
+      keepOriginalKeys: new Set([`${PRE}a.pdf`]),
+    });
+    expect(copies).toHaveLength(2);
+    expect(r.keptForHistory).toEqual(["a.pdf"]);
+    expect(r.moved).toEqual(["b.pdf"]);
+    expect(removed).toEqual([`/${PRE}b.pdf`]);
+  });
 });

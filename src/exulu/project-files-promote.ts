@@ -118,6 +118,10 @@ export async function moveSessionFiles(args: {
   keepOriginalKeys?: Set<string>;
 }): Promise<MoveResult> {
   const result: MoveResult = { moved: [], notMoved: [], originalsKept: [], keptForHistory: [] };
+  // Listed keys keep a leading slash an S3 prefix like "/pre" gives them, while keys parsed from
+  // stored file URLs and share rows do not: compare both sides without it.
+  const bare = (key: string) => key.replace(/^\/+/, "");
+  const keep = new Set([...(args.keepOriginalKeys ?? [])].map(bare));
   for (const batch of args.batches) {
     let outcome: PromoteResult;
     try {
@@ -144,7 +148,7 @@ export async function moveSessionFiles(args: {
         });
         continue;
       }
-      if (args.keepOriginalKeys?.has(f.key)) {
+      if (keep.has(bare(f.key))) {
         result.keptForHistory.push(f.name);
         continue;
       }

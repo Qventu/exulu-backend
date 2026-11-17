@@ -617,6 +617,15 @@ describe("interim reading status from a generator tool", () => {
 
 describe("create_project registration", () => {
   const withEntry = [{ id: "create_project", type: "function", config: [] }];
+  // The tool is offered only where access control is licensed (projects are private there).
+  const LICENSE = process.env.EXULU_ENTERPRISE_LICENSE;
+  beforeAll(() => {
+    process.env.EXULU_ENTERPRISE_LICENSE = "EXULU_EE_test";
+  });
+  afterAll(() => {
+    if (LICENSE === undefined) delete process.env.EXULU_ENTERPRISE_LICENSE;
+    else process.env.EXULU_ENTERPRISE_LICENSE = LICENSE;
+  });
   const run = (agent: unknown, owner: number | undefined = 7, routine?: unknown) =>
     convertExuluToolsToAiSdkTools(
       [], [], [], [], [], undefined, { id: 7 } as never, { fileUploads: { s3Bucket: "b" } } as never,
