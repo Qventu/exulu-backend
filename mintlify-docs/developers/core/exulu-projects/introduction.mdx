@@ -1,0 +1,44 @@
+---
+title: "Introduction"
+description: "ExuluProjects creates projects and adds files to them from trusted server-side code such as scripts and migrations."
+icon: "folder"
+---
+
+`ExuluProjects` is exported from `@exulu/backend`. It gives scripts and migrations in your own app two things the request handlers and agent tools already do: create a project owned by a given user, and add a file to a project's shared file folder.
+
+<Warning>
+`ExuluProjects` is for trusted server code only (scripts, migrations, jobs you run yourself). It has no user context and performs no access checks. Never call it from a tool on behalf of a user.
+</Warning>
+
+## Rules
+
+- A project created here is **private**, owned by `ownerId`, who gets write access like any creator.
+- A project holds at most **200 files**.
+- A file may be at most **50 MB** and must not be empty.
+- File names are sanitised (`a/b.pdf` is stored as `a_b.pdf`); names with `..` or nothing usable are refused.
+- `create()` throws on invalid input (blank name, unknown owner). `addFile()` returns `{ error }` for per-file problems and does not throw, so a loop over many files keeps going.
+- `addFile()` needs the `ExuluApp` to be created in the same process (it reads the file upload configuration from it).
+
+## Example: a rerunnable import
+
+With `ifExists: "skip"`, running the script again skips files that are already in the project.
+
+```typescript
+import { ExuluProjects } from "@exulu/backend";
+import { readFile } from "node:fs/promises";
+
+const { id } = await ExuluProjects.create({ name: "Pitch Acme", ownerId: 7 });
+
+for (const name of ["brief.pdf", "offer.docx"]) {
+  const result = await ExuluProjects.addFile({
+    projectId: id,
+    name,
+    data: await readFile(`./files/${name}`),
+    ifExists: "skip",
+  });
+  if ("error" in result) console.error(name, result.error);
+  else console.log(name, result.skipped ? "already there" : "added");
+}
+```
+
+See the [API reference](/developers/core/exulu-projects/api-reference) for the exact signatures.

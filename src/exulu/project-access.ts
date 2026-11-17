@@ -1,3 +1,7 @@
+/** RBAC subject ids are strings, user ids numbers: compare as strings, never equal when either is missing. */
+export const sameEntityId = (a: unknown, b: unknown): boolean =>
+  a != null && b != null && a !== "" && b !== "" && String(a) === String(b);
+
 export type ProjectRight = "read" | "write";
 
 type Grant = { id: string | number; rights: string };

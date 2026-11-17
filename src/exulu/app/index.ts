@@ -43,6 +43,7 @@ import { transcriptionClient } from "@SRC/exulu/transcription/client.ts";
 import { startTranscriptionPollingLoop } from "@SRC/exulu/transcription/polling-loop.ts";
 import { liveRecordingEnabled } from "@SRC/exulu/transcription/live-recording";
 import { logRecallStartup, recallEnabled } from "@SRC/exulu/recall/env.ts";
+import { startDerivedSweep } from "@SRC/exulu/document-cache/sweep.ts";
 import { startRecallReconcileLoop } from "@SRC/exulu/recall/reconcile-loop.ts";
 import type { AuditConfig } from "../audit/config";
 import { initAudit, getAuditLogger, type AuditLogger } from "../audit/logger";
@@ -329,10 +330,12 @@ export class ExuluApp {
     // Attachments through the OCR + VLM processor are opt-in and must be
     // configured completely (engine, OCR model, VLM model, licence) — an
     // incomplete config fails the boot instead of silently reading only the
-    // text layer at run time.
+    // text layer at run time. The same check also covers the document-reading
+    // env settings (EXULU_DOCUMENT_CACHE_DAYS, EXULU_DOCUMENT_MAX_PAGES), so each
+    // problem names the setting it is about.
     const attachmentProblems = validateAttachmentsConfig(config, license);
     if (attachmentProblems.length > 0) {
-      throw new Error(`[EXULU] Invalid attachments.documentProcessor config:\n- ${attachmentProblems.join("\n- ")}`);
+      throw new Error(`[EXULU] Invalid document reading settings:\n- ${attachmentProblems.join("\n- ")}`);
     }
     if (config?.attachments?.documentProcessor) {
       const { processor, vlm } = config.attachments.documentProcessor;
@@ -501,6 +504,14 @@ export class ExuluApp {
         // Webhook delivery is ACK-first, so lost events must be reconciled
         // from Recall's own state or jobs strand in queued/transcribing.
         startRecallReconcileLoop();
+      }
+
+      // Expired stored document text (derived/ in the file bucket). Only the HTTP
+      // server process gets here (workers boot elsewhere); replicas may all sweep.
+      if (this._config?.fileUploads?.s3Bucket) {
+        // Timers are unref'd and no signal listener is added: a SIGINT/SIGTERM
+        // listener would stop Node's default exit on those signals.
+        startDerivedSweep(this._config);
       }
 
       return this._expressApp;

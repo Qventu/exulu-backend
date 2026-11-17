@@ -90,6 +90,7 @@ export const generateSuggestions = async ({
     temperature: 0,
     model: languageModel,
     system,
+    // ignoreIncompleteToolCalls keeps persisted preliminary tool parts (e.g. a read aborted mid-way) out of model messages.
     messages: await convertToModelMessages(trimmed, {
       ignoreIncompleteToolCalls: true,
     }),

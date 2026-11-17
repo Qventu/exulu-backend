@@ -16,6 +16,8 @@ import { LiteParse } from '@llamaindex/liteparse';
 import { resolveOcr } from '@SRC/exulu/resolve-ocr';
 import type { ResolveOcrInput } from '@SRC/exulu/resolve-ocr';
 import { resolveModel } from '@SRC/exulu/resolve-model';
+import type { ProgressFn } from '@SRC/exulu/document-cache/progress';
+import { ocrConcurrency, type ProviderLimiters } from './limits';
 
 export type DocumentProcessorConfig = {
   vlm?: {
@@ -29,6 +31,14 @@ export type DocumentProcessorConfig = {
     model: string;
     concurrency: number;
   },
+  /**
+   * OCR settings. `concurrency` is how many OCR chunk calls ONE document runs
+   * at once (default 3, 1..8). Reads in chat additionally share a process-wide
+   * ceiling of 8 (see limits.ts); knowledge-base processing does not.
+   */
+  ocr?: {
+    concurrency?: number;
+  }
   processor: {
     name: "liteparse" | "mistral" | "officeparser"
     /**
@@ -67,6 +77,8 @@ export type ProcessedPage = {
   image?: string;
   vlm_corrected_text?: string;
   vlm_validated?: boolean;
+  /** Set only under tolerateVisionFailures: the vision pass failed for this page, the text is OCR only. */
+  vlm_failed?: boolean;
 }
 export type ProcessedDocument = ProcessedPage[];
 
@@ -163,6 +175,9 @@ async function processImage(
   paths: ProcessingPaths,
   config?: DocumentProcessorConfig,
   verbose: boolean = false,
+  tolerateVisionFailures: boolean = false,
+  onProgress?: ProgressFn,
+  limiters?: ProviderLimiters,
 ): Promise<ProcessorOutput> {
   try {
     // Create images directory
@@ -191,7 +206,10 @@ async function processImage(
         json,
         vlmModel,
         verbose,
-        config!.vlm!.concurrency
+        config!.vlm!.concurrency,
+        tolerateVisionFailures,
+        onProgress,
+        limiters,
       );
 
       // Save the processed result
@@ -311,12 +329,14 @@ function reconstructHeadings(
 }
 
 /**
- * Validates and potentially corrects all chunks from a page using VLM
+ * Validates and potentially corrects all chunks from a page using VLM.
+ * `timeoutMs` is set on the chat path only (see ProviderLimiters.visionTimeoutMs).
  */
 async function validatePageWithVLM(
   page: ProcessedPage,
   imagePath: string,
-  model: LanguageModel
+  model: LanguageModel,
+  timeoutMs?: number,
 ): Promise<VLMValidationResult> {
   // Read the image as base64
   const imageBuffer = await fs.promises.readFile(imagePath);
@@ -401,6 +421,8 @@ If the page contains a flow-chart, schematic, technical drawing or control board
 
   const result = await generateText({
     model: model,
+    // Chat path only: a stalled provider must not pin a slot. Without it the SDK default applies, as before.
+    ...(timeoutMs ? { abortSignal: AbortSignal.timeout(timeoutMs) } : {}),
     output: Output.object({
       schema: z.object({
         needs_correction: z.boolean(),
@@ -455,7 +477,7 @@ If the page contains a flow-chart, schematic, technical drawing or control board
 /**
  * Reconstructs table headers across pages sequentially after parallel VLM processing
  */
-function reconstructTableHeaders(
+export function reconstructTableHeaders(
   document: ProcessedDocument,
   validationResults: Map<number, VLMValidationResult>,
   verbose: boolean = false
@@ -464,6 +486,11 @@ function reconstructTableHeaders(
 
   for (const page of document) {
     const validation = validationResults.get(page.page);
+    if (page.vlm_failed) {
+      // Nothing is known about this page's table, so headers carried from before it must not reach later pages.
+      lastTableHeaders = undefined;
+      continue;
+    }
     if (!validation) continue;
 
     const tableInfo = validation.current_page_table;
@@ -524,6 +551,24 @@ function reconstructTableHeaders(
   }
 }
 
+/** Progress is advisory: a throwing callback must never touch processing. */
+function safeProgress(onProgress: ProgressFn | undefined, p: Parameters<ProgressFn>[0]): void {
+  try {
+    onProgress?.(p);
+  } catch (error) {
+    console.warn('[EXULU] onProgress callback threw; ignored:', error instanceof Error ? error.message : String(error));
+  }
+}
+
+/** Whether a page gets a vision pass: it has an image and either no text yet or an image/table in its text. */
+function needsVisionPass(page: ProcessedPage): boolean {
+  if (!page.image) return false;
+  if (!page.content) return true;
+  const hasImage = page.content.match(/\.(jpeg|jpg|png|gif|webp)/i);
+  const hasTable = (page.content.match(/\|/g)?.length || 0) > 1;
+  return Boolean(hasImage || hasTable);
+}
+
 /**
  * Identifies pages that need VLM validation and validates them in parallel
  */
@@ -531,7 +576,10 @@ async function validateWithVLM(
   document: ProcessedDocument,
   model: LanguageModel,
   verbose: boolean = false,
-  concurrency: number = 10
+  concurrency: number = 10,
+  tolerateVisionFailures: boolean = false,
+  onProgress?: ProgressFn,
+  limiters?: ProviderLimiters,
 ): Promise<ProcessedDocument> {
   console.log(`[EXULU] Starting VLM validation for processor output, ${document.length} pages...`);
   console.log(`[EXULU] Concurrency limit: ${concurrency}`);
@@ -541,6 +589,14 @@ async function validateWithVLM(
 
   // Store validation results for post-processing
   const validationResults = new Map<number, VLMValidationResult>();
+
+  // Progress counts the pages that actually get a vision pass.
+  const visionTotal = document.filter(needsVisionPass).length;
+  let visionDone = 0;
+  const reportVisionPage = () => {
+    visionDone++;
+    safeProgress(onProgress, { phase: "vision", pagesDone: visionDone, pagesTotal: visionTotal });
+  };
 
   // Track metrics
   let validatedCount = 0;
@@ -586,11 +642,14 @@ async function validateWithVLM(
       try {
         console.log(`[EXULU] Validating page ${page.page} with VLM`);
         validation = await withRetry(async () => {
-          return await validatePageWithVLM(page, imagePath, model);
+          // Process-wide ceiling (chat paths only), taken per attempt so a retry queues again.
+          const attempt = () => validatePageWithVLM(page, imagePath, model, limiters?.visionTimeoutMs);
+          return await (limiters ? limiters.vision(attempt) : attempt());
         }, 3);
 
         // Store validation result for post-processing
         validationResults.set(page.page, validation);
+        reportVisionPage();
 
         if (verbose && validation.current_page_table) {
           console.log(`[EXULU] Page ${page.page} table info:`, {
@@ -600,6 +659,12 @@ async function validateWithVLM(
         }
       } catch (error) {
         console.error(`[EXULU] Error validating page ${page.page} with VLM more than 3 times, skipping:`, error);
+        if (tolerateVisionFailures) {
+          // The page keeps its OCR text; the caller reports it as unverified.
+          page.vlm_failed = true;
+          reportVisionPage();
+          return;
+        }
         // Throw so the job fails
         throw error;
       }
@@ -667,6 +732,9 @@ async function processDocument(
   tempDir: string,
   config?: DocumentProcessorConfig,
   verbose: boolean = false,
+  tolerateVisionFailures: boolean = false,
+  onProgress?: ProgressFn,
+  limiters?: ProviderLimiters,
 ): Promise<{
   content: {
     markdown: string,
@@ -712,7 +780,7 @@ async function processDocument(
       };
       break;
     case 'pdf':
-      result = await processPdf(buffer, paths, config, verbose);
+      result = await processPdf(buffer, paths, config, verbose, tolerateVisionFailures, onProgress, limiters);
       break;
     case 'docx':
       result = await processDocx(buffer);
@@ -725,7 +793,7 @@ async function processDocument(
     case 'png':
     case 'gif':
     case 'webp':
-      result = await processImage(buffer, paths, config, verbose);
+      result = await processImage(buffer, paths, config, verbose, tolerateVisionFailures, onProgress, limiters);
       break;
 
     // Todo other file types with docx and officeparser
@@ -746,6 +814,9 @@ async function processPdf(
   paths: ProcessingPaths,
   config?: DocumentProcessorConfig,
   verbose: boolean = false,
+  tolerateVisionFailures: boolean = false,
+  onProgress?: ProgressFn,
+  limiters?: ProviderLimiters,
 ): Promise<ProcessorOutput> {
   try {
     let json: ProcessedDocument = [];
@@ -770,6 +841,8 @@ async function processPdf(
       const resolved = await resolveOcr({
         model: config.processor.model ?? "mistral-ocr",
         ...config.attribution,
+        // Chat path only; knowledge-base processing passes no limiters and gets no explicit timeout.
+        ...(limiters?.ocrTimeoutMs ? { timeoutMs: limiters.ocrTimeoutMs } : {}),
       });
 
       // Split the PDF into ≤ N-page chunks before sending to OCR.
@@ -806,7 +879,9 @@ async function processPdf(
 
       // Process chunks in parallel with a concurrency cap to respect rate limits.
       // Each chunk gets a small random jitter to spread out requests.
-      const chunkLimit = pLimit(3);
+      const chunkLimit = pLimit(ocrConcurrency(config));
+      const ocrTotal = pdfChunks.reduce((sum, c) => sum + (c.end_page - c.start_page), 0);
+      let ocrDone = 0;
 
       const chunkResults = await Promise.all(
         pdfChunks.map((chunk, i) =>
@@ -821,11 +896,19 @@ async function processPdf(
             const chunkBase64 = chunkBuffer.toString('base64');
 
             const chunkResponse = await withRetry(async () => {
-              return await resolved.ocr({
+              // With limiters (chat paths) the per-document slot (chunkLimit) is held while
+              // this waits for the process-wide slot; the process-wide queue never waits on
+              // a per-document one, so the nesting cannot deadlock.
+              const attempt = () => resolved.ocr({
                 type: "document_url",
                 document_url: "data:application/pdf;base64," + chunkBase64,
               }, { includeImageBase64: false });
+              return await (limiters ? limiters.ocr(attempt) : attempt());
             }, 10);
+
+            // Chunks finish out of order; the shared counter keeps the reported count monotonic.
+            ocrDone += chunk.end_page - chunk.start_page;
+            safeProgress(onProgress, { phase: "ocr", pagesDone: ocrDone, pagesTotal: ocrTotal });
 
             return { pages: chunkResponse.pages, offset: chunk.start_page };
           })
@@ -915,7 +998,10 @@ async function processPdf(
         json,
         vlmModel,
         verbose,
-        config!.vlm!.concurrency
+        config!.vlm!.concurrency,
+        tolerateVisionFailures,
+        onProgress,
+        limiters,
       );
 
       console.log('[EXULU] \n📊 Processing Summary:');
@@ -980,6 +1066,7 @@ async function processPdf(
       return {
         page: e.page,
         content: finalContent,
+        ...(e.vlm_failed ? { vlm_failed: true } : {}),
       };
     });
 
@@ -1046,11 +1133,23 @@ const loadFile = async (
 export async function documentProcessor({
   file,
   name,
-  config
+  config,
+  tolerateVisionFailures,
+  onProgress,
+  limiters,
 }: {
   file: string | Buffer;
   name: string;
   config?: DocumentProcessorConfig;
+  /** A page whose vision pass failed keeps its OCR text and is flagged `vlm_failed` instead of failing the document. */
+  tolerateVisionFailures?: boolean;
+  /** Reports OCR progress per finished chunk and vision progress per finished page. */
+  onProgress?: ProgressFn;
+  /**
+   * Process-wide ceilings on OCR and vision calls. Passed by the chat paths only (extractDocument);
+   * absent for knowledge-base processing, which keeps its per-document limits unchanged.
+   */
+  limiters?: ProviderLimiters;
 }): Promise<ProcessedDocument | undefined> {
 
   const license = checkLicense()
@@ -1106,7 +1205,10 @@ export async function documentProcessor({
       buffer,
       tempDir,
       config,
-      true
+      true,
+      tolerateVisionFailures,
+      onProgress,
+      limiters,
     );
 
     return content.json;

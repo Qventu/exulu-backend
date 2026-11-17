@@ -1,0 +1,61 @@
+---
+title: "API reference"
+description: "ExuluProjects.create() and ExuluProjects.addFile(): inputs, results and error messages."
+icon: "code"
+---
+
+```typescript
+import { ExuluProjects } from "@exulu/backend";
+```
+
+For trusted server-side code only. See the [introduction](/developers/core/exulu-projects/introduction).
+
+## create()
+
+```typescript
+ExuluProjects.create(input: {
+  name: string;
+  description?: string;
+  ownerId: number | string;
+}): Promise<{ id: string }>
+```
+
+<ParamField path="name" type="string" required>
+  1 to 120 characters.
+</ParamField>
+
+<ParamField path="description" type="string">
+  At most 2000 characters.
+</ParamField>
+
+<ParamField path="ownerId" type="number | string" required>
+  The id of an existing user. The project is private and this user is its creator.
+</ParamField>
+
+Returns `{ id }`. Throws if the name is blank or too long, or if no user has this id (`No user with this id.`).
+
+## addFile()
+
+```typescript
+ExuluProjects.addFile(input: {
+  projectId: string;
+  name: string;
+  data: Uint8Array | Buffer;
+  ifExists?: "error" | "skip";   // default "error"
+}): Promise<{ name: string; skipped?: true } | { error: string }>
+```
+
+The file is stored at `projects/<projectId>/files/<name>` (after the general S3 prefix, if configured).
+
+| Result | Meaning |
+| --- | --- |
+| `{ name }` | The file was added. `name` is the sanitised name. |
+| `{ name, skipped: true }` | `ifExists: "skip"` and a file with this name is already there. Nothing was written, even if the project is full. |
+| `{ error: "Project not found." }` | No project with this id. |
+| `{ error: "Invalid filename (no path separators, no '..')." }` | The name is unusable. |
+| `{ error: "The file is empty." }` | `data` has no bytes. |
+| `{ error: "It is larger than 50 MB." }` | `data` is over 50 MB. |
+| `{ error: "A file with this name is already in the project." }` | Name taken and `ifExists` is not `"skip"`. |
+| `{ error: "A project holds at most 200 files." }` | The project is full. |
+| `{ error: "Saving the file failed." }` | The upload failed (details are logged). |
+| `{ error: "File uploads are not configured." }` | The app has no complete `fileUploads` configuration. |

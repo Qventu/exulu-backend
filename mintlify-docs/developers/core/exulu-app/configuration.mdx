@@ -173,6 +173,24 @@ const config = {
 IMP routes `console.log`, `console.info`, `console.warn`, `console.error`, and `console.debug` through the configured Winston logger, so all output — including from your own code — flows through your transports.
 </Note>
 
+### Attachments
+
+Controls how documents are read when the model receives them inline (chat uploads, routine mail attachments) and when the agent calls `parse_document`. Without `attachments.documentProcessor` only the text layer is read (`pdftotext` for PDFs, `officeparser` for Office files), and scanned PDFs are refused. The document processor needs the enterprise licence; the server does not start with an incomplete or unlicensed configuration.
+
+<ParamField path="attachments.documentProcessor.processor" type="{ name, model? }">
+  The OCR engine. `model` is required for the `mistral` engine (the `model_name` of the OCR model in your LiteLLM config).
+</ParamField>
+
+<ParamField path="attachments.documentProcessor.vlm" type="{ model, concurrency }">
+  Optional vision pass that checks figures and tables. `concurrency` is a positive integer.
+</ParamField>
+
+<ParamField path="attachments.documentProcessor.ocr.concurrency" type="number">
+  How many OCR chunks of one document run at the same time. Integer from 1 to 8, default 3.
+</ParamField>
+
+Across all chat reads (`parse_document` and files attached to a message) the process runs at most 8 OCR calls and 8 vision calls at the same time; further calls wait in a queue. Knowledge-base processing does not share this ceiling and behaves as before. When reading in chat, a single OCR call is stopped after 180 seconds and a single vision call after 120 seconds (knowledge-base processing is unchanged and has no such limit); a timeout counts as a failed attempt and is retried. The page limits are set with `EXULU_DOCUMENT_MAX_PAGES` and `EXULU_ATTACHMENT_MAX_PAGES` (see [Environment variables](/self-hosting/environment-variables#document-reading)). The engine, the OCR model and the vision model are part of the key under which read text is stored: changing any of them makes every document be read once more. The names are the aliases from your LiteLLM config: remapping an alias to a different model does not invalidate stored text. See [Reading cache](/self-hosting/services/s3-storage#reading-cache).
+
 ### File uploads
 
 S3-compatible object storage for chat attachments, knowledge files, and generated images. All four core fields are required together.

@@ -21,12 +21,14 @@ import type { EvalRun } from "@EXULU_TYPES/models/eval-run";
 import type { ExuluConfig } from "@SRC/exulu/app/index.ts";
 import { queues as ExuluQueues, global_queues } from "@EE/queues/queues";
 import { redisClient as getRedisClient } from "@SRC/redis/client.ts";
+import { assertQueueAccess, createQueueMutationResolvers, type QueueAccessDeps } from "@SRC/graphql/queue-access";
 import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { v4 as uuidv4 } from "uuid";
 import { JOB_STATUS_ENUM, TERMINAL_JOB_STATES } from "@EXULU_TYPES/enums/jobs";
 import type { UIMessage } from "ai";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
 import { createKbEditorPickerTool } from "@SRC/templates/tools/context-write-tools";
+import { createCreateProjectPickerTool } from "@SRC/templates/tools/create-project-tool";
 import { createSkillAuthorPickerTool } from "@SRC/templates/tools/skill-author-tools";
 import { GraphQLDate } from "@SRC/graphql/types";
 import { resolveAvailableQueues } from "@SRC/graphql/available-queues";
@@ -1568,6 +1570,27 @@ type EmbeddingModelOption {
     };
   };
 
+  // The queues the knowledge pages show: those of the contexts' processors,
+  // embedders (hydrated from settings, so read per call) and sources.
+  const queueAccessDeps: QueueAccessDeps = {
+    globalQueueNames: Object.values(global_queues),
+    contextQueueNames: async () => {
+      const names = new Set<string>();
+      for (const ctx of contexts ?? []) {
+        const pending = [
+          ctx.processor?.config?.queue,
+          ctx.embedder?.queue,
+          ...(ctx.sources ?? []).map((source) => source.config?.queue),
+        ];
+        for (const queue of pending) {
+          const config = await Promise.resolve(queue).catch(() => undefined);
+          if (config?.queue?.name) names.add(config.queue.name);
+        }
+      }
+      return names;
+    },
+  };
+
   resolvers.Query["queues"] = async () =>
     resolveAvailableQueues(
       () => exuluApp.get().queues(),
@@ -1578,6 +1601,7 @@ type EmbeddingModelOption {
     if (!args.queue) {
       throw new Error("Queue name is required");
     }
+    await assertQueueAccess({ user: context.user, queue: args.queue, level: "read" }, queueAccessDeps);
     const queue = ExuluQueues.list.get(args.queue);
     if (!queue) {
       throw new Error("Queue not found");
@@ -2549,91 +2573,10 @@ type EmbeddingModelOption {
     return mapped;
   };
 
-  /**
-   * Drains the queue, i.e., removes all jobs that are waiting
-   * or delayed, but not active, completed or failed.
-   */
-  resolvers.Mutation["drainQueue"] = async (_, args, context, info) => {
-    if (!args.queue) {
-      throw new Error("Queue name is required");
-    }
-    const queue = ExuluQueues.list.get(args.queue);
-    if (!queue) {
-      throw new Error("Queue not found");
-    }
-    const config = await queue.use();
-    await config.queue.drain();
-    return { success: true };
-  };
-
-  resolvers.Mutation["pauseQueue"] = async (_, args, context, info) => {
-    if (!args.queue) {
-      throw new Error("Queue name is required");
-    }
-    const queue = ExuluQueues.list.get(args.queue);
-    if (!queue) {
-      throw new Error("Queue not found");
-    }
-    const config = await queue.use();
-    await config.queue.pause();
-    return { success: true };
-  };
-
-  resolvers.Mutation["resumeQueue"] = async (_, args, context, info) => {
-    if (!args.queue) {
-      throw new Error("Queue name is required");
-    }
-    const queue = ExuluQueues.list.get(args.queue);
-    if (!queue) {
-      throw new Error("Queue not found");
-    }
-    const config = await queue.use();
-    await config.queue.resume();
-    return { success: true };
-  };
-
-  resolvers.Mutation["deleteJob"] = async (_, args, context, info) => {
-    if (!args.id) {
-      throw new Error("Job ID is required");
-    }
-    if (!args.queue) {
-      throw new Error("Queue name is required");
-    }
-    const queue = ExuluQueues.list.get(args.queue);
-    if (!queue) {
-      throw new Error("Queue not found");
-    }
-    const config = await queue.use();
-    await config.queue.remove(args.id);
-    return { success: true };
-  };
-
-  // KB-5: generic job retry. Re-enqueues a FRESH job with the same name +
-  // data (rather than BullMQ's job.retry(), which only works for failed jobs)
-  // so it's robust across states and leaves a clean audit trail. Optionally
-  // removes the original. Frontend gates this behind write permission.
-  resolvers.Mutation["retryJob"] = async (_, args) => {
-    if (!args.id) {
-      throw new Error("Job ID is required");
-    }
-    if (!args.queue) {
-      throw new Error("Queue name is required");
-    }
-    const queue = ExuluQueues.list.get(args.queue);
-    if (!queue) {
-      throw new Error("Queue not found");
-    }
-    const config = await queue.use();
-    const job = await config.queue.getJob(args.id);
-    if (!job) {
-      throw new Error("Job not found");
-    }
-    await config.queue.add(job.name, job.data);
-    if (args.deleteOriginal) {
-      await config.queue.remove(args.id);
-    }
-    return { success: true };
-  };
+  // Queue/job operations: only for users who may manage the queue (see
+  // queue-access.ts). Without this any signed-in user could drain or pause a
+  // queue, delete any job, or re-run another user's job as that user.
+  Object.assign(resolvers.Mutation, createQueueMutationResolvers({ ...queueAccessDeps, getQueue: (name) => ExuluQueues.list.get(name) }));
 
   // Authorize the calling user against a transcription_jobs row. Mirrors the
   // checks the auto-CRUD does in createMutations.validateWriteAccess for RBAC
@@ -2798,6 +2741,8 @@ type EmbeddingModelOption {
     if (!args.queue) {
       throw new Error("Queue name is required");
     }
+    // Job data carries inputs, user ids and sessions: same rule, read level.
+    await assertQueueAccess({ user: context.user, queue: args.queue, level: "read" }, queueAccessDeps);
 
     const { client } = await getRedisClient();
     if (!client) {
@@ -3296,6 +3241,8 @@ type EmbeddingModelOption {
       // Same pattern for skill authoring: a config-only picker entry.
       allTools.push(createSkillAuthorPickerTool());
     }
+    // Opt-in per agent: a config-only picker entry, offered whether or not any context exists.
+    allTools.push(createCreateProjectPickerTool());
 
     // Apply search filter
     if (search && search.trim()) {

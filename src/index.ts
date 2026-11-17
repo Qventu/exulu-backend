@@ -6,6 +6,7 @@ point for the npm package.
 import "dotenv/config";
 import { redisClient } from "./redis/client";
 export { ExuluApp } from "./exulu/app/index.ts";
+export { ExuluProjects } from "./exulu/projects-public";
 import { authentication } from "./auth/auth";
 export { queues as ExuluQueues } from "@EE/queues/queues.ts";
 import { RecursiveChunker } from "./chunking/recursive";

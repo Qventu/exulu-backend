@@ -65,6 +65,12 @@ describe("mayUseGenericS3Route", () => {
     expect(mayUseGenericS3Route("projects/x/files/a", { type: "api" })).toBe(true);
     expect(mayUseGenericS3Route("projects/x/files/a", { super_admin: true })).toBe(true);
   });
+  test("denies derived keys to everyone, including api users and super admins", () => {
+    expect(mayUseGenericS3Route("derived/content/x.md", user)).toBe(false);
+    expect(mayUseGenericS3Route("derived/content/x.md", { type: "api" })).toBe(false);
+    expect(mayUseGenericS3Route("derived/content/x.md", { super_admin: true })).toBe(false);
+    expect(mayUseGenericS3Route("pre/derived/pointers/x.json", user, "pre")).toBe(false);
+  });
   test("allows ordinary keys", () => {
     expect(mayUseGenericS3Route("user_1/a.pdf", user)).toBe(true);
     expect(mayUseGenericS3Route("pre/user_1/a.pdf", user, "pre")).toBe(true);
@@ -76,6 +82,10 @@ describe("buildStsPolicy", () => {
     const p = buildStsPolicy("bkt", 7, null);
     expect(p.Statement[0].Resource).toEqual(["arn:aws:s3:::bkt/user_7/*"]);
     expect(JSON.stringify(p)).not.toContain("global");
+  });
+  test("grants nothing under derived/", () => {
+    const resources = buildStsPolicy("bkt", 7, null).Statement.flatMap((st: any) => [].concat(st.Resource));
+    expect(resources.some((r: string) => /derived/.test(r))).toBe(false);
   });
   test("general prefix and api users", () => {
     expect(buildStsPolicy("bkt", "api", "pre/").Statement[0].Resource).toEqual([

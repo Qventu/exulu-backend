@@ -220,7 +220,8 @@ export function registerProjectFileRoutes(app: Express, deps: ProjectFileRouteDe
       // still says which. A partial success stays 200 so the client keeps what was copied.
       const copyFailed = result.rejected.some((r) => r.reason === COPY_FAILED_REASON);
       const status = result.clashes.length > 0 ? 409 : copyFailed && result.promoted.length === 0 ? 500 : 200;
-      res.status(status).json(result);
+      // sourceKey is for in-process callers (moveSessionFiles); the response shape stays as it was.
+      res.status(status).json({ ...result, promoted: result.promoted.map(({ key, name }) => ({ key, name })) });
     } catch (err) {
       console.error("[PROJECT-FILES] promote failed", err);
       res.status(500).json({ detail: "Failed to copy files into the project." });

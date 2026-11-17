@@ -30,6 +30,10 @@ jest.mock("@EE/invoke-skills/project-sync", () => ({ resolveSandboxProjectId: je
 jest.mock("@SRC/uppy", () => ({ getPresignedUrl: jest.fn() }));
 jest.mock("@SRC/exulu/tool-output-offload", () => ({ guardToolOutput: jest.fn(async (v: unknown) => v) }));
 jest.mock("@SRC/exulu/statistics", () => ({ updateStatistic: jest.fn() }));
+jest.mock("@SRC/exulu/audit/logger", () => ({
+  getAuditLogger: jest.fn(() => ({ shouldAuditTool: () => true, failClosed: false })),
+}));
+jest.mock("@SRC/exulu/audit/emit-tool-call", () => ({ emitToolCallAudit: jest.fn(async () => undefined) }));
 
 const factory = createAgenticRetrievalTool as jest.Mock;
 
@@ -196,12 +200,14 @@ describe("document tool registration", () => {
       user: { id: 7 },
       exuluConfig: { fileUploads: { s3Bucket: "b" } },
       projectId: null,
+      turnProject: { current: null },
     });
     expect(createViewDocumentPageTool).toHaveBeenCalledWith({
       sessionID: "session-1",
       user: { id: 7 },
       exuluConfig: { fileUploads: { s3Bucket: "b" } },
       projectId: null,
+      turnProject: { current: null },
     });
   });
 });
@@ -531,5 +537,151 @@ describe("set_routine_status injection", () => {
     expect(hasStatusTool(await convert(undefined))).toBe(false);
     expect(hasStatusTool(await convert(() => handleWith([])))).toBe(false);
     expect(hasStatusTool(await convert(() => handleWith([{ key: "neu", label: "Neu" }]), ["set_routine_status"]))).toBe(false);
+  });
+});
+
+describe("interim reading status from a generator tool", () => {
+  const guardMock = jest.requireMock("@SRC/exulu/tool-output-offload").guardToolOutput as jest.Mock;
+  const auditMock = jest.requireMock("@SRC/exulu/audit/emit-tool-call").emitToolCallAudit as jest.Mock;
+  const reading = (n: number) => ({ status: "reading", filename: "a.pdf", phase: "ocr", pagesDone: n, pagesTotal: 2 });
+  const finalResult = { content: "text" };
+
+  const run = async (execute: () => unknown) => {
+    const entry = {
+      id: "streamer", name: "Streamer", description: "d", type: "utility", category: "utilities", config: [],
+      tool: { execute },
+    } as never;
+    const tools = (await call([entry])) as Record<string, { execute: (i: unknown, o: unknown) => AsyncGenerator<unknown> }>;
+    const out: unknown[] = [];
+    for await (const v of tools.Streamer.execute({}, { toolCallId: "c1" })) out.push(v);
+    return out;
+  };
+  async function* streamed() {
+    yield reading(1);
+    yield reading(2);
+    yield finalResult;
+  }
+
+  beforeEach(() => {
+    guardMock.mockClear();
+    auditMock.mockClear();
+  });
+
+  it("passes interim objects through untouched and yields the final value last", async () => {
+    const out = await run(() => streamed());
+    expect(out).toEqual([reading(1), reading(2), finalResult]);
+  });
+
+  it("keeps the final value as the last yield even if the tool ends on an interim object", async () => {
+    async function* trailing() { yield reading(1); yield finalResult; yield reading(2); }
+    const out = await run(() => trailing());
+    expect(out[out.length - 1]).toBe(finalResult);
+    expect(guardMock).toHaveBeenCalledTimes(1);
+    expect(guardMock.mock.calls[0][0]).toBe(finalResult);
+  });
+
+  it("treats a real output that merely has status 'reading' as a normal result", async () => {
+    const real = { status: "reading" };
+    async function* g() { yield real; }
+    const out = await run(() => g());
+    expect(out).toEqual([real]);
+    expect(guardMock).toHaveBeenCalledTimes(1);
+    expect(guardMock.mock.calls[0][0]).toBe(real);
+    expect(auditMock.mock.calls[0][1].output).toBe(real);
+  });
+
+  it("guards and audits only the final value, once", async () => {
+    guardMock.mockImplementationOnce(async () => ({ offloaded: true }));
+    const out = await run(() => streamed());
+    expect(guardMock).toHaveBeenCalledTimes(1);
+    expect(guardMock.mock.calls[0][0]).toBe(finalResult);
+    // The guarded replacement is the last yield, so it is what the SDK takes as the result.
+    expect(out[out.length - 1]).toEqual({ offloaded: true });
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    expect(auditMock.mock.calls[0][1].output).toEqual({ offloaded: true });
+  });
+
+  it("leaves a tool that returns a promise exactly as before", async () => {
+    const out = await run(async () => finalResult);
+    expect(out).toEqual([finalResult]);
+    expect(guardMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a generator that yields once exactly as before", async () => {
+    async function* once() { yield finalResult; }
+    const out = await run(() => once());
+    expect(out).toEqual([finalResult]);
+    expect(guardMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("create_project registration", () => {
+  const withEntry = [{ id: "create_project", type: "function", config: [] }];
+  // The tool is offered only where access control is licensed (projects are private there).
+  const LICENSE = process.env.EXULU_ENTERPRISE_LICENSE;
+  beforeAll(() => {
+    process.env.EXULU_ENTERPRISE_LICENSE = "EXULU_EE_test";
+  });
+  afterAll(() => {
+    if (LICENSE === undefined) delete process.env.EXULU_ENTERPRISE_LICENSE;
+    else process.env.EXULU_ENTERPRISE_LICENSE = LICENSE;
+  });
+  const run = (agent: unknown, owner: number | undefined = 7, routine?: unknown) =>
+    convertExuluToolsToAiSdkTools(
+      [], [], [], [], [], undefined, { id: 7 } as never, { fileUploads: { s3Bucket: "b" } } as never,
+      "session-1", undefined, undefined, undefined, undefined, agent as never, undefined, undefined, undefined,
+      owner, undefined, undefined, routine as never, null,
+    );
+  it("is in the tool set, with approval, when the agent opted in and the speaker owns a project-less session", async () => {
+    const tools = await run({ id: "a1", tools: withEntry });
+    expect(Object.keys(tools)).toContain("create_project");
+    expect(await (tools.create_project as any).needsApproval({}, { toolCallId: "c1", messages: [] })).toBe(true);
+  });
+  it("a run session whose routine handle factory is gone (inRoutineRun, no factory) still has no create_project", async () => {
+    const tools = await convertExuluToolsToAiSdkTools(
+      [], [], [], [], [], undefined, { id: 7 } as never, { fileUploads: { s3Bucket: "b" } } as never,
+      "session-1", undefined, undefined, undefined, undefined, { id: "a1", tools: withEntry } as never, undefined, undefined, undefined,
+      7, undefined, undefined, undefined, null, true,
+    );
+    expect(Object.keys(tools)).not.toContain("create_project");
+  });
+  it("is absent without the opt-in entry, for a non-owner, and in a routine run", async () => {
+    expect(Object.keys(await run({ id: "a1", tools: [] }))).not.toContain("create_project");
+    expect(Object.keys(await run({ id: "a1" }))).not.toContain("create_project");
+    expect(Object.keys(await run({ id: "a1", tools: withEntry }, 8))).not.toContain("create_project");
+    expect(Object.keys(await run({ id: "a1", tools: withEntry }, 7, () => ({ statuses: [] })))).not.toContain("create_project");
+  });
+});
+
+describe("saveSessionFile in the tool context", () => {
+  const uploads = { s3endpoint: "e", s3key: "k", s3secret: "s", s3Bucket: "b" };
+  const run = async (exuluConfig: unknown, sessionID: string | undefined) => {
+    const execute = jest.fn(async () => "ok");
+    const entry = {
+      id: "custom_tool",
+      name: "Custom",
+      description: "d",
+      type: "function",
+      category: "custom",
+      config: [],
+      tool: { execute },
+    } as never;
+    const tools = await convertExuluToolsToAiSdkTools(
+      [entry], [], [], [], [], undefined, { id: 7 } as never, exuluConfig as never, sessionID,
+    );
+    const gen = (tools as Record<string, { execute: (i: unknown, o: unknown) => AsyncGenerator<unknown> }>)
+      .Custom.execute({}, {});
+    for await (const _ of gen) { /* drain */ }
+    return (execute.mock.calls[0] as unknown[])[0] as { saveSessionFile?: unknown };
+  };
+
+  it("is a function when the session has uploads configured", async () => {
+    const ctx = await run({ fileUploads: uploads }, "session-1");
+    expect(typeof ctx.saveSessionFile).toBe("function");
+  });
+
+  it("is undefined without a sessionID", async () => {
+    const ctx = await run({ fileUploads: uploads }, undefined);
+    expect(ctx.saveSessionFile).toBeUndefined();
   });
 });

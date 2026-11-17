@@ -41,7 +41,7 @@ import { exuluApp } from "@SRC/exulu/app/singleton";
 import { handleEmailIntake } from "@SRC/exulu/email-inbound/intake";
 import { markStreamActive, clearStreamActive } from "@SRC/exulu/active-streams.ts";
 import { messageHasPendingApproval, substituteVariablesInMessage } from "@SRC/exulu/routines/flow-steps.ts";
-import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
+import { withRunSession } from "@SRC/exulu/routines/run-session.ts";
 import { casJobResultState, parseRunMetadata, upsertWorkflowRunStart } from "@SRC/exulu/routines/run-state.ts";
 import { findLiteLLMModel } from "@SRC/exulu/litellm/catalog.ts";
 import { computeRunCostUsd } from "@SRC/exulu/routines/run-cost.ts";
@@ -559,105 +559,106 @@ export const createWorkers = async (
 
               // Session-backed runs (spec §3.4): reuse the session provided by
               // the enqueuer (email intake / continuation / retry / previous
-              // BullMQ attempt), otherwise create one with the routine's rbac
-              // snapshot under the run identity.
-              let sessionId = started.session ?? undefined;
-              if (!sessionId) {
-                sessionId = await createRunSession({
-                  db,
+              // BullMQ attempt) once it is verified to be this routine's run
+              // session, otherwise create one with the routine's rbac snapshot
+              // under the run identity. A foreign session fails the run before
+              // the flow below is ever invoked (withRunSession).
+              const result = await withRunSession(
+                db,
+                {
+                  existingSession: started.session,
+                  jobResultId,
                   workflow: {
                     id: workflow.id,
                     name: workflow.name,
                     agent: workflow.agent,
                     rights_mode: workflow.rights_mode,
                   },
-                  userId: user.id,
-                  title: `${workflow.name} — ${new Date().toISOString()}`,
+                  runUser: user,
                   trigger: data.triggerSource ?? "api",
-                  jobResultId,
-                });
-                await db.from("job_results").where({ id: jobResultId }).update({ session: sessionId });
-              }
+                },
+                async (sessionId) => {
+                  const retries = 3;
+                  let attempts = 0;
 
-              const retries = 3;
-              let attempts = 0;
-
-              const promise = new Promise<{
-                messages: UIMessage[];
-                metadata: {
-                  tokens: {
-                    totalTokens: number;
-                    reasoningTokens: number;
-                    inputTokens: number;
-                    outputTokens: number;
-                    cachedInputTokens: number;
-                  };
-                  duration: number;
-                };
-                pausedAtStepIndex?: number;
-              }>(async (resolve, reject) => {
-                while (attempts < retries) {
-                  try {
-                    // processUiMessagesFlow mutates inputMessages in place (ids
-                    // + substituted text) — pass a fresh deep copy each attempt
-                    // so a retry/resume never reuses the mutated array.
-                    const messages = await processUiMessagesFlow({
-                      agent,
-                      inputMessages: structuredClone(inputMessages),
-                      contexts,
-                      user,
-                      tools,
-                      config,
-                      variables: data.inputs,
-                      // Tag LLM spend to this routine (cron + ad-hoc share this path).
-                      routine: { id: workflow.id, name: workflow.name },
-                      jobResultId,
-                      sessionId,
-                      resumeFromIndex,
-                      // Approval-gated tools pause unless the routine opted
-                      // back into blanket pre-approval (spec §5.2).
-                      respectToolApprovals: workflow.auto_approve_tools !== true,
-                    });
-                    resolve(messages);
-                    break;
-                  } catch (error: unknown) {
-                    console.error(
-                      `[EXULU] error processing UI messages flow for agent ${agent.name} (${agent.id}).`,
-                      error instanceof Error ? error.message : String(error),
-                    );
-                    if (error instanceof FlowStepError) {
-                      // Completed steps already persisted their messages —
-                      // resume at the failed step (spec §5.4).
-                      resumeFromIndex = error.stepIndex;
-                    }
-                    attempts++;
-                    if (attempts >= retries) {
-                      // Persist progress so BullMQ attempt-level retries and
-                      // retryRoutineRun resume from the failed step.
+                  const promise = new Promise<{
+                    messages: UIMessage[];
+                    metadata: {
+                      tokens: {
+                        totalTokens: number;
+                        reasoningTokens: number;
+                        inputTokens: number;
+                        outputTokens: number;
+                        cachedInputTokens: number;
+                      };
+                      duration: number;
+                    };
+                    pausedAtStepIndex?: number;
+                  }>(async (resolve, reject) => {
+                    while (attempts < retries) {
                       try {
-                        await db
-                          .from("job_results")
-                          .where({ id: jobResultId })
-                          .update({
-                            metadata: JSON.stringify({
-                              ...runBookkeeping,
-                              current_step_index: resumeFromIndex,
-                            }),
-                          });
-                      } catch (persistError) {
+                        // processUiMessagesFlow mutates inputMessages in place (ids
+                        // + substituted text) — pass a fresh deep copy each attempt
+                        // so a retry/resume never reuses the mutated array.
+                        const messages = await processUiMessagesFlow({
+                          agent,
+                          inputMessages: structuredClone(inputMessages),
+                          contexts,
+                          user,
+                          tools,
+                          config,
+                          variables: data.inputs,
+                          // Tag LLM spend to this routine (cron + ad-hoc share this path).
+                          routine: { id: workflow.id, name: workflow.name },
+                          jobResultId,
+                          sessionId,
+                          resumeFromIndex,
+                          // Approval-gated tools pause unless the routine opted
+                          // back into blanket pre-approval (spec §5.2).
+                          respectToolApprovals: workflow.auto_approve_tools !== true,
+                        });
+                        resolve(messages);
+                        break;
+                      } catch (error: unknown) {
                         console.error(
-                          `[EXULU] failed to persist run progress for job ${bullmqJob.id}.`,
-                          persistError,
+                          `[EXULU] error processing UI messages flow for agent ${agent.name} (${agent.id}).`,
+                          error instanceof Error ? error.message : String(error),
                         );
+                        if (error instanceof FlowStepError) {
+                          // Completed steps already persisted their messages —
+                          // resume at the failed step (spec §5.4).
+                          resumeFromIndex = error.stepIndex;
+                        }
+                        attempts++;
+                        if (attempts >= retries) {
+                          // Persist progress so BullMQ attempt-level retries and
+                          // retryRoutineRun resume from the failed step.
+                          try {
+                            await db
+                              .from("job_results")
+                              .where({ id: jobResultId })
+                              .update({
+                                metadata: JSON.stringify({
+                                  ...runBookkeeping,
+                                  current_step_index: resumeFromIndex,
+                                }),
+                              });
+                          } catch (persistError) {
+                            console.error(
+                              `[EXULU] failed to persist run progress for job ${bullmqJob.id}.`,
+                              persistError,
+                            );
+                          }
+                          reject(new Error(error instanceof Error ? error.message : String(error)));
+                        }
+                        await new Promise((resolve) => setTimeout(() => resolve(true), 2000));
                       }
-                      reject(new Error(error instanceof Error ? error.message : String(error)));
                     }
-                    await new Promise((resolve) => setTimeout(() => resolve(true), 2000));
-                  }
-                }
-              });
+                  });
 
-              const result = await promise;
+                  return await promise;
+                },
+              );
               const messages = result.messages;
               const metadata = result.metadata;
 

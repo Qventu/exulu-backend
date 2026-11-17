@@ -1,11 +1,12 @@
 import { createOriginResolver, type FileOrigin } from "./file-origin.ts";
 import {
   copyS3Object,
+  deleteS3Object,
   getS3ObjectMetadataStrict,
   getS3ObjectSize,
   listS3ObjectsByPrefix,
 } from "../uppy/index.ts";
-import type { PromoteS3 } from "./project-files-promote.ts";
+import type { MoveS3, PromoteS3 } from "./project-files-promote.ts";
 import type { ExuluConfig } from "./app/index.ts";
 
 const resolvers = new WeakMap<object, ReturnType<typeof createOriginResolver>>();
@@ -36,4 +37,9 @@ export function createPromoteS3(config: ExuluConfig): PromoteS3 {
     sizeOf: (key) => getS3ObjectSize(key, config),
     copy: (src, dest) => copyS3Object(src, dest, config),
   };
+}
+
+/** promote + delete, for moving files out of the session. */
+export function createMoveS3(config: ExuluConfig): MoveS3 {
+  return { ...createPromoteS3(config), remove: (key) => deleteS3Object(key, config) };
 }
