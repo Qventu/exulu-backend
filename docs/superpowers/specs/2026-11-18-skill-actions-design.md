@@ -365,6 +365,19 @@ the skill.
   function for the `skills` table only. `checkRecordAccess` and every other
   record type keep "public satisfies any right". Read access, `rights_mode`
   values and RBAC rows are unchanged; no migration.
+- Bundled skills are seeded `public` with `created_by: null`
+  (`src/skills/bundled.ts`, the seed insert), so they have no creator and
+  are now writable only by super admins and admin-mode API keys (and an
+  explicit RBAC write grant, if one is ever added).
+- Write implies read (ruling 2026-11-19). The RBAC editor gives each
+  subject one right, and `checkRecordAccess` matches a grant to the request
+  exactly, so a "write" grantee would be refused a read. For skills,
+  `canAccessSkill(..., "read")` falls back to `canAccessSkill(..., "write")`
+  when the read check refuses: whoever may replace a skill's files may see
+  them. Every skill read path inherits it through that function (the
+  `/skills/:skillId/*` read routes, the registry list/get/download,
+  `skill_list`, `skill_read`); the GraphQL skill queries already show a
+  skill to any RBAC grantee. `checkRecordAccess` is unchanged.
 
 ## Testing
 
