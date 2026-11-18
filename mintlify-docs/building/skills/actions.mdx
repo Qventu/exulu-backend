@@ -1,0 +1,174 @@
+---
+title: "Skill actions"
+description: "Declare an action in actions.yaml so a skill script receives platform data as files, in one tool call and without the data passing through the model."
+icon: "play"
+---
+
+## What an action is
+
+An action is a named script in a skill that the agent can start with a single tool call. The platform reads the knowledge items the script needs, using the rights of the current user, and hands them to the script as files. The data never passes through the model, so it cannot be retyped, truncated or corrupted on the way.
+
+Use an action when a script has to process platform data, for example to build a document from a contract and its amendments. For a small lookup you do not need one: the agent reads the item with its read tools (`get_<context>_item` and `find_<context>_items`) and reasons over the result itself.
+
+A script in the sandbox cannot fetch platform data on its own, because the sandbox has no network access and no credentials. An action is the way to give it that data.
+
+## A minimal example
+
+An action is declared in `actions.yaml` at the root of the skill. This file declares one action, `summarize_contract`, with three inputs.
+
+```yaml
+version: 1
+actions:
+  summarize_contract:
+    description: Build a one-page summary of a contract and the recent amendments.
+    run: python3 "$EXULU_SKILL_DIR/scripts/summarize.py"
+    timeout_seconds: 120
+    inputs:
+      contract:
+        type: item
+        context: contracts
+        fields: [name, content]
+        description: The contract to summarize.
+      amendments:
+        type: items
+        context: amendments
+        where: { status: { eq: active }, archived: { eq: false } }
+      focus:
+        type: text
+        required: false
+        description: A topic to emphasise.
+```
+
+The script reads each input as a file in the directory named by `EXULU_INPUTS_DIR`. In Python:
+
+```python
+import json, os
+d = os.environ["EXULU_INPUTS_DIR"]
+contract = json.load(open(os.path.join(d, "contract.json")))
+amendments = json.load(open(os.path.join(d, "amendments.json")))["items"]
+args_path = os.path.join(d, "args.json")
+focus = json.load(open(args_path)).get("focus") if os.path.exists(args_path) else None
+```
+
+The same script in Node, as a CommonJS file:
+
+```js
+const fs = require("fs");
+const path = require("path");
+const d = process.env.EXULU_INPUTS_DIR;
+const contract = JSON.parse(fs.readFileSync(path.join(d, "contract.json"), "utf8"));
+const amendments = JSON.parse(fs.readFileSync(path.join(d, "amendments.json"), "utf8")).items;
+const argsPath = path.join(d, "args.json");
+const focus = fs.existsSync(argsPath)
+  ? JSON.parse(fs.readFileSync(argsPath, "utf8")).focus
+  : undefined;
+```
+
+The input name in the YAML is the file name: the input `contract` arrives as `contract.json`. The `focus` input is optional, so `args.json` is missing when the agent leaves it out, and both scripts check for that.
+
+## File format
+
+`actions.yaml` sits at the skill root and is at most 64 KB. The keys are:
+
+| Key | Where | Meaning |
+| --- | --- | --- |
+| `version` | top level | Required. Must be `1`. |
+| `actions` | top level | Required. At most 20 actions, keyed by action name. |
+| `description` | action | Required. What the action does, shown to the agent. |
+| `run` | action | Required. The shell command, run from the session directory. The caller can never change it. |
+| `timeout_seconds` | action | Optional. A whole number from 1 to 300. The default is 60. |
+| `inputs` | action | Optional. The inputs, keyed by input name. |
+
+Action names and input names must match `^[a-z][a-z0-9_]{0,39}$`: a lowercase letter first, then lowercase letters, digits or underscores, at most 40 characters. Unknown keys are errors.
+
+Values from the caller never reach the shell command. They reach the script only as the files described below.
+
+## Input types
+
+Every input has a `type`. There are three.
+
+| Type | What you declare | What the agent passes | What the script finds |
+| --- | --- | --- | --- |
+| `item` | `context` (required, the exact context id), `fields` (optional list of field names), `description` | An item id as a string, or `{ "external_id": "..." }` | `<name>.json` with the item |
+| `items` | `context` (required), `fields`, `where` (optional fixed filter), `description` | `{ "where": {...}, "limit": n }`, or nothing. The default limit is 50 and the maximum is 500. | `<name>.json` as `{ "items": [...], "limit": n, "truncated": true or false }` |
+| `text` | `required` (default `true`), `description` | A string of at most 10000 characters | `args.json`, one object holding every text input that was given, keyed by input name |
+
+Some details that matter when you write the script:
+
+- For `context`, use the exact context id. The tool name `get_<context>_item` is sanitised and shortened, so the segment in it can differ from the id.
+- `args.json` is missing when no text input was given, for example when the only text input is optional and was left out. Do not name an `item` or `items` input `args`: the action then cannot run.
+- An `item` input without `fields` returns every readable field, including `createdAt`, `rights_mode`, `archived` and file fields. An `items` input returns only `id`, `updatedAt`, `name`, `description`, `tags`, `external_id` and the context's non-file fields. Name any other field in `fields` to get it.
+- A `file` field arrives as its storage key, never as its content, and the script cannot fetch it.
+- Fields whose value is null are left out unless `fields` names them.
+
+### Filters in `items` inputs
+
+The fixed `where` uses the syntax of `find_<context>_items`: `{ field: { operator: value } }`. The operators are `eq`, `ne`, `in`, `contains`, `gte` and `lte`. Unknown fields and unknown operators are refused. Some operators are refused for some field types:
+
+| Operator | Refused on |
+| --- | --- |
+| `contains` | number, boolean, date and uuid fields |
+| `gte` and `lte` | json and uuid fields, so also on `id` |
+| `eq`, `ne` and `in` | Never refused |
+
+The fixed `where` is combined with the filter the agent passes. A field you filter in the fixed `where` cannot be filtered again by the agent.
+
+Archived items are included unless the fixed `where` excludes them with `archived: { eq: false }`, as the example does.
+
+## Environment variables
+
+| Variable | Value |
+| --- | --- |
+| `EXULU_INPUTS_DIR` | The directory that holds the input files. It exists only while the command runs. |
+| `EXULU_SKILL_DIR` | The skill's own folder. Use it to address your scripts, as in `run`. |
+
+Never write output into `EXULU_INPUTS_DIR`. It is deleted after the run and never uploaded.
+
+## What an action may read
+
+An action may read only the knowledge bases the agent could read with its own tools in the same turn. These are:
+
+- the knowledge bases whose read tools the agent has (the knowledge base editor setup),
+- the knowledge bases its context search covers, which is all except those switched off there, or
+- otherwise, in a project, the knowledge bases of the project's items.
+
+The agent's memory is never readable. An action that names any other knowledge base is refused when it is started, with the message that the knowledge base is not connected to the agent.
+
+## Limits
+
+| Limit | Value |
+| --- | --- |
+| Size of `actions.yaml` | 64 KB |
+| Actions per skill | 20 |
+| `timeout_seconds` | 1 to 300, default 60 |
+| Items per `items` input | Default 50, maximum 500 |
+| Length of a `text` input | 10000 characters |
+| Files per call to the authoring tools | 100 |
+| Size of one file | 200 KB |
+| Files listed per command | At most 50 |
+
+A file path is relative, at most 200 characters, with no `..`, no empty segments and no control characters.
+
+## When the file is invalid
+
+Each turn, after the skills are synced, a skill with an invalid `actions.yaml` is ignored. Its actions are not offered, and the agent is shown the reason. The authoring tool also refuses to save an invalid file, so you find out when you save.
+
+## How the agent starts an action
+
+The agent starts an action with the tool `run_skill_action` and three arguments: `skill`, `action` and `inputs`. The `inputs` argument is an object keyed by input name, in the forms shown in the table above.
+
+## How skills on the IMP differ from other hosts
+
+A skill is a folder of files in the standard Agent Skills format, and this stays true on the IMP. The differences are in how scripts run:
+
+- Scripts run in the session sandbox, in the session directory. Your skill's files are in `skills/<name>/` below it, so address a script as `skills/<name>/scripts/x.py`.
+- The sandbox is configured to allow no network access. Do not write scripts that download or call anything.
+- The backend's declared secrets are removed from the environment. Variables an administrator has explicitly granted to skills are added under their own name. The rest of the process environment passes through, so do not rely on any other variable being present or absent. Never hard-code credentials. Tell the user which variable the skill expects.
+- When the session has a user and file uploads are configured, files a script creates or changes under the session directory (not under `skills/`) are uploaded. The command output ends with an `[exulu-artifacts]` block that lists each file as `path: URL`. The agent gives the user exactly that URL.
+- `python3` resolves to the platform's Python virtual environment when one is available. When npm is found, globally installed npm packages can be loaded with `require()` from CommonJS scripts. ES `import` ignores that setting. Do not assume any particular package, and say in `SKILL.md` what the skill needs.
+
+## Keep the skill usable elsewhere
+
+Other hosts ignore `actions.yaml`. On the IMP an agent may also not have the action available: the agent may have no sandbox, the file may be invalid, or the knowledge base may not be connected (the action is then listed but refused when called).
+
+So describe in `SKILL.md` a manual path that works without actions. For example, tell the agent to read the item with the read tools and follow the same steps by hand. Keep the `SKILL.md` front matter to `name` and `description` only, with no platform-specific keys.

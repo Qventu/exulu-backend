@@ -18,6 +18,10 @@ Skills are not code plugins. They are documents: Markdown files that describe be
 You can think of a skill as a focused, portable addition to an agent's behavior — one that can be versioned, shared, and connected to a coding agent's local toolchain via the install command.
 </Tip>
 
+## How skills on the IMP differ
+
+On the IMP, skill scripts run in a sandbox without network access and without the platform's secrets, and files a script creates come back to the user as download links. A skill can also declare actions, which give a script platform data as files in one tool call. See [Skill actions](/building/skills/actions) for the format and for how to keep a skill usable on other hosts.
+
 ## The skills list
 
 Open **Skills** from the sidebar under the Build group. The list shows every skill your account has access to.
