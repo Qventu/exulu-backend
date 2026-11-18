@@ -19,6 +19,24 @@ export async function canAccessSkill(
   return checkRecordAccess({ ...skill, RBAC: rbac }, action, user);
 }
 
+/**
+ * Write guard for the routes that change an existing skill's files or version
+ * (/skills/:skillId/sign, /file DELETE, /version, /rename, /init,
+ * /init-from-upload). Same rule as the registry publish route and the
+ * skill_update tool: canAccessSkill(..., "write"). Answers 403 itself when the
+ * caller may not write, so a route only has to `return` on false.
+ */
+export async function ensureSkillWrite(
+  db: any,
+  skill: any,
+  user: User | undefined,
+  res: { status: (code: number) => { json: (body: unknown) => unknown } },
+): Promise<boolean> {
+  if (await canAccessSkill(db, skill, "write", user)) return true;
+  res.status(403).json({ detail: "You don't have write access to this skill." });
+  return false;
+}
+
 export async function filterReadableSkills(db: any, skills: any[], user?: User): Promise<any[]> {
   const out: any[] = [];
   for (const s of skills) {

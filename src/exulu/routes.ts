@@ -221,6 +221,7 @@ import {
 import {
   resolveSkillByName,
   canAccessSkill,
+  ensureSkillWrite,
   filterReadableSkills,
 } from "../skills/skill-access.ts";
 import {
@@ -3984,6 +3985,13 @@ export const createExpressRoutes = async (
 
     const s3Key = `skills/${skillId}/v1/SKILL.md`;
 
+    const { db } = await postgresClient();
+    // The row normally exists (skillsCreateOne ran first, stamping created_by),
+    // and this route overwrites its SKILL.md and resets its version history.
+    // An id with no row keeps its previous behaviour.
+    const skill = await db("skills").where({ id: skillId }).first();
+    if (skill && !(await ensureSkillWrite(db, skill, authResult.user, res))) return;
+
     try {
       await uploadFile(Buffer.from(skillMdContent, "utf-8"), s3Key, config, { contentType: "text/markdown" }, undefined, undefined, true);
     } catch (err: any) {
@@ -3992,7 +4000,6 @@ export const createExpressRoutes = async (
       return;
     }
 
-    const { db } = await postgresClient();
     await db("skills").where({ id: skillId }).update({
       s3folder: `skills/${skillId}`,
       current_version: 1,
@@ -4101,6 +4108,7 @@ export const createExpressRoutes = async (
       res.status(404).json({ detail: "Skill not found." });
       return;
     }
+    if (!(await ensureSkillWrite(db, skill, authResult.user, res))) return;
 
     // Fetch the staged bundle. getS3ObjectBytes prepends the s3prefix the
     // same way uploadFile / getS3ObjectContent do, so we pass the
@@ -4312,6 +4320,8 @@ export const createExpressRoutes = async (
       return;
     }
 
+    if (!(await ensureSkillWrite(db, skill, authResult.user, res))) return;
+
     const version = skill.current_version ?? 1;
     // Sanitize: strip leading slash and prevent path traversal
     const safePath = filePath.replace(/^\/+/, "").replace(/\.\.\//g, "");
@@ -4426,6 +4436,8 @@ export const createExpressRoutes = async (
       return;
     }
 
+    if (!(await ensureSkillWrite(db, skill, authResult.user, res))) return;
+
     const s3Prefix = config.fileUploads?.s3prefix
       ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/`
       : "";
@@ -4467,6 +4479,8 @@ export const createExpressRoutes = async (
       res.status(404).json({ detail: "Skill not found." });
       return;
     }
+
+    if (!(await ensureSkillWrite(db, skill, authResult.user, res))) return;
 
     const currentVersion: number = skill.current_version ?? 1;
     const newVersion = currentVersion + 1;
@@ -4535,6 +4549,8 @@ export const createExpressRoutes = async (
       res.status(404).json({ detail: "Skill not found." });
       return;
     }
+
+    if (!(await ensureSkillWrite(db, skill, authResult.user, res))) return;
 
     const version = skill.current_version ?? 1;
     const safeDest = destPath.replace(/^\/+/, "").replace(/\.\.\//g, "");
