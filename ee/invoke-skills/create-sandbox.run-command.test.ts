@@ -125,3 +125,11 @@ test("writeFile into .exulu-inputs is neither uploaded nor given a URL, but exis
   expect(r.url).toBeUndefined();
   expect(existsSync(join(handle.sessionDir, ".exulu-inputs/r1/x.json"))).toBe(true);
 });
+
+test("a multi-byte character split across output chunks arrives intact", async () => {
+  // The first byte of "ä" (0xC3), a pause so the pipe delivers it as its own chunk, then 0xA4.
+  const r = await handle.runCommand("printf 'Gr\\303'; sleep 0.3; printf '\\244\\303'; sleep 0.3; printf '\\274'; printf '\\303' >&2; sleep 0.3; printf '\\266' >&2");
+  expect(r.stdout.startsWith("Gräü")).toBe(true);
+  expect(r.stderr).toBe("ö");
+  expect(r.stdout).not.toContain("�");
+});

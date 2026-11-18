@@ -1338,10 +1338,14 @@ export async function createSessionSandbox(
                 let timedOut = false
                 let settled = false
                 let timer: NodeJS.Timeout | undefined
-                const append = (cur: string, chunk: Buffer) =>
-                    cur.length >= EXEC_MAX_BUFFER ? cur : (cur + chunk.toString('utf8')).slice(0, EXEC_MAX_BUFFER)
-                child.stdout?.on('data', (c: Buffer) => { stdout = append(stdout, c) })
-                child.stderr?.on('data', (c: Buffer) => { stderr = append(stderr, c) })
+                // setEncoding: the stream's decoder carries a multi-byte character split across
+                // chunks over to the next one (chunk.toString would turn each half into U+FFFD).
+                const append = (cur: string, chunk: string) =>
+                    cur.length >= EXEC_MAX_BUFFER ? cur : (cur + chunk).slice(0, EXEC_MAX_BUFFER)
+                child.stdout?.setEncoding('utf8')
+                child.stderr?.setEncoding('utf8')
+                child.stdout?.on('data', (c: string) => { stdout = append(stdout, c) })
+                child.stderr?.on('data', (c: string) => { stderr = append(stderr, c) })
                 const finish = (exitCode: number) => {
                     if (settled) return
                     settled = true
