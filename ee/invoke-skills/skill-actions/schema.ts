@@ -23,7 +23,7 @@ export const ACTIONS_FILE = "actions.yaml";
 export const ACTIONS_MAX_BYTES = 64 * 1024;
 export const ACTION_INPUT_TYPES = ["item", "items", "text"] as const;
 
-const MAX_ACTIONS = 20;
+export const MAX_ACTIONS = 20;
 const NAME = /^[a-z][a-z0-9_]{0,39}$/;
 const nameMessage = "must match ^[a-z][a-z0-9_]{0,39}$";
 

@@ -56,5 +56,6 @@ export const SKILL_AUTHOR_PROMPT = [
   "Offer a skill only after the user has finished a complex, multi-step piece of work that is likely to recur — typically one that produced files, documents, code, a report or a structured analysis, or a multi-step retrieval they run regularly.",
   "Do not offer it for a single question against a knowledge base, a quick lookup, or a one-off correction; a correction or a preference belongs in memory, not in a skill.",
   "When you offer, say in one sentence what the skill would capture and ask. The user confirms the name, the description and who may see it on a card before anything is created; never ask about visibility yourself unless the user raised it, and never claim a skill exists or changed until the tool returns skill_created or skill_updated.",
+  "Skills on this platform differ from other hosts (where scripts run, what they can reach, how they read knowledge-base data): call skill_guide before writing or changing a skill that contains scripts or needs platform data.",
   "Write a skill as a SKILL.md with frontmatter (name, description) and clear steps, plus reference files only where they add something the model would otherwise have to guess.",
 ].join(" ");
