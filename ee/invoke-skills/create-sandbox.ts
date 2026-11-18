@@ -212,6 +212,23 @@ export interface SessionSandboxHandle {
     tools: Record<string, Tool<any, any>>
     /** Wraps a shell command string so it runs inside the sandbox. */
     wrapCommand: (command: string) => Promise<string>
+    /**
+     * Runs a shell command in the session sandbox (same wrapping, cwd = sessionDir) with
+     * `extraEnv` merged over the session env for this call only. A timeout kills the whole
+     * process group (timedOut = true, exitCode 124). Files the command creates are mirrored
+     * and listed in an [exulu-artifacts] block appended to stdout, exactly as `bash` does.
+     */
+    runCommand: (
+        command: string,
+        options?: { extraEnv?: Record<string, string>; timeoutMs?: number },
+    ) => Promise<{
+        stdout: string
+        stderr: string
+        exitCode: number
+        timedOut: boolean
+        artifacts: Array<{ path: string; relativePath: string; key?: string; url?: string }>
+        artifactsOmitted?: number
+    }>
     /** Tears down the sandbox and deletes the session directory. */
     cleanup: () => Promise<void>
 }
@@ -1155,6 +1172,95 @@ export async function createSessionSandbox(
     //   5. Returns an `artifacts` array on the tool result AND appends an
     //      [exulu-artifacts] block to stdout so the model surfaces the URLs
     //      naturally in its reply.
+    // Shared by `bash` and `runCommand`: snapshot, run, snapshot, diff, mirror the changed
+    // files to S3, and append the [exulu-artifacts] block to stdout (see the comment above).
+    async function runWithArtifactMirroring<R extends { stdout?: string }>(
+        execute: () => Promise<R>,
+    ): Promise<
+        Omit<R, 'stdout'> & {
+            stdout: string
+            artifacts: Array<{ path: string; relativePath: string; key?: string; url?: string }>
+            artifactsOmitted?: number
+        }
+    > {
+        // Fixed for this command: both snapshots and the persist check use it.
+        const hasProject = hasProjectNow()
+        const before = persistenceEnabled
+            ? await snapshotSessionArtifacts(hasProject)
+            : null
+        const result = await execute()
+
+        // Determine new/modified files since the snapshot. mtimeMs strictly
+        // greater than the before-value catches "modified"; absence in
+        // `before` catches "new".
+        const artifacts: Array<{
+            path: string
+            relativePath: string
+            key?: string
+            url?: string
+        }> = []
+        if (persistenceEnabled && before) {
+            // Read once more after the command (see hasProjectNow).
+            const skipProject = hasProject || hasProjectNow()
+            const after = await snapshotSessionArtifacts(skipProject)
+            const changedPaths: string[] = []
+            for (const [path, mtime] of after) {
+                const beforeMtime = before.get(path)
+                if (beforeMtime === undefined || beforeMtime < mtime) {
+                    changedPaths.push(path)
+                }
+            }
+            for (const path of changedPaths) {
+                try {
+                    // Never fsReadFile here: the agent may have swapped the file (or a
+                    // parent directory) for a link to something the sandbox denies,
+                    // and this read runs with the backend's rights.
+                    const content = await readRegularFileInside(sessionDir, path)
+                    if (content === null) continue
+                    const persisted = await persistArtifactToS3(path, content, skipProject)
+                    artifacts.push({
+                        path,
+                        relativePath: relative(sessionDir, path),
+                        key: persisted.key,
+                        url: persisted.url,
+                    })
+                } catch (err) {
+                    console.error(
+                        `[SKILLS] Failed to mirror bash-produced artifact ${path} to S3; continuing.`,
+                        err,
+                    )
+                }
+            }
+        }
+
+        // Surface URLs in stdout so the agent sees them and includes them
+        // in its reply. We append after bash-tool's truncation pass so the
+        // marker block isn't truncated. Only files with a presigned URL
+        // appear here; locally-only entries would just confuse the user.
+        let stdout = result?.stdout ?? ''
+        // Cap the listing: one command can touch thousands of files, and every
+        // entry carries a presigned URL. The full set is still mirrored to S3.
+        const { kept, omitted } = capArtifacts(artifacts)
+        const withUrls = kept.filter((a) => a.url)
+        if (withUrls.length > 0) {
+            const lines = ['', '[exulu-artifacts]']
+            for (const a of withUrls) {
+                lines.push(`  ${a.relativePath}: ${a.url}`)
+            }
+            if (omitted > 0) {
+                lines.push(`  … ${omitted} more file(s) were created and mirrored but are not listed here.`)
+            }
+            stdout = `${stdout}\n${lines.join('\n')}`
+        }
+
+        return {
+            ...result,
+            stdout,
+            artifacts: kept,
+            ...(omitted > 0 ? { artifactsOmitted: omitted } : {}),
+        }
+    }
+
     const originalBashTool = tools.bash
     const bashTool = tool({
         description: originalBashTool.description ?? '',
@@ -1162,11 +1268,6 @@ export async function createSessionSandbox(
             command: z.string().describe('The bash command to execute.'),
         }),
         execute: async (args, opts) => {
-            // Fixed for this command: both snapshots and the persist check use it.
-            const hasProject = hasProjectNow()
-            const before = persistenceEnabled
-                ? await snapshotSessionArtifacts(hasProject)
-                : null
             // Defer to bash-tool's bash tool so we keep its truncation, cwd
             // pinning, and any future bash-tool behaviour for free.
             const originalExecute = originalBashTool.execute as
@@ -1175,79 +1276,52 @@ export async function createSessionSandbox(
             if (!originalExecute) {
                 throw new Error('bash tool execute is undefined')
             }
-            const result = await originalExecute(args, opts)
-
-            // Determine new/modified files since the snapshot. mtimeMs strictly
-            // greater than the before-value catches "modified"; absence in
-            // `before` catches "new".
-            const artifacts: Array<{
-                path: string
-                relativePath: string
-                key?: string
-                url?: string
-            }> = []
-            if (persistenceEnabled && before) {
-                // Read once more after the command (see hasProjectNow).
-                const skipProject = hasProject || hasProjectNow()
-                const after = await snapshotSessionArtifacts(skipProject)
-                const changedPaths: string[] = []
-                for (const [path, mtime] of after) {
-                    const beforeMtime = before.get(path)
-                    if (beforeMtime === undefined || beforeMtime < mtime) {
-                        changedPaths.push(path)
-                    }
-                }
-                for (const path of changedPaths) {
-                    try {
-                        // Never fsReadFile here: the agent may have swapped the file (or a
-                        // parent directory) for a link to something the sandbox denies,
-                        // and this read runs with the backend's rights.
-                        const content = await readRegularFileInside(sessionDir, path)
-                        if (content === null) continue
-                        const persisted = await persistArtifactToS3(path, content, skipProject)
-                        artifacts.push({
-                            path,
-                            relativePath: relative(sessionDir, path),
-                            key: persisted.key,
-                            url: persisted.url,
-                        })
-                    } catch (err) {
-                        console.error(
-                            `[SKILLS] Failed to mirror bash-produced artifact ${path} to S3; continuing.`,
-                            err,
-                        )
-                    }
-                }
-            }
-
-            // Surface URLs in stdout so the agent sees them and includes them
-            // in its reply. We append after bash-tool's truncation pass so the
-            // marker block isn't truncated. Only files with a presigned URL
-            // appear here; locally-only entries would just confuse the user.
-            let stdout = result?.stdout ?? ''
-            // Cap the listing: one command can touch thousands of files, and every
-            // entry carries a presigned URL. The full set is still mirrored to S3.
-            const { kept, omitted } = capArtifacts(artifacts)
-            const withUrls = kept.filter((a) => a.url)
-            if (withUrls.length > 0) {
-                const lines = ['', '[exulu-artifacts]']
-                for (const a of withUrls) {
-                    lines.push(`  ${a.relativePath}: ${a.url}`)
-                }
-                if (omitted > 0) {
-                    lines.push(`  … ${omitted} more file(s) were created and mirrored but are not listed here.`)
-                }
-                stdout = `${stdout}\n${lines.join('\n')}`
-            }
-
-            return {
-                ...result,
-                stdout,
-                artifacts: kept,
-                ...(omitted > 0 ? { artifactsOmitted: omitted } : {}),
-            }
+            return runWithArtifactMirroring(() => originalExecute(args, opts))
         },
     })
+
+    // Programmatic command runner (skill actions): sandbox-wrapped, per-call extra env,
+    // optional timeout. The env is a fresh object per call; sandboxedExecEnv is never mutated.
+    const runCommand: SessionSandboxHandle['runCommand'] = (command, options = {}) =>
+        runWithArtifactMirroring(async () => {
+            const wrapped = await wrapIfNeeded(command)
+            const callEnv = { ...sandboxedExecEnv, ...(options.extraEnv ?? {}) }
+            const shell = '/bin/bash'
+            return await new Promise<{ stdout: string; stderr: string; exitCode: number; timedOut: boolean }>((resolvePromise) => {
+                // detached: own process group, so a timeout can kill the whole tree.
+                const child = spawn(shell, ['-c', wrapped], { env: callEnv, cwd: sessionDir, detached: true })
+                let stdout = ''
+                let stderr = ''
+                let timedOut = false
+                let settled = false
+                let timer: NodeJS.Timeout | undefined
+                const append = (cur: string, chunk: Buffer) =>
+                    cur.length >= EXEC_MAX_BUFFER ? cur : (cur + chunk.toString('utf8')).slice(0, EXEC_MAX_BUFFER)
+                child.stdout?.on('data', (c: Buffer) => { stdout = append(stdout, c) })
+                child.stderr?.on('data', (c: Buffer) => { stderr = append(stderr, c) })
+                const finish = (exitCode: number) => {
+                    if (settled) return
+                    settled = true
+                    if (timer) clearTimeout(timer)
+                    resolvePromise({ stdout, stderr, exitCode: timedOut ? 124 : exitCode, timedOut })
+                }
+                if (options.timeoutMs !== undefined && options.timeoutMs > 0) {
+                    timer = setTimeout(() => {
+                        timedOut = true
+                        try {
+                            if (child.pid) process.kill(-child.pid, 'SIGKILL')
+                        } catch {
+                            child.kill('SIGKILL')
+                        }
+                    }, options.timeoutMs)
+                }
+                child.on('error', (err) => {
+                    stderr = `${stderr}${err.message}`
+                    finish(1)
+                })
+                child.on('close', (code, signal) => finish(typeof code === 'number' ? code : signal ? 128 : 1))
+            })
+        })
 
     const wrappedTools = { ...tools, bash: bashTool, readFile: readFileTool, writeFile: writeFileTool }
 
@@ -1255,6 +1329,7 @@ export async function createSessionSandbox(
         sessionDir,
         tools: wrappedTools,
         wrapCommand: (command: string) => wrapIfNeeded(command),
+        runCommand,
         cleanup: async () => {
             sandboxCache.delete(sessionId)
             if (!useDirectExec) {

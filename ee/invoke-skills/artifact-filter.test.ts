@@ -16,6 +16,10 @@ describe("isIgnoredArtifactPath — dependency and cache trees are not session a
     }
   });
 
+  it("never treats the action inputs directory as an artifact", () => {
+    expect(isIgnoredArtifactPath(".exulu-inputs/r1/pitch.json")).toBe(true);
+  });
+
   it("keeps the files the agent actually produces", () => {
     for (const p of ["Besprechungsprotokoll.docx", "create_minutes.py", "out/report.pdf", "Angebot/Angebot_107426.docx"]) {
       expect(isIgnoredArtifactPath(p)).toBe(false);

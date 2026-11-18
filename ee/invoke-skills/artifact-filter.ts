@@ -18,6 +18,8 @@ const IGNORED_SEGMENTS = new Set([
   ".pytest_cache",
   ".mypy_cache",
   ".ipynb_checkpoints",
+  // Input files the platform writes for a skill action run; never session artifacts.
+  ".exulu-inputs",
 ]);
 
 /** True when any path segment is a dependency, cache or VCS directory. */
