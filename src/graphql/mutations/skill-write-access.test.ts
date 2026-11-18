@@ -120,6 +120,15 @@ async function attempt(fn: () => Promise<unknown>): Promise<{ refused: boolean; 
   }
 }
 
+// validateWriteAccess logs every refusal; keep the refusing cases quiet.
+let errorSpy: jest.SpyInstance;
+beforeEach(() => {
+  errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+});
+afterEach(() => {
+  errorSpy.mockRestore();
+});
+
 describe("GraphQL skill mutations on a public skill", () => {
   const publicSkill = () => ({ id: nextId(), rights_mode: "public", created_by: "1" });
 

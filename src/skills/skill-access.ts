@@ -51,7 +51,16 @@ export async function canAccessSkill(
   // Fast paths (public / creator / admin / api) don't need RBAC hydration, but
   // hydrating is cheap and keeps the users/roles/teams modes correct.
   const rbac = await RBACResolver(db, "skill", skill.id, skill.rights_mode || "private");
-  return checkRecordAccess({ ...skill, RBAC: rbac }, action, user);
+  const allowed = await checkRecordAccess({ ...skill, RBAC: rbac }, action, user);
+  if (allowed || action === "write") return allowed;
+  // For skills, write access satisfies a read check (ruling 2026-11-19):
+  // whoever may replace a skill's files may see them. checkRecordAccess
+  // alone refuses a read to a "write" grant (it matches the grant to the
+  // request exactly), and the RBAC editor gives each subject one right.
+  // The fallback goes through canAccessSkill so a public skill's write rule
+  // still applies (a public skill never gets here: checkRecordAccess already
+  // lets everyone read it).
+  return canAccessSkill(db, skill, "write", user);
 }
 
 /**

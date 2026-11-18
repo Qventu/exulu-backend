@@ -34,6 +34,74 @@ const fakeRes = () => {
   return res;
 };
 
+// checkRecordAccess and validateWriteAccess log every refusal; keep the
+// refusing cases quiet.
+let errorSpy: jest.SpyInstance;
+beforeEach(() => {
+  errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+});
+afterEach(() => {
+  errorSpy.mockRestore();
+});
+
+/**
+ * Controller ruling 2026-11-19: for skills, write access satisfies a read
+ * check. The RBAC editor gives each subject one right, so a "write" grantee
+ * has no "read" row, and checkRecordAccess alone refuses them a read.
+ */
+describe("canAccessSkill: write access also lets you read", () => {
+  const user = (over: any = {}) => ({ id: 7, type: "user", super_admin: false, ...over }) as any;
+
+  it("a users-mode write grant can read", async () => {
+    const skill = { id: nextId(), rights_mode: "users", created_by: 1 };
+    const rows = [{ access_type: "User", user_id: 7, rights: "write" }];
+    expect(await canAccessSkill(fakeDb(rows), skill, "read", user())).toBe(true);
+    expect(await canAccessSkill(fakeDb(rows), skill, "write", user())).toBe(true);
+  });
+  it("a roles-mode write grant can read", async () => {
+    const skill = { id: nextId(), rights_mode: "roles", created_by: 1 };
+    const rows = [{ access_type: "Role", role_id: "r1", rights: "write" }];
+    expect(await canAccessSkill(fakeDb(rows), skill, "read", user({ role: { id: "r1" } }))).toBe(true);
+  });
+  it("a teams-mode write grant can read", async () => {
+    const skill = { id: nextId(), rights_mode: "teams", created_by: 1 };
+    const rows = [{ access_type: "Team", team_id: "t1", rights: "write" }];
+    expect(await canAccessSkill(fakeDb(rows), skill, "read", user({ team: { id: "t1" } }))).toBe(true);
+  });
+  it("a read grant can read but not write (unchanged)", async () => {
+    const skill = { id: nextId(), rights_mode: "users", created_by: 1 };
+    const rows = [{ access_type: "User", user_id: 7, rights: "read" }];
+    expect(await canAccessSkill(fakeDb(rows), skill, "read", user())).toBe(true);
+    expect(await canAccessSkill(fakeDb(rows), skill, "write", user())).toBe(false);
+  });
+  it("no grant can neither read nor write (unchanged)", async () => {
+    const skill = { id: nextId(), rights_mode: "users", created_by: 1 };
+    const rows = [{ access_type: "User", user_id: 99, rights: "write" }];
+    expect(await canAccessSkill(fakeDb(rows), skill, "read", user())).toBe(false);
+    expect(await canAccessSkill(fakeDb(rows), skill, "write", user())).toBe(false);
+  });
+  it("another creator's private skill stays refused (unchanged)", async () => {
+    const skill = { id: nextId(), rights_mode: "private", created_by: 1 };
+    expect(await canAccessSkill(fakeDb(), skill, "read", user())).toBe(false);
+    expect(await canAccessSkill(fakeDb(), skill, "write", user())).toBe(false);
+  });
+  it("a public skill: a non-owner reads, but still cannot write (unchanged)", async () => {
+    const skill = { id: nextId(), rights_mode: "public", created_by: 1 };
+    expect(await canAccessSkill(fakeDb(), skill, "read", user())).toBe(true);
+    expect(await canAccessSkill(fakeDb(), skill, "write", user())).toBe(false);
+  });
+  it("is skill-scoped: checkRecordAccess still refuses a read to a write-only grant on a non-skill record", async () => {
+    const record = {
+      id: `agent-${nextId()}`,
+      rights_mode: "users",
+      created_by: 1,
+      RBAC: { users: [{ id: 7, rights: "write" }], roles: [], teams: [] },
+    };
+    expect(await checkRecordAccess(record, "read", user())).toBe(false);
+    expect(await checkRecordAccess(record, "write", user())).toBe(true);
+  });
+});
+
 describe("canAccessSkill", () => {
   it("allows the creator to read a private skill", async () => {
     const db = fakeDb();
