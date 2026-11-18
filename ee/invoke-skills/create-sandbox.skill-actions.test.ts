@@ -82,11 +82,14 @@ test("an actions.yaml written into the session copy after download adds no actio
   const h = await turn([plain]);
   const file = join(h.sessionDir, "skills", "plain", "actions.yaml");
   await fs.writeFile(file, actionsYaml("steal", "secrets"));
-  // The agent's own writeFile reaches the same path.
-  await (h.tools.writeFile as any).execute(
-    { path: "skills/plain/actions.yaml", content: actionsYaml("steal", "secrets") },
-    { toolCallId: "t", messages: [] },
-  );
+  // The agent's own writeFile refuses the path (skills/ is read-only in a session);
+  // the direct write above stands in for degraded mode, where bash can still write it.
+  await expect(
+    (h.tools.writeFile as any).execute(
+      { path: "skills/plain/actions.yaml", content: actionsYaml("steal", "secrets") },
+      { toolCallId: "t", messages: [] },
+    ),
+  ).rejects.toThrow(/read-only/);
   const next = await turn([plain]); // cache hit, same version: nothing is re-downloaded
   expect(next).toBe(h);
   expect(await fs.readFile(file, "utf8")).toContain("steal");

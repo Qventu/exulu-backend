@@ -2,7 +2,7 @@ import { constants } from 'node:fs'
 import { lstat, mkdir, open, readlink, realpath, rename, unlink, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { discardEntry } from './project-sync'
-import { dirname, isAbsolute, join, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { MAX_ADOPT_UPLOAD_BYTES } from '@SRC/exulu/session-file-adopt'
 
 /**
@@ -213,4 +213,51 @@ export async function removeEntryInside(sessionDir: string, relativePath: string
     // the session (rename acts on the entry, never through it), then delete the
     // moved copy with an fd-based rm that a process still inside cannot steer.
     await discardEntry(target, sessionDir)
+}
+
+/** Symlink hops followed before giving up, as the kernel's own limit (MAXSYMLINKS = 40). */
+const MAX_LINK_HOPS = 40
+
+/**
+ * Where a write to `path` would really land: links are followed the way the kernel
+ * follows them when it creates a file, including a final link whose target does not
+ * exist yet (writing through a dangling link creates its target). Throws ELOOP past
+ * MAX_LINK_HOPS and passes on any error other than a missing component.
+ */
+async function realLocation(path: string, hops = { n: 0 }): Promise<string> {
+    try {
+        return await realpath(path)
+    } catch (err) {
+        if (errCode(err) !== 'ENOENT') throw err
+    }
+    const st = await lstat(path).catch((err) => (errCode(err) === 'ENOENT' ? null : Promise.reject(err)))
+    if (st?.isSymbolicLink()) {
+        if (++hops.n > MAX_LINK_HOPS) throw Object.assign(new Error(`Too many links resolving ${path}`), { code: 'ELOOP' })
+        return realLocation(resolve(dirname(path), await readlink(path)), hops)
+    }
+    const parent = dirname(path)
+    if (parent === path) return path
+    return join(await realLocation(parent, hops), basename(path))
+}
+
+/**
+ * Whether a write to `path` (absolute) would land in `<sessionDir>/<relativeDir>` or
+ * below it, judged by where it really lands: `..` segments, links (also dangling ones)
+ * and a session directory reached through a link are all resolved first. A path that
+ * cannot be resolved (a link cycle, no permission) counts as inside, so a caller that
+ * refuses on true refuses it; one blocked by a file in the way (ENOTDIR) cannot be
+ * written at all and counts as outside.
+ *
+ * A check, not a lock: the agent can change links after it returns. Callers rely on it
+ * for a clear refusal before touching disk; the sandbox policy is what enforces.
+ */
+export async function landsInside(sessionDir: string, path: string, relativeDir: string): Promise<boolean> {
+    const segments = safeSegments(relativeDir)
+    try {
+        const entry = await realLocation(join(sessionDir, ...segments))
+        const target = await realLocation(resolve(path))
+        return isInside(entry, target)
+    } catch (err) {
+        return errCode(err) !== 'ENOTDIR'
+    }
 }

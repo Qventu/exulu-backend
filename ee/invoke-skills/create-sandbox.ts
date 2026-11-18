@@ -28,7 +28,7 @@ import { postgresClient } from "@SRC/postgres/client";
 import { PROJECT_DIR } from "@SRC/exulu/project-files.ts";
 import { ORIGIN_METADATA_KEY } from "@SRC/exulu/file-origin.ts";
 import { syncProjectDir, clearProjectSyncMarker } from "./project-sync";
-import { readRegularFileInside, writeFileInside, ensureRealDirectory, removeEntryInside, UnsafeSessionPathError } from "./safe-fs";
+import { readRegularFileInside, writeFileInside, ensureRealDirectory, removeEntryInside, landsInside, UnsafeSessionPathError } from "./safe-fs";
 
 /**
  * Load the variables an administrator has explicitly granted to the skill
@@ -234,7 +234,8 @@ export interface SessionSandboxHandle {
     /**
      * skill id -> the skill's actions.yaml as parsed from the bytes downloaded from skill
      * storage for its installed version. Set only by a (re)download, never re-read from the
-     * session directory: the agent can edit skills/<name>/actions.yaml, and that must not
+     * session directory: the agent can edit skills/<name>/actions.yaml (in degraded mode; the
+     * sandbox policy denies writes under skills/ otherwise), and that must not
      * change which actions exist or what they read.
      */
     skillActions: ReadonlyMap<string, PinnedSkillActions>
@@ -355,6 +356,13 @@ async function removeInstalledSkill(skillsDirectory: string, skillName: string):
     await removeEntryInside(sessionDir, `skills/${skillName}`)
 }
 
+/** The writeFile refusal for a path that lands in skills/ (see writeFilesInternal). */
+const SKILLS_READ_ONLY_MESSAGE = (path: string) =>
+    `writeFile refused: "${path}" is inside the skills/ folder, which is read-only in a session. ` +
+    'Write your files to the session directory instead (e.g. "./out/report.md"). ' +
+    'A skill changes only when a new version of it is saved (skill_update or the skill editor); ' +
+    'the session picks it up on the next turn or a reload of the skills.'
+
 /**
  * A file written inside the sandbox qualifies as a session artifact iff it lives
  * under sessionDir but NOT under sessionDir/skills/. Skill source files are
@@ -437,7 +445,7 @@ function resolveSessionPath(inputPath: string, sessionDir: string): string {
     if (resolved !== sessionDir && !resolved.startsWith(sessionDir + '/')) {
         throw new Error(
             `Path "${inputPath}" resolves outside the session directory. ` +
-            `Use a path inside "${sessionDir}" (relative paths recommended, e.g. "skills/<name>/SKILL.md").`,
+            `Use a path inside "${sessionDir}" (relative paths recommended, e.g. "out/report.md", or "skills/<name>/SKILL.md" to read a skill).`,
         )
     }
 
@@ -691,6 +699,12 @@ export async function createSessionSandbox(
     await mkdir(sessionDir, { recursive: true })
 
     const skillsDirectory = join(sessionDir, 'skills')
+    // Exists (as a real directory) before the sandbox policy below is first applied,
+    // even for a session without skills: the runtime resolves a deny path only when it
+    // exists — on macOS an unresolved /tmp/... path would never match the kernel's
+    // /private/tmp/... and the deny would silently not apply; on Linux a missing path
+    // gets a placeholder mount file created in the session dir on the host.
+    await ensureRealDirectory(sessionDir, 'skills')
 
     const installedSkills = new Map<string, number>()
     const skillActions = new Map<string, PinnedSkillActions>()
@@ -801,7 +815,21 @@ export async function createSessionSandbox(
                 ...(pythonVenvPath ? [pythonVenvPath] : []),
             ],
             allowWrite: [sessionDir],
-            denyWrite: [],
+            // Skill folders are read-only inside the sandbox; only the platform (this
+            // process: download, version re-sync, reload, removal) writes them. A script
+            // runs with the rights of whoever triggers it — in a shared session another
+            // speaker — so nothing run in the sandbox may change what a later run executes.
+            // The runtime layers this deny over the session-dir allow:
+            //  - macOS (seatbelt): `deny file-write*` + `deny file-write-unlink` on the
+            //    subpath come after the allow (later rules win), and unlink of each
+            //    ancestor is denied, so a rename of skills/ or a skill's folder fails too.
+            //  - Linux (bwrap): `--ro-bind skills skills` after the session-dir `--bind`;
+            //    writes get EROFS, renaming the mount point EBUSY, links into it EXDEV.
+            // Paths are resolved through symlinks when each command is wrapped, which is
+            // why skills/ is created above before the first command.
+            // Not enforced in degraded mode (useDirectExec): nothing is. The writeFile
+            // tool refuses skills/ paths itself; bash and runCommand cannot be confined.
+            denyWrite: [skillsDirectory],
         },
     }
 
@@ -910,7 +938,10 @@ export async function createSessionSandbox(
 
     // Either wrap a command with bwrap/sandbox-exec or return it unchanged when
     // the host can't sandbox. In degraded mode the container itself is the
-    // isolation boundary; resolveSessionPath still scopes readFile/writeFile.
+    // isolation boundary; resolveSessionPath still scopes readFile/writeFile, and
+    // writeFilesInternal still refuses skills/. A bash command or a skill action can
+    // then still change skills/ (or anything else the backend user may write): that
+    // limit is stated in the authoring guide and the docs.
     const wrapIfNeeded = async (command: string): Promise<string> => {
         if (useDirectExec) return command;
         return SandboxManager.wrapWithSandbox(command, undefined, sessionSandboxConfig);
@@ -1045,6 +1076,14 @@ export async function createSessionSandbox(
     ): Promise<WriteResult[]> {
         const results: WriteResult[] = []
 
+        // All paths are checked before any is written, and before anything touches
+        // disk: the refusal holds in degraded mode too, where no sandbox policy exists.
+        for (const file of files) {
+            if (await landsInside(sessionDir, file.path, 'skills')) {
+                throw new Error(SKILLS_READ_ONLY_MESSAGE(file.path))
+            }
+        }
+
         for (const file of files) {
             // Pipe content via stdin so arbitrary file content (quotes, $, etc.)
             // doesn't need to be escaped into the shell command.
@@ -1142,7 +1181,9 @@ export async function createSessionSandbox(
         description:
             'Write content to a file in the sandbox. Creates parent directories if needed. ' +
             'Paths are always resolved against the session sandbox root — both relative paths ' +
-            '("skills/<Skill name>/SKILL.md") and leading-slash paths ("/skills/<Skill name>/SKILL.md") work and reach the same file. ' +
+            '("report.md", "out/report.md") and leading-slash paths ("/out/report.md") work and reach the same file. ' +
+            'The skills/ folder is read-only: a path inside it is refused. A skill changes only when a new version ' +
+            'of it is saved (skill_update or the skill editor); write your own files to the session directory. ' +
             'When the path is under the session artifact tree, the file is also uploaded to S3 ' +
             'and a short-lived presigned URL is returned in the tool output.',
         inputSchema: z.object({
