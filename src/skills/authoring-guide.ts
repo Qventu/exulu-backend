@@ -1,6 +1,10 @@
 import { ACTIONS_FILE, ACTIONS_MAX_BYTES, MAX_ACTIONS } from "@EE/invoke-skills/skill-actions/schema";
 import { MAX_FILE_BYTES, MAX_FILES } from "./authoring-limits";
 
+/** Pinned by authoring-guide.test.ts and backed by create-sandbox.skill-actions.test.ts. */
+export const ACTIONS_EDIT_NO_EFFECT =
+  "Editing, replacing or deleting `skills/<name>/" + ACTIONS_FILE + "` inside a running session has no effect on which actions exist or what they read.";
+
 /**
  * What an agent reads (skill_guide) before it writes a skill for this platform.
  * Every statement below was checked against the code it describes
@@ -48,7 +52,9 @@ In the script: \`$EXULU_INPUTS_DIR\` is the directory holding those files (it ex
 
 Which contexts an action may read: only those the agent could read with its own tools in the same turn. That is the knowledge bases whose read tools the agent has (the knowledge-base editor setup), the knowledge bases its context search covers (all except those switched off there), or otherwise, in a project, the knowledge bases of the project's items. The agent's memory is never readable. An action that names any other context is refused when started, with the message that the knowledge base is not connected to the agent.
 
-Invalid file: each turn, after the skills are synced, a skill with an invalid \`${ACTIONS_FILE}\` is ignored (its actions are not offered and the agent is shown the reason), and this authoring tool refuses to save one.
+When the file is read: the platform takes \`${ACTIONS_FILE}\` from the saved skill version, when that version is downloaded into the session (the first turn, the first turn after a new version is saved, or a reload of the skills). ${ACTIONS_EDIT_NO_EFFECT} Save a new version instead; it is picked up on the next turn. Scripts still run from the session copy in \`skills/<name>/\`.
+
+Invalid file: a skill whose saved \`${ACTIONS_FILE}\` is invalid is ignored (its actions are not offered and the agent is shown the reason), and this authoring tool refuses to save one.
 
 Example:
 

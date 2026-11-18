@@ -466,11 +466,16 @@ export const convertExuluToolsToAiSdkTools = async (
   }
 
   // Skill actions (actions.yaml): one run_skill_action tool, only with a sandbox
-  // and at least one enabled skill that declares actions (or a broken
-  // actions.yaml worth telling the agent about). Pushed into currentTools, so
+  // and at least one enabled skill whose downloaded version declares actions (or
+  // ships a broken actions.yaml worth telling the agent about). Pushed into currentTools, so
   // it passes the approval, guard and audit wrapper below like every tool.
   if (sharedSessionSandbox && !disabled.has(RUN_SKILL_ACTION_TOOL_ID)) {
-    const loadedActions = await loadSkillActions(sharedSessionSandbox.sessionDir, currentSkills ?? []);
+    // From the declarations pinned at download time, never from the session copy the agent can write.
+    const loadedActions = loadSkillActions(
+      sharedSessionSandbox.sessionDir,
+      currentSkills ?? [],
+      sharedSessionSandbox.skillActions,
+    );
     const hasActions = Object.values(loadedActions.bySkill).some((s) => Object.keys(s.actions).length > 0);
     if (hasActions || loadedActions.problems.length > 0) {
       const contextIds = contexts.map((c) => c.id);

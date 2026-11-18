@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { ACTION_INPUT_TYPES, ACTIONS_FILE, parseActionsYaml } from "@EE/invoke-skills/skill-actions/schema";
 import { readableContextFields } from "@SRC/templates/tools/context-read-tools";
-import { SKILL_AUTHORING_GUIDE } from "./authoring-guide";
+import { ACTIONS_EDIT_NO_EFFECT, SKILL_AUTHORING_GUIDE } from "./authoring-guide";
 
 jest.mock("@SRC/postgres/client", () => ({ postgresClient: jest.fn() }));
 jest.mock("@SRC/utils/check-record-access", () => ({ checkRecordAccess: jest.fn() }));
@@ -86,4 +86,15 @@ test("the operator restrictions are pinned to the source", () => {
   expect(fn).toContain('operator === "gte" || operator === "lte"');
   expect(fn.match(/operator ===/g)).toHaveLength(3); // no further restricted operator
   expect(SKILL_AUTHORING_GUIDE).toContain("`contains` is refused on number, boolean, date and uuid fields, `gte` and `lte` on json and uuid fields");
+});
+
+test("the guide says actions come from the saved version, and the registration never reads them from disk", () => {
+  expect(SKILL_AUTHORING_GUIDE).toContain(ACTIONS_EDIT_NO_EFFECT);
+  expect(SKILL_AUTHORING_GUIDE).toContain(`takes \`${ACTIONS_FILE}\` from the saved skill version`);
+  expect(SKILL_AUTHORING_GUIDE).toContain("it is picked up on the next turn");
+  // Backed by: the loader has no file-system access and the registration passes the pinned map.
+  const load = readFileSync(join(__dirname, "../../ee/invoke-skills/skill-actions/load.ts"), "utf8");
+  expect(load).not.toMatch(/from "node:fs|from "fs|safe-fs/);
+  const convert = readFileSync(join(__dirname, "../templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts"), "utf8");
+  expect(convert).toMatch(/loadSkillActions\([\s\S]{0,200}sharedSessionSandbox\.skillActions,?\s*\)/);
 });

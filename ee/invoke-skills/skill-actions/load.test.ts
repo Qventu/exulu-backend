@@ -1,7 +1,5 @@
-import { promises as fs } from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { loadSkillActions, describeActions } from "./load";
+import { join } from "node:path";
+import { declarationFromBytes, describeActions, loadSkillActions, type PinnedSkillActions } from "./load";
 
 const VALID = `version: 1
 actions:
@@ -21,37 +19,35 @@ actions:
         context: rows
 `;
 
+const sessionDir = "/tmp/exulu-sessions/s1";
+const skill = (name: string, version = 1) => ({ id: `id-${name}`, name, current_version: version });
+const pin = (name: string, bytes: string | undefined, version = 1): [string, PinnedSkillActions] => [
+  `id-${name}`,
+  {
+    skillId: `id-${name}`,
+    name,
+    version,
+    declaration: declarationFromBytes(bytes === undefined ? undefined : Buffer.from(bytes)),
+  },
+];
+
+describe("declarationFromBytes", () => {
+  it("no file is none, a valid one is ok, an invalid or oversized one is a problem", () => {
+    expect(declarationFromBytes(undefined)).toEqual({ kind: "none" });
+    expect(declarationFromBytes(Buffer.from(VALID)).kind).toBe("ok");
+    expect(declarationFromBytes(Buffer.from("version: 2\n")).kind).toBe("problem");
+    const big = declarationFromBytes(Buffer.from("#" + "x".repeat(70 * 1024)));
+    expect(big).toEqual({ kind: "problem", error: expect.stringContaining("exceeds") });
+  });
+});
+
 describe("loadSkillActions", () => {
-  let root: string;
-  let sessionDir: string;
-  let outside: string;
-
-  beforeEach(async () => {
-    root = await fs.mkdtemp(path.join(os.tmpdir(), "skill-actions-"));
-    sessionDir = path.join(root, "session");
-    outside = path.join(root, "outside.yaml");
-    await fs.mkdir(path.join(sessionDir, "skills"), { recursive: true });
-    await fs.writeFile(outside, VALID);
-  });
-  afterEach(async () => {
-    await fs.rm(root, { recursive: true, force: true });
-  });
-
-  const skillDir = (n: string) => path.join(sessionDir, "skills", n);
-
-  it("loads valid skills, reports invalid and unsafe ones, ignores missing", async () => {
-    await fs.mkdir(skillDir("a"), { recursive: true });
-    await fs.writeFile(path.join(skillDir("a"), "actions.yaml"), VALID);
-    await fs.mkdir(skillDir("b"), { recursive: true });
-    await fs.writeFile(path.join(skillDir("b"), "actions.yaml"), "version: 2\n");
-    await fs.mkdir(skillDir("c"), { recursive: true });
-    await fs.mkdir(skillDir("d"), { recursive: true });
-    await fs.symlink(outside, path.join(skillDir("d"), "actions.yaml"));
-
-    const loaded = await loadSkillActions(sessionDir, [{ name: "a" }, { name: "b" }, { name: "c" }, { name: "d" }]);
+  it("loads valid pins, reports invalid ones, ignores skills without a file", () => {
+    const pinned = new Map([pin("a", VALID), pin("b", "version: 2\n"), pin("c", undefined)]);
+    const loaded = loadSkillActions(sessionDir, [skill("a"), skill("b"), skill("c")], pinned);
     expect(Object.keys(loaded.bySkill)).toEqual(["a"]);
-    expect(loaded.bySkill.a!.skillDir).toBe(skillDir("a"));
-    expect(loaded.problems.map((p) => p.skill).sort()).toEqual(["b", "d"]);
+    expect(loaded.bySkill.a!.skillDir).toBe(join(sessionDir, "skills", "a"));
+    expect(loaded.problems.map((p) => p.skill)).toEqual(["b"]);
     const text = describeActions(loaded);
     expect(text).toContain("a / export — Writes the workbook.");
     expect(text).toContain("  deal (item, context deals) — The deal");
@@ -61,17 +57,22 @@ describe("loadSkillActions", () => {
     expect(text).toContain('skill "b": actions.yaml ignored —');
   });
 
-  it("rejects hostile names without reading", async () => {
-    const loaded = await loadSkillActions(sessionDir, [{ name: "../x" }, { name: "a/b" }, { name: ".." }, { name: "" }]);
+  it("a skill with a path-like name that ships actions.yaml gets a problem, never actions", () => {
+    const pinned = new Map([pin("a/b", VALID)]);
+    const loaded = loadSkillActions(sessionDir, [skill("a/b")], pinned);
     expect(loaded.bySkill).toEqual({});
-    expect(loaded.problems).toHaveLength(4);
+    expect(loaded.problems.map((p) => p.skill)).toEqual(["a/b"]);
   });
 
-  it("flags an oversized file", async () => {
-    await fs.mkdir(skillDir("big"), { recursive: true });
-    await fs.writeFile(path.join(skillDir("big"), "actions.yaml"), "#" + "x".repeat(70 * 1024));
-    const loaded = await loadSkillActions(sessionDir, [{ name: "big" }]);
-    expect(loaded.problems.map((p) => p.skill)).toEqual(["big"]);
+  it("only enabled skills with a pin of their current name and version contribute", () => {
+    const pinned = new Map([pin("a", VALID, 1), pin("b", VALID), pin("old", VALID)]);
+    const loaded = loadSkillActions(
+      sessionDir,
+      [skill("a", 2), skill("b"), { id: "id-old", name: "renamed", current_version: 1 }, skill("never-pinned")],
+      pinned,
+    );
+    expect(Object.keys(loaded.bySkill)).toEqual(["b"]);
+    expect(loaded.problems).toEqual([]);
   });
 
   it("describeActions is empty when nothing is declared", () => {

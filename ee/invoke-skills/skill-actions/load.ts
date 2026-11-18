@@ -1,11 +1,48 @@
-import { lstat } from "node:fs/promises";
 import { join } from "node:path";
-import { readRegularFileInside } from "../safe-fs";
 import { ACTIONS_FILE, ACTIONS_MAX_BYTES, parseActionsYaml, type SkillAction } from "./schema";
 
 export type LoadedSkillActions = {
   bySkill: Record<string, { skillDir: string; actions: Record<string, SkillAction> }>;
   problems: Array<{ skill: string; error: string }>;
+};
+
+/**
+ * A skill's action declaration as parsed from the bytes the platform downloaded
+ * from skill storage. "none" = the skill version ships no actions.yaml.
+ */
+export type ActionsDeclaration =
+  | { kind: "none" }
+  | { kind: "ok"; actions: Record<string, SkillAction> }
+  | { kind: "problem"; error: string };
+
+/**
+ * One skill's pinned declaration, kept on the cached session sandbox. It is set
+ * only when the skill's files are (re)downloaded and never re-read from the
+ * session directory, so a file the agent writes at skills/<name>/actions.yaml
+ * has no effect on which actions exist or what they read.
+ */
+export type PinnedSkillActions = {
+  skillId: string;
+  name: string;
+  version: number;
+  declaration: ActionsDeclaration;
+};
+
+/** Parses the downloaded actions.yaml bytes (undefined = the skill has none). Never throws. */
+export const declarationFromBytes = (bytes: Buffer | undefined): ActionsDeclaration => {
+  if (bytes === undefined) return { kind: "none" };
+  try {
+    if (bytes.length > ACTIONS_MAX_BYTES) {
+      return { kind: "problem", error: `${ACTIONS_FILE} exceeds ${ACTIONS_MAX_BYTES} bytes` };
+    }
+    const parsed = parseActionsYaml(bytes.toString("utf8"));
+    return parsed.ok ? { kind: "ok", actions: parsed.actions } : { kind: "problem", error: parsed.error };
+  } catch (err) {
+    return {
+      kind: "problem",
+      error: `${ACTIONS_FILE} could not be loaded: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 };
 
 const isPlainName = (name: unknown): name is string =>
@@ -19,54 +56,31 @@ const isPlainName = (name: unknown): name is string =>
   !name.includes("..");
 
 /**
- * Reads and validates actions.yaml of each skill under <sessionDir>/skills/<name>/.
- * Never throws. A missing file is silent; an invalid, unsafe, unreadable or
- * oversized one yields a problem entry and no actions for that skill.
+ * The actions of this turn's enabled skills, from the pinned declarations only
+ * (never from disk). A skill contributes only when its pin matches its current
+ * id, name and version; anything else (not downloaded on this sandbox, a sync
+ * that failed, a renamed skill) contributes nothing.
  */
-export const loadSkillActions = async (
+export const loadSkillActions = (
   sessionDir: string,
-  skills: Array<{ name: string }>,
-): Promise<LoadedSkillActions> => {
+  skills: Array<{ id: string; name: string; current_version: number }>,
+  pinned: ReadonlyMap<string, PinnedSkillActions>,
+): LoadedSkillActions => {
   const result: LoadedSkillActions = { bySkill: {}, problems: [] };
-  for (const { name } of skills) {
-    try {
-      if (!isPlainName(name)) {
-        result.problems.push({ skill: String(name), error: "invalid skill name" });
-        continue;
-      }
-      const skillDir = join(sessionDir, "skills", name);
-      const file = join(skillDir, ACTIONS_FILE);
-      // safe-fs returns null for both "missing" and "unsafe", so tell them apart
-      // first: lstat does not follow links, so a symlink counts as present.
-      const present = await lstat(file).then(
-        () => true,
-        (err: NodeJS.ErrnoException) => (err?.code === "ENOENT" || err?.code === "ENOTDIR" ? false : true),
-      );
-      if (!present) continue;
-      const bytes = await readRegularFileInside(sessionDir, file);
-      if (bytes === null) {
-        result.problems.push({
-          skill: name,
-          error: `${ACTIONS_FILE} could not be read safely (not a regular file inside the session)`,
-        });
-        continue;
-      }
-      if (bytes.length > ACTIONS_MAX_BYTES) {
-        result.problems.push({ skill: name, error: `${ACTIONS_FILE} exceeds ${ACTIONS_MAX_BYTES} bytes` });
-        continue;
-      }
-      const parsed = parseActionsYaml(bytes.toString("utf8"));
-      if (!parsed.ok) {
-        result.problems.push({ skill: name, error: parsed.error });
-        continue;
-      }
-      result.bySkill[name] = { skillDir, actions: parsed.actions };
-    } catch (err) {
-      result.problems.push({
-        skill: String((name as unknown) ?? ""),
-        error: `${ACTIONS_FILE} could not be loaded: ${err instanceof Error ? err.message : String(err)}`,
-      });
+  for (const skill of skills) {
+    const pin = pinned.get(skill.id);
+    if (!pin || pin.version !== skill.current_version || pin.name !== skill.name) continue;
+    if (!isPlainName(skill.name)) {
+      result.problems.push({ skill: String(skill.name), error: "invalid skill name" });
+      continue;
     }
+    const { declaration } = pin;
+    if (declaration.kind === "none") continue;
+    if (declaration.kind === "problem") {
+      result.problems.push({ skill: skill.name, error: declaration.error });
+      continue;
+    }
+    result.bySkill[skill.name] = { skillDir: join(sessionDir, "skills", skill.name), actions: declaration.actions };
   }
   return result;
 };

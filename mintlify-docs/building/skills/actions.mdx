@@ -149,9 +149,13 @@ The agent's memory is never readable. An action that names any other knowledge b
 
 A file path is relative, at most 200 characters, with no `..`, no empty segments and no control characters.
 
+## When the file is read
+
+The platform reads `actions.yaml` from the saved skill version, when that version is downloaded into the session: on the first turn, on the first turn after a new version is saved, and when the skills are reloaded. Editing, replacing or deleting `skills/<name>/actions.yaml` inside a running session has no effect on which actions exist or what they read. Save a new version instead. It is picked up on the next turn. The scripts still run from the session copy in `skills/<name>/`.
+
 ## When the file is invalid
 
-Each turn, after the skills are synced, a skill with an invalid `actions.yaml` is ignored. Its actions are not offered, and the agent is shown the reason. The authoring tool also refuses to save an invalid file, so you find out when you save.
+A skill whose saved `actions.yaml` is invalid is ignored. Its actions are not offered, and the agent is shown the reason. The authoring tool also refuses to save an invalid file, so you find out when you save.
 
 ## How the agent starts an action
 

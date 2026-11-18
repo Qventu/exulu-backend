@@ -11,6 +11,8 @@ import { listS3ObjectsByPrefix, getS3ObjectBytes, uploadFile, getPresignedUrl, t
 import { isIgnoredArtifactPath, isActionInputsPath, capArtifacts, needsDownload } from './artifact-filter'
 import { getNpmGlobalRoot } from '@SRC/exulu/system-dependencies.ts'
 import { buildSkillEnv } from './skill-env'
+import { declarationFromBytes, type PinnedSkillActions } from './skill-actions/load'
+import { ACTIONS_FILE } from './skill-actions/schema'
 import { isBinaryDocumentPath, looksBinary, binaryReadHint } from './binary-file-guard'
 import { selectGrantedVariables, selectRowsToDecrypt, deriveWithheldNames } from './variable-grants'
 import { readLiteLLMOsEnvironNames } from '@SRC/exulu/litellm/os-environ-names'
@@ -229,6 +231,13 @@ export interface SessionSandboxHandle {
         artifacts: Array<{ path: string; relativePath: string; key?: string; url?: string }>
         artifactsOmitted?: number
     }>
+    /**
+     * skill id -> the skill's actions.yaml as parsed from the bytes downloaded from skill
+     * storage for its installed version. Set only by a (re)download, never re-read from the
+     * session directory: the agent can edit skills/<name>/actions.yaml, and that must not
+     * change which actions exist or what they read.
+     */
+    skillActions: ReadonlyMap<string, PinnedSkillActions>
     /** Tears down the sandbox and deletes the session directory. */
     cleanup: () => Promise<void>
 }
@@ -246,16 +255,22 @@ interface CachedSandbox {
     handle: SessionSandboxHandle
     /** skill id -> installed version */
     installedSkills: Map<string, number>
+    /** skill id -> pinned actions declaration (the same map the handle exposes). */
+    skillActions: Map<string, PinnedSkillActions>
     projectState: ProjectState
 }
 
 const sandboxCache = new Map<string, CachedSandbox>()
 
+/**
+ * Downloads a skill version's files into skills/<name>/ and returns the bytes of its
+ * root actions.yaml as fetched from storage (undefined when the version has none).
+ */
 async function downloadSkill(
     skill: SkillRef,
     skillsDirectory: string,
     config: ExuluConfig,
-): Promise<void> {
+): Promise<Buffer | undefined> {
     // Skills created via the standard /skills/:skillId/initialize route always
     // get current_version=1. Older / manually-inserted rows may be missing it
     // — fall back to v1 (where the auto-generated SKILL.md lives) and warn.
@@ -284,6 +299,7 @@ async function downloadSkill(
     const sessionDir = dirname(skillsDirectory)
     await ensureRealDirectory(sessionDir, `skills/${skill.name}`)
 
+    let actionsBytes: Buffer | undefined
     for (const file of files) {
         // Extract the path relative to the version prefix, accounting for any S3 general prefix
         const prefixIndex = file.key.indexOf(versionPrefix)
@@ -296,6 +312,8 @@ async function downloadSkill(
         // Binary-safe download — skill bundles can ship images, fonts, and
         // other non-text assets alongside the SKILL.md / scripts.
         const bytes = await getS3ObjectBytes(file.key, config)
+        // Root of the skill only: a nested actions.yaml declares nothing.
+        if (relativePath === ACTIONS_FILE) actionsBytes = Buffer.from(bytes)
         try {
             await writeFileInside(sessionDir, `skills/${skill.name}/${relativePath}`, bytes)
         } catch (err) {
@@ -303,6 +321,28 @@ async function downloadSkill(
             console.error(`[SKILLS] Skipping skill file ${file.key}: ${err.message}`)
         }
     }
+    return actionsBytes
+}
+
+/**
+ * Downloads a skill and pins its actions declaration from the downloaded bytes. The old pin
+ * is dropped first, so a download that fails part-way leaves the skill without actions
+ * (fail closed) rather than with the previous version's.
+ */
+async function installSkill(
+    skill: SkillRef,
+    skillsDirectory: string,
+    config: ExuluConfig,
+    skillActions: Map<string, PinnedSkillActions>,
+): Promise<void> {
+    skillActions.delete(skill.id)
+    const actionsBytes = await downloadSkill(skill, skillsDirectory, config)
+    skillActions.set(skill.id, {
+        skillId: skill.id,
+        name: skill.name,
+        version: skill.current_version,
+        declaration: declarationFromBytes(actionsBytes),
+    })
 }
 
 /**
@@ -566,7 +606,7 @@ export async function refreshSessionSkills(
     let refreshed = 0
     for (const skill of skills) {
         await removeInstalledSkill(skillsDirectory, skill.name)
-        await downloadSkill(skill, skillsDirectory, config)
+        await installSkill(skill, skillsDirectory, config, cached.skillActions)
         cached.installedSkills.set(skill.id, skill.current_version)
         refreshed++
     }
@@ -618,7 +658,7 @@ export async function createSessionSandbox(
                 await removeInstalledSkill(skillsDirectory, skill.name)
             }
 
-            await downloadSkill(skill, skillsDirectory, config)
+            await installSkill(skill, skillsDirectory, config, cached.skillActions)
             cached.installedSkills.set(skill.id, skill.current_version)
         }
 
@@ -653,10 +693,11 @@ export async function createSessionSandbox(
     const skillsDirectory = join(sessionDir, 'skills')
 
     const installedSkills = new Map<string, number>()
+    const skillActions = new Map<string, PinnedSkillActions>()
 
     // Download each skill's files from S3 into the session directory
     for (const skill of skills) {
-        await downloadSkill(skill, skillsDirectory, config)
+        await installSkill(skill, skillsDirectory, config, skillActions)
         installedSkills.set(skill.id, skill.current_version)
     }
 
@@ -1332,6 +1373,7 @@ export async function createSessionSandbox(
         tools: wrappedTools,
         wrapCommand: (command: string) => wrapIfNeeded(command),
         runCommand,
+        skillActions,
         cleanup: async () => {
             sandboxCache.delete(sessionId)
             if (!useDirectExec) {
@@ -1342,7 +1384,7 @@ export async function createSessionSandbox(
         },
     }
 
-    sandboxCache.set(sessionId, { handle, installedSkills, projectState })
+    sandboxCache.set(sessionId, { handle, installedSkills, skillActions, projectState })
 
     return handle
 }

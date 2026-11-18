@@ -7,6 +7,7 @@ import { postgresClient } from "@SRC/postgres/client";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
 import { resolveSandboxProjectId } from "@EE/invoke-skills/project-sync";
 import { createRunSkillActionTool } from "@EE/invoke-skills/skill-actions/tool";
+import { declarationFromBytes, type PinnedSkillActions } from "@EE/invoke-skills/skill-actions/load";
 import { promises as fsp } from "node:fs";
 import os from "node:os";
 import { join as pathJoin } from "node:path";
@@ -710,11 +711,21 @@ actions:
 `;
   let root: string;
   let sessionDir: string;
+  let pins: Map<string, PinnedSkillActions>;
 
+  // What the sandbox pins when it downloads a skill (create-sandbox installSkill): the
+  // declaration comes from the downloaded bytes, the session copy is only for the scripts.
   const skillFiles = async (name: string, files: Record<string, string>) => {
     const dir = pathJoin(sessionDir, "skills", name);
     await fsp.mkdir(dir, { recursive: true });
     for (const [file, content] of Object.entries(files)) await fsp.writeFile(pathJoin(dir, file), content);
+    const bytes = files["actions.yaml"];
+    pins.set(name, {
+      skillId: name,
+      name,
+      version: undefined as never, // the skills below carry no current_version
+      declaration: declarationFromBytes(bytes === undefined ? undefined : Buffer.from(bytes)),
+    });
   };
 
   const agentWith = (extra: Record<string, unknown> = {}) =>
@@ -748,7 +759,10 @@ actions:
     root = await fsp.mkdtemp(pathJoin(os.tmpdir(), "convert-skill-actions-"));
     sessionDir = pathJoin(root, "session");
     await fsp.mkdir(pathJoin(sessionDir, "skills"), { recursive: true });
-    (createSessionSandbox as jest.Mock).mockReset().mockResolvedValue({ tools: {}, sessionDir, runCommand: jest.fn() });
+    pins = new Map();
+    (createSessionSandbox as jest.Mock)
+      .mockReset()
+      .mockResolvedValue({ tools: {}, sessionDir, runCommand: jest.fn(), skillActions: pins });
     (resolveSandboxProjectId as jest.Mock).mockReset().mockResolvedValue(null);
     createMock.mockClear();
     auditMock.mockClear();
@@ -778,6 +792,14 @@ actions:
     expect(auditMock).toHaveBeenCalledTimes(1);
     expect(auditMock.mock.calls[0][1].tool.id).toBe("run_skill_action");
     expect(auditMock.mock.calls[0][1].input).toEqual({ skill: "zzz", action: "export" });
+  });
+
+  it("an actions.yaml present only in the session copy registers nothing", async () => {
+    await skillFiles("a", { "SKILL.md": "---\nname: a\n---\n" });
+    await fsp.writeFile(pathJoin(sessionDir, "skills", "a", "actions.yaml"), ACTIONS);
+    const tools = await convert();
+    expect(tools.run_skill_action).toBeUndefined();
+    expect(createMock).not.toHaveBeenCalled();
   });
 
   it("a broken actions.yaml alone still registers the tool, so the agent can report it", async () => {
