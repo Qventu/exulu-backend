@@ -25,7 +25,7 @@ jest.mock("@SRC/exulu/system-dependencies.ts", () => ({ getNpmGlobalRoot: jest.f
 jest.mock("@SRC/utils/python-setup.ts", () => ({ getPythonVenvPath: () => undefined }));
 
 import { existsSync } from "node:fs";
-import { mkdir, readFile, symlink } from "node:fs/promises";
+import { mkdir, readdir, readFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 
 type CreateSandboxModule = typeof import("./create-sandbox");
@@ -60,7 +60,7 @@ async function loadOn(platform: string) {
     mod = await import("./create-sandbox");
   });
   uppy.listS3ObjectsByPrefix.mockImplementation(async (prefix: string) =>
-    [...store.keys()].filter((k) => k.startsWith(prefix)).map((key) => ({ key })),
+    [...store.keys()].filter((k) => k.startsWith(prefix)).map((key) => ({ key, size: store.get(key)!.length })),
   );
   uppy.getS3ObjectBytes.mockImplementation(async (key: string) => {
     const bytes = store.get(key);
@@ -218,5 +218,73 @@ describe("the platform still writes skill folders", () => {
     put(1, { "SKILL.md": "# v1 reloaded" });
     expect(await mod.refreshSessionSkills(id, [skill(1)], config)).toEqual({ refreshed: 1, sandbox: true });
     expect(await readFile(join(h.sessionDir, "skills", "demo", "SKILL.md"), "utf8")).toBe("# v1 reloaded");
+  });
+});
+
+describe("session files from storage never land in skills/", () => {
+  const SCRIPT = "print('v1')\n";
+  const sessionKey = (id: string, rel: string) => `user_7/sessions/${id}/${rel}`;
+  // Each would land in skills/ (the case variants only on a case-insensitive file system).
+  const planted = ["skills/demo/run.py", "skills/demo/new.py", "./skills/demo/dot.py", "a/../skills/demo/up.py", "SKILLS/demo/run.py", "Skills/demo/case.py", "skills"];
+  const plant = (id: string) => {
+    for (const rel of planted) store.set(sessionKey(id, rel), Buffer.from("print('evil, longer than the real script')\n"));
+    store.set(sessionKey(id, "note.txt"), Buffer.from("hello"));
+  };
+  const expectSkillIntact = async (h: Handle) => {
+    expect(await readFile(join(h.sessionDir, "skills", "demo", "run.py"), "utf8")).toBe(SCRIPT);
+    expect((await readdir(join(h.sessionDir, "skills", "demo"))).sort()).toEqual(["SKILL.md", "run.py"]);
+    expect(await readdir(join(h.sessionDir, "skills"))).toEqual(["demo"]);
+  };
+
+  it("cold start: planted keys are skipped (and logged), a normal session file is restored", async () => {
+    const { mod } = await loadOn("darwin");
+    const id = sid();
+    put(1, { "SKILL.md": "# demo", "run.py": SCRIPT });
+    plant(id);
+    const h = await mod.createSessionSandbox(id, [skill(1)], config, 7, undefined, { projectId: null });
+    handles.push(h);
+    await expectSkillIntact(h);
+    expect(await readFile(join(h.sessionDir, "note.txt"), "utf8")).toBe("hello");
+    const logged = (console.warn as jest.Mock).mock.calls.map((c) => String(c[0]));
+    expect(logged.some((l) => l.includes(sessionKey(id, "skills/demo/run.py")) && l.includes("skills/"))).toBe(true);
+    expect(logged.join("\n")).not.toContain("evil");
+  });
+
+  it("restart (directory on disk, sizes differ): planted keys are still skipped", async () => {
+    const first = await loadOn("darwin");
+    const id = sid();
+    put(1, { "SKILL.md": "# demo", "run.py": SCRIPT });
+    const h1 = await first.mod.createSessionSandbox(id, [skill(1)], config, 7, undefined, { projectId: null });
+    handles.push(h1);
+    plant(id);
+    Object.defineProperty(process, "platform", realPlatform);
+    // A fresh module = a restarted process: empty cache, the session dir survives.
+    const second = await loadOn("darwin");
+    const h2 = await second.mod.createSessionSandbox(id, [skill(1)], config, 7, undefined, { projectId: null });
+    handles.push(h2);
+    expect(h2).not.toBe(h1);
+    await expectSkillIntact(h2);
+    expect(await readFile(join(h2.sessionDir, "note.txt"), "utf8")).toBe("hello");
+  });
+
+  it("downloadKeyIntoSandbox reports a planted key as not written and still writes a normal one", async () => {
+    const { mod } = await loadOn("darwin");
+    const id = sid();
+    put(1, { "SKILL.md": "# demo", "run.py": SCRIPT });
+    const h = await mod.createSessionSandbox(id, [skill(1)], config, 7, undefined, { projectId: null });
+    handles.push(h);
+    plant(id);
+    // On a case-sensitive file system SKILLS/ is simply another folder.
+    const caseInsensitive = existsSync(join(h.sessionDir, "SKILLS"));
+    const caseVariant = (r: string) => /^S(KILLS|kills)\//.test(r);
+    for (const rel of planted.filter((r) => caseInsensitive || !caseVariant(r))) {
+      expect(await mod.downloadKeyIntoSandbox({ sessionId: id, userId: 7, fullS3Key: sessionKey(id, rel), config })).toEqual({
+        written: false,
+      });
+    }
+    await expectSkillIntact(h);
+    const ok = await mod.downloadKeyIntoSandbox({ sessionId: id, userId: 7, fullS3Key: sessionKey(id, "note.txt"), config });
+    expect(ok.written).toBe(true);
+    expect(await readFile(join(h.sessionDir, "note.txt"), "utf8")).toBe("hello");
   });
 });

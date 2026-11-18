@@ -452,6 +452,17 @@ function resolveSessionPath(inputPath: string, sessionDir: string): string {
     return resolved
 }
 
+/**
+ * Whether a session file from storage would land in skills/ (real-path judgement:
+ * `.`/`..` segments, links and, on a case-insensitive file system, case variants all
+ * resolve to the real folder). Logs the key, never the content, when it does.
+ */
+async function landsInSkills(sessionDir: string, localPath: string, key: string): Promise<boolean> {
+    if (!(await landsInside(sessionDir, localPath, 'skills'))) return false
+    console.warn(`[SKILLS] Not writing session file ${key} into the session: it lands in skills/, which only a saved skill version fills.`)
+    return true
+}
+
 async function restoreArtifactsFromS3(
     sessionDir: string,
     sessionId: string,
@@ -492,6 +503,9 @@ async function restoreArtifactsFromS3(
         if (opts.skipProjectDir && relativePath.split('/')[0] === PROJECT_DIR) continue
 
         const localPath = join(sessionDir, relativePath)
+        // skills/ changes only from a skill's saved version (installSkill), never from a
+        // session file: a key there would replace a script a later speaker runs.
+        if (await landsInSkills(sessionDir, localPath, obj.key)) continue
         if (opts.onlyMissing) {
             let localSize: number | undefined
             try {
@@ -510,7 +524,7 @@ async function restoreArtifactsFromS3(
             // bash-produced files). Reading as utf-8 would corrupt these.
             const bytes = await getS3ObjectBytes(obj.key, config)
             // Never writeFile into the agent-writable tree: it would follow links.
-            await writeFileInside(sessionDir, relativePath, bytes)
+            await writeFileInside(sessionDir, relativePath, bytes, { notUnder: 'skills' })
         } catch (err) {
             console.error(
                 `[SKILLS] Failed to restore artifact ${obj.key} -> ${localPath}; continuing.`,
@@ -558,10 +572,12 @@ export async function downloadKeyIntoSandbox(opts: {
     }
     const relativePath = fullS3Key.slice(idx + userPrefix.length)
     if (!relativePath) return { written: false } // directory marker
+    // Never into skills/ (see restoreArtifactsFromS3).
+    if (await landsInSkills(sessionDir, join(sessionDir, relativePath), fullS3Key)) return { written: false }
 
     const bytes = await getS3ObjectBytes(fullS3Key, config)
     // Refuses ".." in the key suffix and never writes through an agent-planted link.
-    const localPath = await writeFileInside(sessionDir, relativePath, bytes)
+    const localPath = await writeFileInside(sessionDir, relativePath, bytes, { notUnder: 'skills' })
 
     return { written: true, localPath }
 }

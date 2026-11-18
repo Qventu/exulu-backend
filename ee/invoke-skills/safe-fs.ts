@@ -151,12 +151,24 @@ async function ensureDirInside(sessionDir: string, segments: string[]): Promise<
  * exclusive temp file in the same directory which is then renamed over the
  * destination: rename replaces a link planted at the destination instead of
  * writing through it. Returns the absolute destination path.
+ *
+ * `opts.notUnder` (a session-relative directory, e.g. "skills"): refuse when the
+ * destination really lands there (landsInside), checked again after the parents
+ * exist, so a parent swapped for a link in between is caught too.
  */
-export async function writeFileInside(sessionDir: string, relativePath: string, bytes: Buffer | string): Promise<string> {
+export async function writeFileInside(
+    sessionDir: string,
+    relativePath: string,
+    bytes: Buffer | string,
+    opts: { notUnder?: string } = {},
+): Promise<string> {
     const segments = safeSegments(relativePath)
     const name = segments[segments.length - 1]!
     const parent = await ensureDirInside(sessionDir, segments.slice(0, -1))
     const destination = join(parent, name)
+    if (opts.notUnder !== undefined && (await landsInside(sessionDir, destination, opts.notUnder))) {
+        throw new UnsafeSessionPathError(`Refusing to write ${destination}: it lands in ${opts.notUnder}/.`)
+    }
     const temp = join(parent, `.exulu-write-${randomBytes(8).toString('hex')}`)
     // 'wx' = O_CREAT | O_EXCL: never opens an existing entry (link or not).
     await writeFile(temp, bytes, { flag: 'wx' })
