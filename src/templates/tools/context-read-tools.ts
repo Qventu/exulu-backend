@@ -251,7 +251,7 @@ const projectRow = (
   return out;
 };
 
-const clampLimit = (raw: unknown): number => {
+const clampLimit = (raw: unknown, max: number = FIND_MAX_LIMIT): number => {
   // A numeric STRING is accepted here as well as by the schema's coercion: a
   // model that sends "10" means 10, and silently reading that as "no limit
   // given" is the kind of quiet disagreement this module refuses elsewhere
@@ -261,7 +261,7 @@ const clampLimit = (raw: unknown): number => {
       ? Math.floor(Number(raw))
       : Number.NaN;
   if (!Number.isFinite(asNumber) || asNumber <= 0) return FIND_DEFAULT_LIMIT;
-  return Math.min(asNumber, FIND_MAX_LIMIT);
+  return Math.min(asNumber, max);
 };
 
 /**
@@ -439,6 +439,161 @@ export const checkItemReadAccess = async (
   return !!grant;
 };
 
+export type ReadFailure = { ok: false; message: string };
+
+type Caller = { user?: User; req?: any };
+
+/**
+ * Reads one item as data. The body of the `get_<ctx>_item` tool, shared so a
+ * caller that wants the item as data (skill actions) goes through the same
+ * guest rule, field projection and access gate. Missing and unreadable fail
+ * with the same message, so this cannot be used to probe for rows.
+ */
+export const readContextItem = async (
+  context: ExuluContext,
+  args: { id?: string; external_id?: string; fields?: string[] },
+  caller: Caller,
+  deps: ReadToolDeps = {},
+): Promise<{ ok: true; item: Record<string, unknown> } | ReadFailure> => {
+  const { user } = caller;
+  const NOT_FOUND = itemNotFoundMessage(context, "read");
+  const checkAccess = deps.checkAccess ?? checkItemReadAccess;
+  const readable = readableContextFields(context);
+  // Guest, or the public agent surface — which is a guest surface even for
+  // a signed-in visitor (see public-surface.ts; the page renders without
+  // any knowledge affordances, and the backend must agree). Same sentence
+  // as a missing row: a guest learns nothing about what exists.
+  if (treatAsGuest(caller.req, user)) {
+    return { ok: false, message: NOT_FOUND };
+  }
+  if (!args.id && !args.external_id) {
+    return { ok: false, message: "Provide the id or external_id of the item to read." };
+  }
+  const selection = resolveFields(readable, args.fields, context.name);
+  if ("error" in selection) {
+    return { ok: false, message: selection.error };
+  }
+  try {
+    const record = await context.getItem({
+      item: { id: args.id, external_id: args.external_id },
+    });
+    if (!record?.id) {
+      return { ok: false, message: NOT_FOUND };
+    }
+    if (!(await checkAccess(context, record, user))) {
+      return { ok: false, message: NOT_FOUND };
+    }
+    const explicit = Array.isArray(args.fields) && args.fields.length > 0;
+    return { ok: true, item: projectRow(record, selection.fields, explicit) };
+  } catch (error) {
+    console.error(`[EXULU] Error reading item in context ${context.id}`, error);
+    return {
+      ok: false,
+      message: `Failed to read the item in "${context.name}": ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+};
+
+type FindResult =
+  | { ok: true; items: Record<string, unknown>[]; limit: number; truncated: boolean }
+  | ReadFailure;
+
+const runFind = async (
+  context: ExuluContext,
+  args: { where?: Record<string, any>; limit?: number; fields?: string[]; maxLimit?: number },
+  caller: Caller,
+  probeTruncation: boolean,
+): Promise<FindResult> => {
+  const { user } = caller;
+  const readable = readableContextFields(context);
+  const filterable = readable.filter((field) => !field.isFile);
+  const findDefaults = readable.filter((field) => field.findDefault);
+  const limit = clampLimit(args.limit, args.maxLimit ?? FIND_MAX_LIMIT);
+  // Guest, or the public agent surface (see readContextItem): nothing is
+  // readable, and saying so as an empty result keeps the tool from reporting
+  // on what exists.
+  if (treatAsGuest(caller.req, user)) {
+    return { ok: true, items: [], limit, truncated: false };
+  }
+  const requested = Array.isArray(args.fields) && args.fields.length > 0 ? args.fields : undefined;
+  const selection = resolveFields(requested ? readable : findDefaults, requested, context.name);
+  if ("error" in selection) {
+    return { ok: false, message: selection.error };
+  }
+  const where =
+    args.where && typeof args.where === "object" && !Array.isArray(args.where)
+      ? (args.where as Record<string, any>)
+      : undefined;
+  if (where && Object.keys(where).length > 0) {
+    const whereError = validateWhere(filterable, where, context.name);
+    if (whereError) {
+      return { ok: false, message: whereError };
+    }
+  }
+  try {
+    // One filter chokepoint: the `where` goes into getItems as a single
+    // filter object and applyFilters compiles it. This never builds SQL of
+    // its own — it only translates the model-facing field names into the
+    // columns applyFilters expects.
+    const rows = await context.getItems({
+      filters: where && Object.keys(where).length > 0 ? [whereByColumn(filterable, where)] : [],
+      fields: selectList(selection.fields),
+      user,
+      // A user's role can be the bare id string as well as an object;
+      // `user.role?.id` on a string silently yields undefined, which knex
+      // then refuses as an undefined binding (fix round 1, F3).
+      role: typeof user!.role === "string" ? user!.role : user!.role?.id,
+      // One extra row tells "exactly limit match" from "more match".
+      limit: probeTruncation ? limit + 1 : limit,
+    });
+    const truncated = probeTruncation && rows.length > limit;
+    return { ok: true, items: truncated ? rows.slice(0, limit) : rows, limit, truncated };
+  } catch (error) {
+    // A refused json filter path is the CALLER's to fix: it comes back as a
+    // normal result carrying the full four-part message (which names the
+    // paths the schema does define), not as a thrown error that ends the turn.
+    if (error instanceof UnknownFilterPathError) {
+      console.warn(
+        `[EXULU] find_${contextToolSegment(context)}_items refused an unknown json filter path:`,
+        error.message,
+      );
+      // The error names the COLUMN it rejected (applyFilters only ever saw
+      // columns). The model only knows the field by its own name, so the
+      // message is rebuilt in that name — otherwise the one message whose
+      // whole job is "fix your filter" names something the model never
+      // wrote (final wave, Minor 7).
+      const field = filterable.find((candidate) => candidate.column === error.field);
+      return {
+        ok: false,
+        message:
+          field && field.name !== error.field
+            ? new UnknownFilterPathError(field.name, error.offendingPaths, error.validPaths).message
+            : error.message,
+      };
+    }
+    console.error(`[EXULU] Error finding items in context ${context.id}`, error);
+    return {
+      ok: false,
+      message: `Failed to find items in "${context.name}": ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+};
+
+/**
+ * Finds items as data. Fetches `limit + 1` rows to report `truncated`, and
+ * returns at most `limit`. `maxLimit` raises the cap above FIND_MAX_LIMIT for
+ * a caller that can take more than a model can read.
+ */
+export const findContextItems = (
+  context: ExuluContext,
+  args: { where?: Record<string, any>; limit?: number; fields?: string[]; maxLimit?: number },
+  caller: Caller,
+): Promise<FindResult> => runFind(context, args, caller, true);
+
 export const createContextReadTools = (
   context: ExuluContext,
   deps: ReadToolDeps = {},
@@ -450,8 +605,6 @@ export const createContextReadTools = (
   // is not a column the table definition even knows under this name.
   const filterable = readable.filter((field) => !field.isFile);
   const findDefaults = readable.filter((field) => field.findDefault);
-  const NOT_FOUND = itemNotFoundMessage(context, "read");
-  const checkAccess = deps.checkAccess ?? checkItemReadAccess;
 
   const fieldsInput = (defaults: string) =>
     z
@@ -481,43 +634,13 @@ export const createContextReadTools = (
     config: [],
     needsApproval: false,
     execute: async (params: any) => {
-      const { user } = params;
-      // Guest, or the public agent surface — which is a guest surface even for
-      // a signed-in visitor (see public-surface.ts; the page renders without
-      // any knowledge affordances, and the backend must agree). Same sentence
-      // as a missing row: a guest learns nothing about what exists.
-      if (treatAsGuest(params.req, user)) {
-        return { result: NOT_FOUND };
-      }
-      if (!params.id && !params.external_id) {
-        return { result: "Provide the id or external_id of the item to read." };
-      }
-      const selection = resolveFields(readable, params.fields, context.name);
-      if ("error" in selection) {
-        return { result: selection.error };
-      }
-      try {
-        const record = await context.getItem({
-          item: { id: params.id, external_id: params.external_id },
-        });
-        if (!record?.id) {
-          return { result: NOT_FOUND };
-        }
-        if (!(await checkAccess(context, record, user))) {
-          return { result: NOT_FOUND };
-        }
-        const explicit = Array.isArray(params.fields) && params.fields.length > 0;
-        return {
-          result: `Item: ${JSON.stringify(projectRow(record, selection.fields, explicit))}`,
-        };
-      } catch (error) {
-        console.error(`[EXULU] Error reading item in context ${context.id}`, error);
-        return {
-          result: `Failed to read the item in "${context.name}": ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        };
-      }
+      const outcome = await readContextItem(
+        context,
+        { id: params.id, external_id: params.external_id, fields: params.fields },
+        { user: params.user, req: params.req },
+        deps,
+      );
+      return { result: outcome.ok ? `Item: ${JSON.stringify(outcome.item)}` : outcome.message };
     },
   });
 
@@ -546,73 +669,16 @@ export const createContextReadTools = (
     config: [],
     needsApproval: false,
     execute: async (params: any) => {
-      const { user } = params;
-      const limit = clampLimit(params.limit);
-      // Guest, or the public agent surface (see the get tool above): nothing
-      // is readable, and saying so as an empty result keeps the tool from
-      // reporting on what exists.
-      if (treatAsGuest(params.req, user)) {
-        return { result: "Found 0 item(s): []" };
-      }
-      const requested = Array.isArray(params.fields) && params.fields.length > 0 ? params.fields : undefined;
-      const selection = resolveFields(requested ? readable : findDefaults, requested, context.name);
-      if ("error" in selection) {
-        return { result: selection.error };
-      }
-      const where =
-        params.where && typeof params.where === "object" && !Array.isArray(params.where)
-          ? (params.where as Record<string, any>)
-          : undefined;
-      if (where && Object.keys(where).length > 0) {
-        const whereError = validateWhere(filterable, where, context.name);
-        if (whereError) {
-          return { result: whereError };
-        }
-      }
-      try {
-        // One filter chokepoint: the `where` goes into getItems as a single
-        // filter object and applyFilters compiles it. This tool never builds
-        // SQL of its own — it only translates the model-facing field names
-        // into the columns applyFilters expects.
-        const items = await context.getItems({
-          filters:
-            where && Object.keys(where).length > 0 ? [whereByColumn(filterable, where)] : [],
-          fields: selectList(selection.fields),
-          user,
-          // A user's role can be the bare id string as well as an object;
-          // `user.role?.id` on a string silently yields undefined, which knex
-          // then refuses as an undefined binding (fix round 1, F3).
-          role: typeof user.role === "string" ? user.role : user.role?.id,
-          limit,
-        });
-        return { result: `Found ${items.length} item(s): ${JSON.stringify(items)}` };
-      } catch (error) {
-        // A refused json filter path is the CALLER's to fix: it comes back as
-        // a normal result carrying the full four-part message (which names
-        // the paths the schema does define), not as a thrown error that ends
-        // the turn.
-        if (error instanceof UnknownFilterPathError) {
-          console.warn(`[EXULU] ${findTool.id} refused an unknown json filter path:`, error.message);
-          // The error names the COLUMN it rejected (applyFilters only ever saw
-          // columns). The model only knows the field by its own name, so the
-          // message is rebuilt in that name — otherwise the one message whose
-          // whole job is "fix your filter" names something the model never
-          // wrote (final wave, Minor 7).
-          const field = filterable.find((candidate) => candidate.column === error.field);
-          return {
-            result:
-              field && field.name !== error.field
-                ? new UnknownFilterPathError(field.name, error.offendingPaths, error.validPaths).message
-                : error.message,
-          };
-        }
-        console.error(`[EXULU] Error finding items in context ${context.id}`, error);
-        return {
-          result: `Failed to find items in "${context.name}": ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        };
-      }
+      // No probe row and no maxLimit: the tool requests and returns at most
+      // its clamped limit, exactly as before.
+      const outcome = await runFind(
+        context,
+        { where: params.where, limit: params.limit, fields: params.fields },
+        { user: params.user, req: params.req },
+        false,
+      );
+      if (!outcome.ok) return { result: outcome.message };
+      return { result: `Found ${outcome.items.length} item(s): ${JSON.stringify(outcome.items)}` };
     },
   });
 
