@@ -6,6 +6,7 @@ import { join } from "path";
 jest.mock("@EE/entitlements", () => ({ checkLicense: () => ({ rbac: true }) }));
 
 import { canAccessSkill, ensureSkillRead, ensureSkillWrite } from "./skill-access";
+import { checkRecordAccess } from "@SRC/utils/check-record-access";
 
 const fakeDb = (rbacRows: any[] = []) => {
   const fn: any = () => fn;
@@ -51,6 +52,76 @@ describe("canAccessSkill", () => {
     const skill = { id: "s3", rights_mode: "public", created_by: 42 };
     const user = { id: 7, type: "user" } as any;
     expect(await canAccessSkill(db, skill, "read", user)).toBe(true);
+  });
+});
+
+/**
+ * Decision 2026-11-18: for skills, "public" grants read and use, not write.
+ * A public skill is writable by its creator, a super admin, an admin-mode API
+ * key and anyone with an explicit RBAC write grant (user / role / team).
+ */
+describe("canAccessSkill on a public skill", () => {
+  const user = (over: any = {}) => ({ id: 7, type: "user", super_admin: false, ...over }) as any;
+  const publicSkill = () => ({ id: nextId(), rights_mode: "public", created_by: 1 });
+
+  it("lets a signed-in non-owner without a grant read it", async () => {
+    expect(await canAccessSkill(fakeDb(), publicSkill(), "read", user())).toBe(true);
+  });
+  it("refuses a signed-in non-owner without a grant writing it", async () => {
+    expect(await canAccessSkill(fakeDb(), publicSkill(), "write", user())).toBe(false);
+  });
+  it("refuses a non-owner whose explicit grant is read only", async () => {
+    const rows = [{ access_type: "User", user_id: 7, rights: "read" }];
+    expect(await canAccessSkill(fakeDb(rows), publicSkill(), "write", user())).toBe(false);
+  });
+  it("refuses a caller without a user", async () => {
+    expect(await canAccessSkill(fakeDb(), publicSkill(), "write", undefined)).toBe(false);
+  });
+  it("lets the creator write it (numeric and text created_by)", async () => {
+    expect(await canAccessSkill(fakeDb(), { ...publicSkill(), created_by: 7 }, "write", user())).toBe(true);
+    expect(await canAccessSkill(fakeDb(), { ...publicSkill(), created_by: "7" }, "write", user())).toBe(true);
+  });
+  it("lets a super admin write it", async () => {
+    expect(await canAccessSkill(fakeDb(), publicSkill(), "write", user({ super_admin: true }))).toBe(true);
+  });
+  it("lets an admin-mode API key write it", async () => {
+    expect(await canAccessSkill(fakeDb(), publicSkill(), "write", user({ type: "api", scope_mode: null }))).toBe(true);
+    expect(await canAccessSkill(fakeDb(), publicSkill(), "write", user({ type: "api", scope_mode: "admin" }))).toBe(true);
+  });
+  it("lets a user with an explicit RBAC write grant write it (user id stored as text)", async () => {
+    const rows = [{ access_type: "User", user_id: "7", rights: "write" }];
+    expect(await canAccessSkill(fakeDb(rows), publicSkill(), "write", user())).toBe(true);
+  });
+  it("lets a role with an explicit RBAC write grant write it", async () => {
+    const rows = [{ access_type: "Role", role_id: "r1", rights: "write" }];
+    expect(await canAccessSkill(fakeDb(rows), publicSkill(), "write", user({ role: { id: "r1" } }))).toBe(true);
+    expect(await canAccessSkill(fakeDb(rows), publicSkill(), "write", user({ role: { id: "r2" } }))).toBe(false);
+  });
+  it("lets a team with an explicit RBAC write grant write it", async () => {
+    const rows = [{ access_type: "Team", team_id: "t1", rights: "write" }];
+    expect(await canAccessSkill(fakeDb(rows), publicSkill(), "write", user({ team: { id: "t1" } }))).toBe(true);
+    expect(await canAccessSkill(fakeDb(rows), publicSkill(), "write", user({ team: { id: "t2" } }))).toBe(false);
+  });
+  it("lets an agents-scoped API key read it but not write it", async () => {
+    const skill = publicSkill();
+    const key = user({ type: "api", scope_mode: "agents", agent_ids: [skill.id] });
+    expect(await canAccessSkill(fakeDb(), skill, "read", key)).toBe(true);
+    expect(await canAccessSkill(fakeDb(), skill, "write", key)).toBe(false);
+  });
+  it("answers the same on a repeated call (no stale access cache from a read)", async () => {
+    const skill = publicSkill();
+    expect(await canAccessSkill(fakeDb(), skill, "read", user())).toBe(true);
+    expect(await canAccessSkill(fakeDb(), skill, "write", user())).toBe(false);
+    expect(await canAccessSkill(fakeDb(), skill, "write", user())).toBe(false);
+  });
+});
+
+describe("the public-write change is skill-scoped", () => {
+  it("checkRecordAccess still lets any signed-in user write a public NON-skill record", async () => {
+    const user = { id: 7, type: "user", super_admin: false } as any;
+    const agent = { id: `agent-${nextId()}`, rights_mode: "public", created_by: 1 };
+    expect(await checkRecordAccess(agent, "write", user)).toBe(true);
+    expect(await checkRecordAccess(agent, "read", user)).toBe(true);
   });
 });
 
@@ -138,10 +209,12 @@ describe("ensureSkillWrite", () => {
     expect(res.status).not.toHaveBeenCalled();
   });
 
-  it("keeps a public skill writable by any signed-in user (the existing skill rule)", async () => {
+  it("refuses a signed-in non-owner writing a public skill with 403 (public grants read, not write)", async () => {
     const res = fakeRes();
     const skill = { id: nextId(), rights_mode: "public", created_by: 1 };
-    expect(await ensureSkillWrite(fakeDb(), skill, user(), res)).toBe(true);
+    expect(await ensureSkillWrite(fakeDb(), skill, user(), res)).toBe(false);
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.body).toEqual({ detail: "You don't have write access to this skill." });
   });
 
   it("refuses a user who is not the creator of a private skill with 403", async () => {

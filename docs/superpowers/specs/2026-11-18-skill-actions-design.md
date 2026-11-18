@@ -355,6 +355,16 @@ the skill.
   is the first step of replacing a skill's content and calls
   `ensureSkillWrite`; the create dialog runs `skillsCreateOne` first, so the
   creator passes.
+- Write. For skills, "public" grants read and use, not write. A public
+  skill is writable by its creator, a super admin, an admin-mode API key
+  and anyone with an explicit RBAC write grant (user, role, team) —
+  `canWritePublicSkill` in `src/skills/skill-access.ts`, which
+  `canAccessSkill(..., "write")` applies before `checkRecordAccess`. That
+  covers the REST write routes (`ensureSkillWrite`), the registry publish
+  route and `skill_update`; the generic GraphQL write guard calls the same
+  function for the `skills` table only. `checkRecordAccess` and every other
+  record type keep "public satisfies any right". Read access, `rights_mode`
+  values and RBAC rows are unchanged; no migration.
 
 ## Testing
 
