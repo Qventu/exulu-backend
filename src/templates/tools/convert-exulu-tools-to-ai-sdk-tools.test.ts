@@ -802,6 +802,12 @@ actions:
     expect(createMock).not.toHaveBeenCalled();
   });
 
+  it("a skill with a path-like name and no actions.yaml registers nothing", async () => {
+    await skillFiles("a/b", { "SKILL.md": "---\nname: a/b\n---\n" });
+    const tools = await convert({ skills: ["a/b"] });
+    expect(tools.run_skill_action).toBeUndefined();
+  });
+
   it("a broken actions.yaml alone still registers the tool, so the agent can report it", async () => {
     await skillFiles("a", { "actions.yaml": "version: 2\n" });
     const tools = await convert();

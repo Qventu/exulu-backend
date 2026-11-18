@@ -164,3 +164,10 @@ test("an invalid downloaded actions.yaml yields a problem entry and no actions",
   expect(loaded.bySkill).toEqual({});
   expect(loaded.problems).toEqual([{ skill: "exporter", error: expect.any(String) }]);
 });
+
+test("a skill with a path-like name and no actions.yaml yields no problem", async () => {
+  const odd: SkillRef = { id: "s-odd", name: "Vertrieb/Angebote", s3folder: "skills/s-odd", current_version: 1 };
+  put(odd, 1, { "SKILL.md": "# odd" });
+  const h = await turn([odd]);
+  expect(actionsOf(h, [odd])).toEqual({ bySkill: {}, problems: [] });
+});

@@ -59,7 +59,8 @@ const isPlainName = (name: unknown): name is string =>
  * The actions of this turn's enabled skills, from the pinned declarations only
  * (never from disk). A skill contributes only when its pin matches its current
  * id, name and version; anything else (not downloaded on this sandbox, a sync
- * that failed, a renamed skill) contributes nothing.
+ * that failed, a renamed skill) contributes nothing. A skill without an
+ * actions.yaml contributes nothing and no problem, whatever its name.
  */
 export const loadSkillActions = (
   sessionDir: string,
@@ -70,12 +71,15 @@ export const loadSkillActions = (
   for (const skill of skills) {
     const pin = pinned.get(skill.id);
     if (!pin || pin.version !== skill.current_version || pin.name !== skill.name) continue;
-    if (!isPlainName(skill.name)) {
-      result.problems.push({ skill: String(skill.name), error: "invalid skill name" });
-      continue;
-    }
     const { declaration } = pin;
     if (declaration.kind === "none") continue;
+    if (!isPlainName(skill.name)) {
+      result.problems.push({
+        skill: String(skill.name),
+        error: "the skill's name contains a path separator or \"..\", so it cannot declare actions",
+      });
+      continue;
+    }
     if (declaration.kind === "problem") {
       result.problems.push({ skill: skill.name, error: declaration.error });
       continue;

@@ -57,6 +57,13 @@ describe("loadSkillActions", () => {
     expect(text).toContain('skill "b": actions.yaml ignored —');
   });
 
+  it("a skill with a path-like name and no actions.yaml contributes nothing and no problem", () => {
+    const names = ["../x", "a/b", "a\\b", ".."];
+    const pinned = new Map(names.map((n) => pin(n, undefined)));
+    const loaded = loadSkillActions(sessionDir, names.map((n) => skill(n)), pinned);
+    expect(loaded).toEqual({ bySkill: {}, problems: [] });
+  });
+
   it("a skill with a path-like name that ships actions.yaml gets a problem, never actions", () => {
     const pinned = new Map([pin("a/b", VALID)]);
     const loaded = loadSkillActions(sessionDir, [skill("a/b")], pinned);
