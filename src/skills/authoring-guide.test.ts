@@ -64,6 +64,7 @@ test("the items default-field sentence matches the code's find defaults", () => 
   } as any);
   const sentence = /an `items` input returns only ([^;.]*)/.exec(SKILL_AUTHORING_GUIDE)![1]!;
   const defaults = fields.filter((f) => f.findDefault).map((f) => f.name);
+  expect(defaults).toEqual(expect.arrayContaining(["id", "updatedAt", "name", "description", "tags", "external_id"]));
   for (const name of defaults.filter((n) => n !== "price")) expect(sentence).toContain(name);
   expect(sentence).toContain("non-file fields");
   for (const excluded of ["createdAt", "rights_mode", "archived", "doc"]) {
@@ -73,11 +74,16 @@ test("the items default-field sentence matches the code's find defaults", () => 
   // `item` without fields returns every readable field, which includes what items leaves out
   expect(fields.map((f) => f.name)).toEqual(expect.arrayContaining(["createdAt", "rights_mode", "archived", "doc"]));
   const item = /an `item` input without it returns every readable field, including ([^;]*);/.exec(SKILL_AUTHORING_GUIDE)![1]!;
-  for (const name of ["createdAt", "rights_mode", "archived"]) expect(item).toContain(name);
+  for (const name of ["createdAt", "rights_mode", "archived", "file fields"]) expect(item).toContain(name);
 });
 
-test("the contains restriction is pinned to the source", () => {
+test("the operator restrictions are pinned to the source", () => {
   const source = readFileSync(join(__dirname, "../templates/tools/context-read-tools.ts"), "utf8");
   expect(source).toContain('CONTAINS_UNSUPPORTED_TYPES = new Set(["number", "boolean", "date", "uuid"])');
-  expect(SKILL_AUTHORING_GUIDE).toContain("`contains` is refused on number, boolean, date and uuid fields");
+  expect(source).toContain('RANGE_UNSUPPORTED_TYPES = new Set(["json", "uuid"])');
+  const fn = /const operatorsForField = [\s\S]*?\n  \}\);/.exec(source)![0];
+  expect(fn).toContain('operator === "contains"');
+  expect(fn).toContain('operator === "gte" || operator === "lte"');
+  expect(fn.match(/operator ===/g)).toHaveLength(3); // no further restricted operator
+  expect(SKILL_AUTHORING_GUIDE).toContain("`contains` is refused on number, boolean, date and uuid fields, `gte` and `lte` on json and uuid fields");
 });
