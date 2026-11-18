@@ -1,4 +1,4 @@
-import { isIgnoredArtifactPath, capArtifacts, needsDownload } from "./artifact-filter";
+import { isActionInputsPath, ACTION_INPUTS_DIR, isIgnoredArtifactPath, capArtifacts, needsDownload } from "./artifact-filter";
 
 describe("isIgnoredArtifactPath — dependency and cache trees are not session artifacts", () => {
   it("ignores virtualenvs, node_modules, caches and VCS metadata at any depth", () => {
@@ -49,5 +49,15 @@ describe("needsDownload — resyncing S3 session files into a live sandbox", () 
     expect(needsDownload(undefined, 100)).toBe(true);
     expect(needsDownload(99, 100)).toBe(true);
     expect(needsDownload(100, 100)).toBe(false);
+  });
+});
+
+describe("isActionInputsPath", () => {
+  it("matches only paths with an action inputs segment", () => {
+    expect(ACTION_INPUTS_DIR).toBe(".exulu-inputs");
+    expect(isActionInputsPath(".exulu-inputs/r1/x.json")).toBe(true);
+    expect(isActionInputsPath("a/.exulu-inputs/x")).toBe(true);
+    expect(isActionInputsPath("venv/x.py")).toBe(false);
+    expect(isActionInputsPath("out/x-inputs.json")).toBe(false);
   });
 });

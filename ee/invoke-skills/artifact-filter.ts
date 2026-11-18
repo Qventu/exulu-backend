@@ -5,6 +5,9 @@
  * turned one tool result into ~1.8M characters and killed the session's context window.
  */
 
+/** Directory (under the session dir) where the platform writes skill action inputs. */
+export const ACTION_INPUTS_DIR = ".exulu-inputs";
+
 const IGNORED_SEGMENTS = new Set([
   "venv",
   ".venv",
@@ -19,12 +22,17 @@ const IGNORED_SEGMENTS = new Set([
   ".mypy_cache",
   ".ipynb_checkpoints",
   // Input files the platform writes for a skill action run; never session artifacts.
-  ".exulu-inputs",
+  ACTION_INPUTS_DIR,
 ]);
 
 /** True when any path segment is a dependency, cache or VCS directory. */
 export function isIgnoredArtifactPath(relativePath: string): boolean {
   return relativePath.split(/[\\/]+/).some((segment) => IGNORED_SEGMENTS.has(segment));
+}
+
+/** True when any path segment is the action inputs directory (never mirrored, restored or listed). */
+export function isActionInputsPath(relativePath: string): boolean {
+  return relativePath.split(/[\\/]+/).some((segment) => segment === ACTION_INPUTS_DIR);
 }
 
 export const DEFAULT_ARTIFACT_CAP = 50;

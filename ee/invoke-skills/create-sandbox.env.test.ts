@@ -27,6 +27,12 @@ test("the writeFile spawn is given an explicit env, never the inherited one", ()
   const spawnCalls = [...src.matchAll(/spawn\(\s*['"]\/bin\/bash['"][\s\S]{0,200}?\)/g)];
   expect(spawnCalls.length).toBeGreaterThan(0);
   for (const call of spawnCalls) {
-    expect(call[0]).toContain("env: sandboxedExecEnv");
+    // Either the session env itself, or the per-call merge built from it (runCommand).
+    expect(call[0]).toMatch(/env: (sandboxedExecEnv|callEnv)\b/);
+    if (call[0].includes("env: callEnv")) {
+      expect(src).toContain("const callEnv = { ...sandboxedExecEnv");
+    }
   }
+  // runCommand's spawn is the security-relevant one: it must stay asserted here.
+  expect(spawnCalls.some((c) => c[0].includes("env: callEnv"))).toBe(true);
 });

@@ -21,7 +21,8 @@ jest.mock("@SRC/postgres/client", () => ({
 jest.mock("@SRC/exulu/system-dependencies.ts", () => ({ getNpmGlobalRoot: jest.fn(async () => null) }));
 jest.mock("@SRC/utils/python-setup.ts", () => ({ getPythonVenvPath: () => undefined }));
 
-import { realpathSync } from "node:fs";
+import { realpathSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { uploadFile } from "@SRC/uppy/index.ts";
 import { createSessionSandbox, type SessionSandboxHandle } from "./create-sandbox";
 
@@ -56,7 +57,7 @@ test("extraEnv reaches the command and does not leak into the next call", async 
 
 test("the command runs in the session directory and reports its exit code", async () => {
   const r = await handle.runCommand("pwd; echo oops >&2; exit 3");
-  expect(r.stdout.trim().split("\n")[0]).toBe(realpathSync(handle.sessionDir));
+  expect(realpathSync(r.stdout.trim().split("\n")[0]!)).toBe(realpathSync(handle.sessionDir));
   expect(r.stderr).toContain("oops");
   expect(r.exitCode).toBe(3);
   expect(r.timedOut).toBe(false);
@@ -90,4 +91,37 @@ test("the bash tool still returns stdout, exit code and the artifacts block", as
   expect(r.stdout).toContain("[exulu-artifacts]");
   expect(r.stdout).toContain("made.txt: https://signed");
   expect(r.artifactsOmitted).toBeUndefined();
+});
+
+test("pwd prints the session dir", async () => {
+  const r = await handle.runCommand("pwd");
+  expect(realpathSync(r.stdout.trim())).toBe(realpathSync(handle.sessionDir));
+});
+
+test("the command gets the constructed env, not the backend's process.env (declared secret is stripped)", async () => {
+  process.env.POSTGRES_DB_PASSWORD = "leaked";
+  try {
+    const h2 = await createSessionSandbox(
+      `jest-runcmd-env-${process.pid}-${Math.random().toString(36).slice(2)}`,
+      [], config, 7, undefined, { projectId: null },
+    );
+    try {
+      const r = await h2.runCommand('printf %s "${POSTGRES_DB_PASSWORD:-none}"');
+      expect(r.stdout.startsWith("none")).toBe(true);
+    } finally {
+      await h2.cleanup();
+    }
+  } finally {
+    delete process.env.POSTGRES_DB_PASSWORD;
+  }
+});
+
+test("writeFile into .exulu-inputs is neither uploaded nor given a URL, but exists on disk", async () => {
+  const r: any = await (handle.tools.writeFile as any).execute(
+    { path: ".exulu-inputs/r1/x.json", content: "{}" },
+    { toolCallId: "t", messages: [] },
+  );
+  expect(upload).not.toHaveBeenCalled();
+  expect(r.url).toBeUndefined();
+  expect(existsSync(join(handle.sessionDir, ".exulu-inputs/r1/x.json"))).toBe(true);
 });

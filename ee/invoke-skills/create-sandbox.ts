@@ -8,7 +8,7 @@ import { join, dirname, resolve, relative, posix } from 'node:path'
 import { exec, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { listS3ObjectsByPrefix, getS3ObjectBytes, uploadFile, getPresignedUrl, type S3FileObject } from '@SRC/uppy/index.ts'
-import { isIgnoredArtifactPath, capArtifacts, needsDownload } from './artifact-filter'
+import { isIgnoredArtifactPath, isActionInputsPath, capArtifacts, needsDownload } from './artifact-filter'
 import { getNpmGlobalRoot } from '@SRC/exulu/system-dependencies.ts'
 import { buildSkillEnv } from './skill-env'
 import { isBinaryDocumentPath, looksBinary, binaryReadHint } from './binary-file-guard'
@@ -331,6 +331,7 @@ export function isArtifactPath(
     const resolved = resolve(absPath)
     const rel = relative(sessionDir, resolved)
     if (!rel || rel.startsWith('..')) return false
+    if (isActionInputsPath(rel)) return false
     const first = rel.split('/')[0]
     if (opts.hasProject && first === PROJECT_DIR) return false
     return first !== 'skills'
@@ -1284,12 +1285,13 @@ export async function createSessionSandbox(
     // optional timeout. The env is a fresh object per call; sandboxedExecEnv is never mutated.
     const runCommand: SessionSandboxHandle['runCommand'] = (command, options = {}) =>
         runWithArtifactMirroring(async () => {
-            const wrapped = await wrapIfNeeded(command)
+            // cd inside the wrapped command too (as bash-tool does): the spawn cwd alone
+            // cannot be relied on under a real sandbox wrapper. sessionDir is platform-controlled.
+            const wrapped = await wrapIfNeeded(`cd ${shellQuote(sessionDir)} && ${command}`)
             const callEnv = { ...sandboxedExecEnv, ...(options.extraEnv ?? {}) }
-            const shell = '/bin/bash'
             return await new Promise<{ stdout: string; stderr: string; exitCode: number; timedOut: boolean }>((resolvePromise) => {
                 // detached: own process group, so a timeout can kill the whole tree.
-                const child = spawn(shell, ['-c', wrapped], { env: callEnv, cwd: sessionDir, detached: true })
+                const child = spawn('/bin/bash', ['-c', wrapped], { env: callEnv, cwd: sessionDir, detached: true })
                 let stdout = ''
                 let stderr = ''
                 let timedOut = false
