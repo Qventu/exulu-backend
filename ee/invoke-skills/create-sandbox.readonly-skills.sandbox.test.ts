@@ -24,16 +24,22 @@ jest.mock("@anthropic-ai/sandbox-runtime", () => {
     } finally {
       await SandboxManager.reset();
     }`;
+  // Bounded: a stalled initialize/reset in the child must not block jest's event loop
+  // (a sync call that never returns would outlive every jest timeout).
+  const wrapReal = (command: string, policy: unknown): string =>
+    execFileSync(process.execPath, ["--input-type=module", "-e", child, runtime, command, JSON.stringify(policy)], {
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
   return {
+    // Test-only export: the skip check below wraps with exactly this path.
+    __wrapReal: wrapReal,
     SandboxManager: {
       initialize: jest.fn(async () => {}),
       reset: jest.fn(async () => {}),
-      wrapWithSandbox: jest.fn(async (command: string, _shell: unknown, policy: unknown) =>
-        execFileSync(process.execPath, ["--input-type=module", "-e", child, runtime, command, JSON.stringify(policy)], {
-          encoding: "utf8",
-          maxBuffer: 32 * 1024 * 1024,
-        }),
-      ),
+      wrapWithSandbox: jest.fn(async (command: string, _shell: unknown, policy: unknown) => wrapReal(command, policy)),
     },
   };
 });
@@ -50,20 +56,37 @@ jest.mock("@SRC/exulu/system-dependencies.ts", () => ({ getNpmGlobalRoot: jest.f
 jest.mock("@SRC/utils/python-setup.ts", () => ({ getPythonVenvPath: () => undefined }));
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as runtimeMock from "@anthropic-ai/sandbox-runtime";
 import { getS3ObjectBytes, listS3ObjectsByPrefix, uploadFile } from "@SRC/uppy/index.ts";
 import { createSessionSandbox, refreshSessionSkills, type SessionSandboxHandle } from "./create-sandbox";
 
-const unavailable = (() => {
+/**
+ * The real sandbox is in effect only where (a) createSessionSandbox's probe picks the
+ * sandboxed path — on macOS it always does (create-sandbox.ts probeSandboxSupport) —
+ * and (b) the real runtime can wrap AND run a command with a session-shaped policy
+ * (fails e.g. inside another seatbelt sandbox). Both are checked here, bounded in time;
+ * beforeEach additionally confirms each handle really wraps (inEffect).
+ */
+const unavailable = ((): string | null => {
   if (process.platform !== "darwin") return `platform is ${process.platform}; this test drives seatbelt (macOS)`;
+  const dir = mkdtempSync(join(tmpdir(), "exulu-sbx-probe-"));
   try {
-    execFileSync("sandbox-exec", ["-p", "(version 1)(allow default)", "/usr/bin/true"]);
+    const sess = realpathSync(dir);
+    const wrapped = (runtimeMock as any).__wrapReal(`cd '${sess}' && echo ok > probe.txt && cat probe.txt`, {
+      network: { allowedDomains: [], deniedDomains: [] },
+      filesystem: { denyRead: ["~"], allowRead: [sess], allowWrite: [sess], denyWrite: [] },
+    }) as string;
+    const out = execFileSync("/bin/bash", ["-c", wrapped], { encoding: "utf8", timeout: 30_000, killSignal: "SIGKILL" });
+    return out.trim() === "ok" ? null : `the real sandbox ran but printed ${JSON.stringify(out)}`;
   } catch (err) {
-    return `sandbox-exec is not usable here: ${(err as Error).message}`;
+    return `the real sandbox cannot wrap and run a command here: ${(err as Error).message.split("\n")[0]}`;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
-  return null;
 })();
 const hasPython = (() => {
   try {
@@ -90,21 +113,29 @@ const put = (v: number, files: Record<string, string>) => {
 (unavailable ? describe.skip : describe)("skills/ under the real macOS sandbox", () => {
   jest.setTimeout(60_000);
   let id: string;
-  let h: SessionSandboxHandle;
-  const skillFile = (name: string) => join(h.sessionDir, "skills", "demo", name);
+  let h: SessionSandboxHandle | undefined;
+  let wraps = false;
+  /** False (and logged) when this handle runs commands unwrapped: the test then checks nothing. */
+  const inEffect = () => {
+    if (!wraps) console.info("[create-sandbox.readonly-skills.sandbox.test] skipped: the session runs in degraded mode here");
+    return wraps;
+  };
+  const skillFile = (name: string) => join(h!.sessionDir, "skills", "demo", name);
   const bash = (command: string) =>
-    (h.tools.bash as any).execute({ command }, { toolCallId: "t", messages: [] }) as Promise<{
+    (h!.tools.bash as any).execute({ command }, { toolCallId: "t", messages: [] }) as Promise<{
       stdout: string;
       stderr: string;
       exitCode: number;
     }>;
   const expectSkillIntact = async () => {
     expect(await readFile(skillFile("helper.py"), "utf8")).toBe(V1["helper.py"]);
-    expect((await readdir(join(h.sessionDir, "skills", "demo"))).sort()).toEqual(["SKILL.md", "helper.py", "run.py"]);
-    expect(await readdir(join(h.sessionDir, "skills"))).toEqual(["demo"]);
+    expect((await readdir(join(h!.sessionDir, "skills", "demo"))).sort()).toEqual(["SKILL.md", "helper.py", "run.py"]);
+    expect(await readdir(join(h!.sessionDir, "skills"))).toEqual(["demo"]);
   };
 
   beforeEach(async () => {
+    h = undefined;
+    wraps = false;
     store = new Map();
     (listS3ObjectsByPrefix as jest.Mock).mockImplementation(async (prefix: string) =>
       [...store.keys()].filter((k) => k.startsWith(prefix)).map((key) => ({ key })),
@@ -116,13 +147,15 @@ const put = (v: number, files: Record<string, string>) => {
     put(1, V1);
     id = `jest-roskills-real-${process.pid}-${Math.random().toString(36).slice(2)}`;
     h = await createSessionSandbox(id, [skill(1)], config, 7, undefined, { projectId: null });
+    wraps = (await h.wrapCommand("true")) !== "true";
   });
   afterEach(async () => {
-    await h.cleanup();
+    await h?.cleanup();
     jest.restoreAllMocks();
   });
 
   it("bash: writing, deleting and renaming under skills/ fail; the session dir stays writable", async () => {
+    if (!inEffect()) return;
     const attempts = [
       "echo evil > skills/demo/helper.py",
       "echo evil >> skills/demo/helper.py",
@@ -148,28 +181,31 @@ const put = (v: number, files: Record<string, string>) => {
     const ok = await bash("mkdir -p out && echo fine > out/a.txt && cat out/a.txt");
     expect(ok.exitCode).toBe(0);
     expect(ok.stdout).toContain("fine");
-    expect(await readFile(join(h.sessionDir, "out", "a.txt"), "utf8")).toBe("fine\n");
+    expect(await readFile(join(h!.sessionDir, "out", "a.txt"), "utf8")).toBe("fine\n");
   });
 
   it("runCommand (skill actions): the same writes fail, a session write succeeds", async () => {
+    if (!inEffect()) return;
     for (const command of ["echo evil > skills/demo/helper.py", "rm skills/demo/helper.py", "mv skills/demo x"]) {
-      const r = await h.runCommand(command);
+      const r = await h!.runCommand(command);
       expect({ command, exitCode: r.exitCode === 0 ? 0 : "failed" }).toEqual({ command, exitCode: "failed" });
       await expectSkillIntact();
     }
-    const ok = await h.runCommand("echo y > result.txt");
+    const ok = await h!.runCommand("echo y > result.txt");
     expect(ok.exitCode).toBe(0);
     expect(ok.artifacts.map((a) => a.relativePath)).toEqual(["result.txt"]);
   });
 
   (hasPython ? it : it.skip)("a Python script importing a module next to it still runs (no __pycache__ written)", async () => {
-    const r = await h.runCommand('cd "skills/demo" && python3 run.py');
+    if (!inEffect()) return;
+    const r = await h!.runCommand('cd "skills/demo" && python3 run.py');
     expect(r.stderr).toBe("");
     expect(r.stdout).toContain("ran 1");
     expect(existsSync(skillFile("__pycache__"))).toBe(false);
   });
 
   it("a new version still replaces the files, and the reload route still re-downloads", async () => {
+    if (!inEffect()) return;
     expect((await bash("echo evil > skills/demo/SKILL.md")).exitCode).not.toBe(0);
     put(2, { "SKILL.md": "# v2" });
     await createSessionSandbox(id, [skill(2)], config, 7, undefined, { projectId: null });
