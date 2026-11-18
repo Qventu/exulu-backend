@@ -22,7 +22,7 @@ export async function canAccessSkill(
 /**
  * Write guard for the routes that change an existing skill's files or version
  * (/skills/:skillId/sign, /file DELETE, /version, /rename, /init,
- * /init-from-upload). Same rule as the registry publish route and the
+ * /init-from-upload, /upload-sign). Same rule as the registry publish route and the
  * skill_update tool: canAccessSkill(..., "write"). Answers 403 itself when the
  * caller may not write, so a route only has to `return` on false.
  */
@@ -34,6 +34,26 @@ export async function ensureSkillWrite(
 ): Promise<boolean> {
   if (await canAccessSkill(db, skill, "write", user)) return true;
   res.status(403).json({ detail: "You don't have write access to this skill." });
+  return false;
+}
+
+/**
+ * Read guard for the routes that list, download, read or diff an existing
+ * skill's files (/skills/:skillId/files, /download, /file, /diff). Same rule
+ * as the registry routes and skill_read: canAccessSkill(..., "read"). A
+ * caller who may not read the skill gets exactly the answer an unknown id
+ * gets (404 "Skill not found."), as the GraphQL skill queries and skill_read
+ * do, so a private skill's id cannot be probed for existence. Call it after
+ * the route's own 404 and before any S3 call or presigned URL.
+ */
+export async function ensureSkillRead(
+  db: any,
+  skill: any,
+  user: User | undefined,
+  res: { status: (code: number) => { json: (body: unknown) => unknown } },
+): Promise<boolean> {
+  if (await canAccessSkill(db, skill, "read", user)) return true;
+  res.status(404).json({ detail: "Skill not found." });
   return false;
 }
 

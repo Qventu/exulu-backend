@@ -336,6 +336,26 @@ capabilities and it can `umount` or remount any of the sandbox's mounts,
 this one and the read-only root alike: that is a limit of the whole
 sandbox, not of this rule.
 
+### 11. Who may read and write a skill
+
+Decision (Daniel, 2026-11-18): asked whether (a) public skills being
+writable by every signed-in user and (b) skill read routes without an
+access check should be fixed in this branch, he answered "Yes": both, here,
+with (a) scoped to skills only. An action's declaration and its scripts
+come from the saved skill version, so whoever can write that version
+controls what the action reads and runs for every user of every agent with
+the skill.
+
+- Read routes. `GET /skills/:skillId/files`, `/download`, `/file` and
+  `/diff` call `ensureSkillRead` (`canAccessSkill(..., "read")`) after the
+  row load and before any S3 call or presigned URL. A caller who may not
+  read the skill gets the same 404 "Skill not found." an unknown id gets,
+  as the GraphQL skill queries (filtered, so `null`) and `skill_read`
+  ("No skill … that you can read.") do. `POST /skills/:skillId/upload-sign`
+  is the first step of replacing a skill's content and calls
+  `ensureSkillWrite`; the create dialog runs `skillsCreateOne` first, so the
+  creator passes.
+
 ## Testing
 
 - Schema: valid file; each invalid shape (unknown key, bad name, wrong

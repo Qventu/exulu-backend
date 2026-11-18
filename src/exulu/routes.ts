@@ -221,6 +221,7 @@ import {
 import {
   resolveSkillByName,
   canAccessSkill,
+  ensureSkillRead,
   ensureSkillWrite,
   filterReadableSkills,
 } from "../skills/skill-access.ts";
@@ -4047,6 +4048,7 @@ export const createExpressRoutes = async (
       res.status(404).json({ detail: "Skill not found." });
       return;
     }
+    if (!(await ensureSkillWrite(db, skill, authResult.user, res))) return;
 
     // Per-user staging path. The init-from-upload handler verifies the same
     // user owns the staging key, so users can't trigger extraction of someone
@@ -4200,6 +4202,7 @@ export const createExpressRoutes = async (
       res.status(404).json({ detail: "Skill not found." });
       return;
     }
+    if (!(await ensureSkillRead(db, skill, authResult.user, res))) return;
 
     const version = req.query.version ? Number(req.query.version) : (skill.current_version ?? 1);
     const prefix = `skills/${skillId}/v${version}/`;
@@ -4233,6 +4236,7 @@ export const createExpressRoutes = async (
       res.status(404).json({ detail: "Skill not found." });
       return;
     }
+    if (!(await ensureSkillRead(db, skill, authResult.user, res))) return;
 
     const version = req.query.version
       ? Number(req.query.version)
@@ -4366,6 +4370,7 @@ export const createExpressRoutes = async (
       res.status(404).json({ detail: "Skill not found." });
       return;
     }
+    if (!(await ensureSkillRead(db, skill, authResult.user, res))) return;
 
     const fullKey = config.fileUploads?.s3prefix
       ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/${key}`
@@ -4596,6 +4601,7 @@ export const createExpressRoutes = async (
       res.status(404).json({ detail: "Skill not found." });
       return;
     }
+    if (!(await ensureSkillRead(db, skill, authResult.user, res))) return;
 
     const s3Prefix = config.fileUploads?.s3prefix
       ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/`

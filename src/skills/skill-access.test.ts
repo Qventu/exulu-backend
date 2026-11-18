@@ -5,7 +5,7 @@ import { join } from "path";
 // below need them, so the license is switched on for this file.
 jest.mock("@EE/entitlements", () => ({ checkLicense: () => ({ rbac: true }) }));
 
-import { canAccessSkill, ensureSkillWrite } from "./skill-access";
+import { canAccessSkill, ensureSkillRead, ensureSkillWrite } from "./skill-access";
 
 const fakeDb = (rbacRows: any[] = []) => {
   const fn: any = () => fn;
@@ -51,6 +51,41 @@ describe("canAccessSkill", () => {
     const skill = { id: "s3", rights_mode: "public", created_by: 42 };
     const user = { id: 7, type: "user" } as any;
     expect(await canAccessSkill(db, skill, "read", user)).toBe(true);
+  });
+});
+
+describe("ensureSkillRead", () => {
+  const user = (over: any = {}) => ({ id: 7, type: "user", super_admin: false, ...over }) as any;
+
+  it("lets a reader of a public skill through and sends nothing", async () => {
+    const res = fakeRes();
+    const skill = { id: nextId(), rights_mode: "public", created_by: 1 };
+    expect(await ensureSkillRead(fakeDb(), skill, user(), res)).toBe(true);
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it("lets the creator of a private skill through", async () => {
+    const res = fakeRes();
+    const skill = { id: nextId(), rights_mode: "private", created_by: 7 };
+    expect(await ensureSkillRead(fakeDb(), skill, user(), res)).toBe(true);
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it("lets a user with a read grant through", async () => {
+    const res = fakeRes();
+    const skill = { id: nextId(), rights_mode: "users", created_by: 1 };
+    const rows = [{ access_type: "User", user_id: 7, rights: "read" }];
+    expect(await ensureSkillRead(fakeDb(rows), skill, user(), res)).toBe(true);
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it("answers an unreadable skill exactly like an unknown one (404, the routes' not-found body)", async () => {
+    const res = fakeRes();
+    const skill = { id: nextId(), rights_mode: "private", created_by: 1 };
+    expect(await ensureSkillRead(fakeDb(), skill, user(), res)).toBe(false);
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.body).toEqual({ detail: "Skill not found." });
   });
 });
 
@@ -162,6 +197,8 @@ describe("skill write routes are guarded by ensureSkillWrite", () => {
     "copyS3Object(",
     "listS3ObjectsByPrefix(",
     "getS3ObjectBytes(",
+    "getS3ObjectContent(",
+    "getPresignedUrl(",
     "extractBundleToS3(",
     ".update(",
     ".delete(",
@@ -174,6 +211,7 @@ describe("skill write routes are guarded by ensureSkillWrite", () => {
     ["post", "/skills/:skillId/rename"],
     ["post", "/skills/:skillId/init"],
     ["post", "/skills/:skillId/init-from-upload"],
+    ["post", "/skills/:skillId/upload-sign"],
   ];
 
   it.each(guarded)("%s %s checks write access before any side effect", (method, path) => {
@@ -188,5 +226,60 @@ describe("skill write routes are guarded by ensureSkillWrite", () => {
       const at = body.indexOf(effect);
       if (at !== -1) expect({ path, effect, before: at < guard }).toEqual({ path, effect, before: false });
     }
+  });
+});
+
+/**
+ * Same source-order pinning for the routes that read an existing skill's
+ * files: each calls ensureSkillRead after the skill row is loaded (so an
+ * unknown id still answers 404 as before) and before any S3 call or presigned
+ * URL.
+ */
+describe("skill read routes are guarded by ensureSkillRead", () => {
+  const source = readFileSync(join(__dirname, "../exulu/routes.ts"), "utf8");
+
+  const handlerBody = (method: string, path: string): string => {
+    const start = source.indexOf(`app.${method}("${path}"`);
+    expect(start).toBeGreaterThan(-1);
+    const next = source.indexOf("\n  app.", start + 1);
+    const bodyStart = source.indexOf("\n", start);
+    return source.slice(bodyStart, next === -1 ? undefined : next);
+  };
+
+  const effects = [
+    "listS3ObjectsByPrefix(",
+    "getS3ObjectBytes(",
+    "getS3ObjectContent(",
+    "getPresignedUrl(",
+    "getS3SignedUploadUrl(",
+  ];
+
+  const guarded: [string, string][] = [
+    ["get", "/skills/:skillId/files"],
+    ["get", "/skills/:skillId/download"],
+    ["get", "/skills/:skillId/file"],
+    ["get", "/skills/:skillId/diff"],
+  ];
+
+  it.each(guarded)("%s %s checks read access before any S3 call", (method, path) => {
+    const body = handlerBody(method, path);
+    const guard = body.indexOf("ensureSkillRead(");
+    expect(guard).toBeGreaterThan(-1);
+    const load = body.indexOf('db("skills").where({ id: skillId }).first()');
+    expect(load).toBeGreaterThan(-1);
+    expect(load).toBeLessThan(guard);
+    // the existing 404 for an unknown id stays in front of the guard
+    const notFound = body.indexOf('res.status(404).json({ detail: "Skill not found." })');
+    expect(notFound).toBeGreaterThan(-1);
+    expect(notFound).toBeLessThan(guard);
+    let effectsSeen = 0;
+    for (const effect of effects) {
+      const at = body.indexOf(effect);
+      if (at !== -1) {
+        effectsSeen += 1;
+        expect({ path, effect, before: at < guard }).toEqual({ path, effect, before: false });
+      }
+    }
+    expect(effectsSeen).toBeGreaterThan(0);
   });
 });
