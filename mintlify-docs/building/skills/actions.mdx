@@ -10,7 +10,7 @@ An action is a named script in a skill that the agent can start with a single to
 
 Use an action when a script has to process platform data, for example to build a document from a contract and its amendments. For a small lookup you do not need one: the agent reads the item with its read tools (`get_<context>_item` and `find_<context>_items`) and reasons over the result itself.
 
-A script in the sandbox cannot fetch platform data on its own, because the sandbox has no network access and no credentials. An action is the way to give it that data.
+A script in the sandbox cannot fetch platform data on its own: the sandbox is configured to allow no network access, and the platform's secrets are removed from its environment. An action is the way to give it that data.
 
 ## A minimal example
 
