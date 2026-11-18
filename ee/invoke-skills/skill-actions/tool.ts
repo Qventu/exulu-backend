@@ -6,6 +6,7 @@ import type { ExuluAgentToolConfig } from "@EXULU_TYPES/models/exulu-agent-tool-
 import type { ExuluContext } from "@SRC/exulu/context";
 import { ExuluTool } from "@SRC/exulu/tool";
 import { findContextItems, readContextItem } from "@SRC/templates/tools/context-read-tools";
+import { contextToolSegment } from "@SRC/templates/tools/context-write-tools";
 import { ACTION_INPUTS_DIR } from "../artifact-filter";
 import type { SessionSandboxHandle } from "../create-sandbox";
 import { ensureRealDirectory, removeEntryInside, writeFileInside } from "../safe-fs";
@@ -298,7 +299,10 @@ const disabledSearchContexts = (searchConfig: ExuluAgentToolConfig | undefined):
  * Principle (design anti-goal): an action must not read a context the agent
  * could not read with its own tools in the same turn. So the set is exactly
  * what the agent's own tools reach:
- *  1. the contexts of its knowledge_base_editor config (they carry get/find tools),
+ *  1. the contexts of its knowledge_base_editor config (they carry get/find
+ *     tools), unless BOTH of a context's read tools (get_<ctx>_item,
+ *     find_<ctx>_items) are disabled this turn — then its own tools cannot
+ *     read it, whatever its write tools may do,
  *  2. when its configured agentic_context_search is active this turn: every
  *     context except those whose `knowledge_bases` entry has enabled === false,
  *  3. otherwise, when a project search was built for this turn: the contexts of
@@ -318,12 +322,19 @@ export const deriveConnectedContextIds = (args: {
   memoryContextId?: string;
   /** Contexts of the agent's knowledge_base_editor config (already limited to existing contexts). */
   editorContextIds: string[];
+  /** Tool ids disabled for this turn; an editor context whose two read tools are both in it does not count. */
+  disabledToolIds?: ReadonlySet<string>;
   /** Present when the agent's own agentic_context_search is active this turn; its raw agent tool config entry. */
   agenticSearch?: { config?: ExuluAgentToolConfig };
   /** Contexts handed to the project search, when that search (not the agent's own) was built. */
   projectSearchContextIds?: string[];
 }): Set<string> => {
-  const ids = new Set<string>(args.editorContextIds);
+  const ids = new Set<string>();
+  for (const id of args.editorContextIds) {
+    const segment = contextToolSegment({ id });
+    const readToolIds = [`get_${segment}_item`, `find_${segment}_items`];
+    if (readToolIds.some((toolId) => !args.disabledToolIds?.has(toolId))) ids.add(id);
+  }
   if (args.agenticSearch) {
     const disabled = disabledSearchContexts(args.agenticSearch.config);
     if (disabled) {

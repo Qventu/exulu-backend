@@ -805,6 +805,23 @@ actions:
     expect([...createMock.mock.calls[0][0].connectedContextIds]).toEqual(["docs"]);
   });
 
+  it("connected contexts: an editor context whose read tools are disabled this turn does not count", async () => {
+    await skillFiles("a", { "actions.yaml": ACTIONS });
+    const editorTools = [
+      {
+        id: "knowledge_base_editor",
+        type: "function",
+        config: [{ name: "knowledge_bases", type: "json", variable: JSON.stringify({ docs: { update: true } }) }],
+      },
+    ];
+    await convert({
+      agent: agentWith({ tools: editorTools }),
+      configs: editorTools,
+      disabledTools: ["get_docs_item", "find_docs_items"],
+    });
+    expect([...createMock.mock.calls[0][0].connectedContextIds]).toEqual([]);
+  });
+
   it("connected contexts: the agent's search minus disabled knowledge bases and memory", async () => {
     await skillFiles("a", { "actions.yaml": ACTIONS });
     const searchConfig = {

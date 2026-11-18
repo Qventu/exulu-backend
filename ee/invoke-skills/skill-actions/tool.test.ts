@@ -372,6 +372,40 @@ describe("deriveConnectedContextIds", () => {
       ["docs"],
     ],
     ["no agentic search, no project, no editor → empty", { contextIds: ALL, editorContextIds: [] }, []],
+    [
+      "editor context with both read tools disabled → excluded",
+      {
+        contextIds: ALL,
+        editorContextIds: ["pitches", "rows"],
+        disabledToolIds: new Set(["get_pitches_item", "find_pitches_items"]),
+      },
+      ["rows"],
+    ],
+    [
+      "editor context with both read tools disabled is still included when the search reaches it",
+      {
+        contextIds: ALL,
+        memoryContextId: "mem",
+        editorContextIds: ["pitches"],
+        disabledToolIds: new Set(["get_pitches_item", "find_pitches_items"]),
+        agenticSearch: {},
+      },
+      ["docs", "pitches", "rows"],
+    ],
+    [
+      "editor context with only one read tool disabled → included",
+      { contextIds: ALL, editorContextIds: ["pitches"], disabledToolIds: new Set(["find_pitches_items"]) },
+      ["pitches"],
+    ],
+    [
+      "editor context with write tools disabled but read tools enabled → included",
+      {
+        contextIds: ALL,
+        editorContextIds: ["pitches"],
+        disabledToolIds: new Set(["create_pitches_item", "update_pitches_item"]),
+      },
+      ["pitches"],
+    ],
   ])("%s", (_name, args, expected) => {
     expect(sorted(deriveConnectedContextIds(args))).toEqual(expected);
   });

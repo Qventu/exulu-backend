@@ -487,6 +487,7 @@ export const convertExuluToolsToAiSdkTools = async (
             editorContextIds: editor.enabled
               ? Object.keys(editor.knowledgeBases).filter((id) => contextIds.includes(id))
               : [],
+            disabledToolIds: disabled,
             agenticSearch: agenticSearchActive
               ? { config: configs?.find((c) => c.id === "agentic_context_search") }
               : undefined,
