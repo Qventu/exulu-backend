@@ -2,7 +2,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { ACTION_INPUT_TYPES, ACTIONS_FILE, parseActionsYaml } from "@EE/invoke-skills/skill-actions/schema";
+import { readableContextFields } from "@SRC/templates/tools/context-read-tools";
 import { SKILL_AUTHORING_GUIDE } from "./authoring-guide";
+
+jest.mock("@SRC/postgres/client", () => ({ postgresClient: jest.fn() }));
+jest.mock("@SRC/utils/check-record-access", () => ({ checkRecordAccess: jest.fn() }));
 
 test.each([
   ...ACTION_INPUT_TYPES,
@@ -50,4 +54,30 @@ test("the guide states archived items, field defaults and every filter operator"
   const yaml = SKILL_AUTHORING_GUIDE.match(/```yaml\n([\s\S]*?)```/)![1]!;
   expect(yaml).toContain("archived");
   expect(parseActionsYaml(yaml).ok).toBe(true);
+});
+
+test("the items default-field sentence matches the code's find defaults", () => {
+  const fields = readableContextFields({
+    id: "c",
+    name: "c",
+    fields: [{ name: "price", type: "number" }, { name: "doc", type: "file" }],
+  } as any);
+  const sentence = /an `items` input returns only ([^;.]*)/.exec(SKILL_AUTHORING_GUIDE)![1]!;
+  const defaults = fields.filter((f) => f.findDefault).map((f) => f.name);
+  for (const name of defaults.filter((n) => n !== "price")) expect(sentence).toContain(name);
+  expect(sentence).toContain("non-file fields");
+  for (const excluded of ["createdAt", "rights_mode", "archived", "doc"]) {
+    expect(defaults).not.toContain(excluded);
+    expect(sentence).not.toContain(excluded);
+  }
+  // `item` without fields returns every readable field, which includes what items leaves out
+  expect(fields.map((f) => f.name)).toEqual(expect.arrayContaining(["createdAt", "rights_mode", "archived", "doc"]));
+  const item = /an `item` input without it returns every readable field, including ([^;]*);/.exec(SKILL_AUTHORING_GUIDE)![1]!;
+  for (const name of ["createdAt", "rights_mode", "archived"]) expect(item).toContain(name);
+});
+
+test("the contains restriction is pinned to the source", () => {
+  const source = readFileSync(join(__dirname, "../templates/tools/context-read-tools.ts"), "utf8");
+  expect(source).toContain('CONTAINS_UNSUPPORTED_TYPES = new Set(["number", "boolean", "date", "uuid"])');
+  expect(SKILL_AUTHORING_GUIDE).toContain("`contains` is refused on number, boolean, date and uuid fields");
 });
