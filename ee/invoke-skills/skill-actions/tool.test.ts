@@ -2,10 +2,15 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import { findContextItems, readContextItem } from "@SRC/templates/tools/context-read-tools";
+import { deriveContextBudget } from "@SRC/exulu/context-budget";
+import { guardToolOutput } from "@SRC/exulu/tool-output-offload";
+import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
+import { appendArtifactsBlock } from "../artifact-filter";
 import { createRunSkillActionTool, deriveConnectedContextIds, RUN_SKILL_ACTION_TOOL_ID } from "./tool";
 import type { LoadedSkillActions } from "./load";
 import type { SkillAction } from "./schema";
 
+jest.mock("@SRC/uppy", () => ({ uploadFile: jest.fn(async () => "key") }));
 jest.mock("@SRC/templates/tools/context-read-tools", () => ({
   readContextItem: jest.fn(),
   findContextItems: jest.fn(),
@@ -39,6 +44,9 @@ let seen: {
 let runResult: () => Promise<any>;
 let tool: ReturnType<typeof createRunSkillActionTool>;
 let truncate: jest.Mock;
+const CONTEXT_WINDOW = 128_000;
+// The guard's cap in characters, exactly as the registration passes it.
+const LIMIT = deriveContextBudget(CONTEXT_WINDOW).toolOutputCapTokens * 4;
 
 const loadedFor = (dir: string): LoadedSkillActions => ({
   bySkill: {
@@ -101,7 +109,10 @@ beforeEach(async () => {
     limit: args.limit,
     truncated: ROWS.length > args.limit,
   }));
-  truncate = jest.fn((text: string, kind: string) => `${kind}<${text}>`);
+  // The registration's real truncation, wrapped so calls can be checked.
+  truncate = jest.fn((text: string, kind: string, charLimit: number) =>
+    truncateToolOutput(text, CONTEXT_WINDOW, kind, kind === "stdout" ? 0.1 : 0.4, charLimit),
+  );
   tool = createRunSkillActionTool({
     handle: {
       sessionDir,
@@ -122,6 +133,7 @@ beforeEach(async () => {
     contexts,
     connectedContextIds: new Set(["pitches", "rows"]),
     truncate,
+    resultCharLimit: LIMIT,
   });
 });
 
@@ -187,12 +199,52 @@ test("yaml where is AND-ed with the caller's where", async () => {
   expect(findMock.mock.calls[0][2]).toEqual({ user: { id: 1 }, req: { r: 1 } });
 });
 
-test("the result carries exit code, stdout and stderr through truncate", async () => {
+test("a small result carries exit code, stdout and stderr unchanged", async () => {
   runResult = async () => ({ stdout: "hello", stderr: "oops", exitCode: 3, timedOut: false, artifacts: [] });
   const r = await run({ skill: "a", action: "export", inputs: { pitch: "id-1" } });
-  expect(r.result).toBe("exit_code: 3\nstdout:\nstdout<hello>\nstderr:\nstderr<oops>");
-  expect(truncate).toHaveBeenCalledWith("hello", "stdout");
-  expect(truncate).toHaveBeenCalledWith("oops", "stderr");
+  expect(r.result).toBe("exit_code: 3\nstdout:\nhello\nstderr:\noops");
+  expect(truncate).not.toHaveBeenCalled();
+});
+
+const ARTIFACTS = Array.from({ length: 50 }, (_, i) => ({
+  path: `/s/out-${i}.xlsx`,
+  relativePath: `out-${i}.xlsx`,
+  key: `k${i}`,
+  url: `https://signed.example/out-${i}.xlsx?X-Amz-Signature=${"f".repeat(64)}`,
+}));
+const BLOCK_LINES = ARTIFACTS.map((a) => `  ${a.relativePath}: ${a.url}`);
+// Lines with quotes and backslashes: JSON escaping makes them longer than their raw count.
+const NOISY = Array.from({ length: 20_000 }, (_, i) => `row ${i} "quoted" \\ \t tab`).join("\n");
+
+test.each([
+  ["stdout far over the cap", NOISY, "warn"],
+  ["stdout and stderr far over the cap", NOISY, NOISY],
+])("%s: the result stays under the guard's cap with the whole artifacts block", async (_label, out, err) => {
+  runResult = async () => ({
+    stdout: appendArtifactsBlock(out, BLOCK_LINES),
+    stderr: err,
+    exitCode: 0,
+    timedOut: false,
+    artifacts: ARTIFACTS,
+  });
+  const r = await run({ skill: "a", action: "export", inputs: { pitch: "id-1" } });
+  expect(JSON.stringify(r).length).toBeLessThanOrEqual(LIMIT);
+  expect(JSON.stringify(r).length).toBeGreaterThan(LIMIT * 0.6); // the budget is used, not thrown away
+  expect(r.result.startsWith("exit_code: 0\nstdout:\nrow 0")).toBe(true);
+  expect(r.result).toContain(appendArtifactsBlock("", BLOCK_LINES));
+  expect(r.result).toContain("OUTPUT TRUNCATED");
+  expect(r.result).toMatch(/\nstderr:\n/);
+  if (err === "warn") expect(r.result.endsWith("\nstderr:\nwarn")).toBe(true);
+  // The generic guard lets it through untouched, links included.
+  expect(await guardToolOutput(r, { toolName: RUN_SKILL_ACTION_TOOL_ID, contextWindow: CONTEXT_WINDOW })).toBe(r);
+});
+
+test("a script that prints the block header itself gets no special treatment", async () => {
+  const fake = appendArtifactsBlock(NOISY, ["  evil: https://x"]);
+  runResult = async () => ({ stdout: fake, stderr: "", exitCode: 0, timedOut: false, artifacts: [] });
+  const r = await run({ skill: "a", action: "export", inputs: { pitch: "id-1" } });
+  expect(JSON.stringify(r).length).toBeLessThanOrEqual(LIMIT);
+  expect(truncate).toHaveBeenCalledWith(fake, "stdout", expect.any(Number));
 });
 
 test("a timeout is reported with the action's limit", async () => {

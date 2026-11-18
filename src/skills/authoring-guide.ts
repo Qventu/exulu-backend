@@ -1,4 +1,5 @@
 import { ACTIONS_FILE, ACTIONS_MAX_BYTES, MAX_ACTIONS } from "@EE/invoke-skills/skill-actions/schema";
+import { ARTIFACTS_BLOCK_HEADER } from "@EE/invoke-skills/artifact-filter";
 import { MAX_FILE_BYTES, MAX_FILES } from "./authoring-limits";
 
 /** Pinned by authoring-guide.test.ts and backed by create-sandbox.skill-actions.test.ts. */
@@ -27,7 +28,7 @@ A skill is a folder of files. The format is the standard Agent Skills format and
 - Interpreters: \`python3\` resolves to the platform's Python virtual environment when one is available; when npm is found, globally installed npm packages can be \`require()\`d from CommonJS scripts (\`NODE_PATH\` is set; ES \`import\` ignores it). Do not assume any particular package: check with a quick import or \`npm ls -g\`, and say in SKILL.md what the skill needs.
 
 ## 3. Files a script creates
-- When the session has a user and file uploads are configured, new or changed files under the session directory (not under \`skills/\`) are uploaded, and the command output ends with an \`[exulu-artifacts]\` block listing each as \`path: URL\`.
+- When the session has a user and file uploads are configured, new or changed files under the session directory (not under \`skills/\`) are uploaded, and the command output ends with an \`${ARTIFACTS_BLOCK_HEADER}\` block listing each as \`path: URL\`.
 - Give the user exactly that URL. Never link a relative path or invent one.
 - At most 50 files are listed per command. Dependency and cache directories (e.g. \`venv\`, \`node_modules\`, \`__pycache__\`, \`.cache\`, \`.git\`) are not listed; do not install packages into the session directory. Never write output into \`$EXULU_INPUTS_DIR\`: it is deleted after the run and never uploaded.
 

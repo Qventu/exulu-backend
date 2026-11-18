@@ -7,7 +7,7 @@ import type { ExuluContext } from "@SRC/exulu/context";
 import { ExuluTool } from "@SRC/exulu/tool";
 import { findContextItems, readContextItem } from "@SRC/templates/tools/context-read-tools";
 import { contextToolSegment } from "@SRC/templates/tools/context-write-tools";
-import { ACTION_INPUTS_DIR } from "../artifact-filter";
+import { ACTION_INPUTS_DIR, splitArtifactsBlock } from "../artifact-filter";
 import type { SessionSandboxHandle } from "../create-sandbox";
 import { ensureRealDirectory, removeEntryInside, writeFileInside } from "../safe-fs";
 import { describeActions, type LoadedSkillActions } from "./load";
@@ -45,9 +45,15 @@ export const createRunSkillActionTool = (deps: {
   loaded: LoadedSkillActions;
   contexts: ExuluContext[];
   connectedContextIds: Set<string>;
-  truncate: (text: string, kind: "stdout" | "stderr") => string;
+  /** Cuts `text` to about `charLimit` characters (plus a truncation marker). */
+  truncate: (text: string, kind: "stdout" | "stderr", charLimit: number) => string;
+  /**
+   * The generic tool-output guard's cap in characters (serialized result). The result is
+   * kept under it, so the guard never collapses it to a preview that drops the links.
+   */
+  resultCharLimit: number;
 }): ExuluTool => {
-  const { handle, loaded, contexts, connectedContextIds, truncate } = deps;
+  const { handle, loaded, contexts, connectedContextIds, truncate, resultCharLimit } = deps;
 
   const description =
     "Run a declared action of a skill. The platform reads the knowledge-base items the action needs " +
@@ -240,12 +246,23 @@ export const createRunSkillActionTool = (deps: {
           },
           timeoutMs: action.timeoutSeconds * 1000,
         });
-        const lines = [`exit_code: ${outcome.exitCode}`];
-        if (outcome.timedOut) lines.push(`timed out after ${action.timeoutSeconds}s`);
-        lines.push(...warnings);
-        lines.push(`stdout:\n${truncate(outcome.stdout ?? "", "stdout")}`);
-        lines.push(`stderr:\n${truncate(outcome.stderr ?? "", "stderr")}`);
-        return { result: lines.join("\n") };
+        const fixed = [`exit_code: ${outcome.exitCode}`];
+        if (outcome.timedOut) fixed.push(`timed out after ${action.timeoutSeconds}s`);
+        fixed.push(...warnings);
+        const { output, block } = splitArtifactsBlock(
+          outcome.stdout ?? "",
+          (outcome.artifacts ?? []).some((a) => a.url),
+        );
+        return {
+          result: fitResult({
+            fixed,
+            stdout: output,
+            artifactsBlock: block,
+            stderr: outcome.stderr ?? "",
+            truncate,
+            limit: resultCharLimit,
+          }),
+        };
       } finally {
         await removeEntryInside(sessionDir, runRelative).catch((err) =>
           console.error(`[SKILLS] Could not remove the action inputs directory ${runRelative}:`, err),
@@ -253,6 +270,56 @@ export const createRunSkillActionTool = (deps: {
       }
     },
   });
+};
+
+/** Room left for JSON escaping estimates and rounding below the guard's cap. */
+const RESULT_MARGIN_CHARS = 256;
+const STDERR_SHARE = 0.3;
+
+/**
+ * Assembles the result text so that `{ result }`, serialized as the generic guard does,
+ * stays under `limit`: the fixed lines and the artifacts block are kept whole, only the
+ * script's own stdout and stderr are truncated, against budgets that sum to what is left.
+ * Output that already fits is returned unchanged.
+ */
+export const fitResult = (p: {
+  fixed: string[];
+  stdout: string;
+  artifactsBlock: string;
+  stderr: string;
+  truncate: (text: string, kind: "stdout" | "stderr", charLimit: number) => string;
+  limit: number;
+}): string => {
+  const assemble = (out: string, err: string) =>
+    [...p.fixed, `stdout:\n${out}${p.artifactsBlock}`, `stderr:\n${err}`].join("\n");
+  // Measured as the guard measures: the serialized tool result.
+  const size = (text: string) => JSON.stringify({ result: text }).length;
+  const full = assemble(p.stdout, p.stderr);
+  if (size(full) <= p.limit) return full;
+
+  const room = p.limit - size(assemble("", "")) - RESULT_MARGIN_CHARS;
+  if (room <= 0) return assemble("", ""); // the fixed lines and links alone fill the cap
+  // Split the room; a stream shorter than its share hands the rest to the other one.
+  let errBudget = Math.min(p.stderr.length, Math.floor(room * STDERR_SHARE));
+  let outBudget = Math.min(p.stdout.length, room - errBudget);
+  errBudget = Math.min(p.stderr.length, room - outBudget);
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const out = p.stdout.length <= outBudget ? p.stdout : p.truncate(p.stdout, "stdout", Math.max(1, outBudget));
+    const err = p.stderr.length <= errBudget ? p.stderr : p.truncate(p.stderr, "stderr", Math.max(1, errBudget));
+    const text = assemble(out, err);
+    const over = size(text) - p.limit;
+    if (over <= 0) return text;
+    // Truncation markers and JSON escaping (newlines, quotes) cost more than the raw
+    // count; shrink the budgets of the streams being cut by the overshoot and try again.
+    // A stream that fits whole keeps its budget, so it is never cut for nothing.
+    const outCut = out !== p.stdout;
+    const errCut = err !== p.stderr;
+    const total = (outCut ? outBudget : 0) + (errCut ? errBudget : 0);
+    const scale = Math.max(0, (total - over - RESULT_MARGIN_CHARS) / Math.max(1, total)) * 0.9;
+    if (outCut) outBudget = Math.floor(outBudget * scale);
+    if (errCut) errBudget = Math.floor(errBudget * scale);
+  }
+  return assemble("", "");
 };
 
 /**

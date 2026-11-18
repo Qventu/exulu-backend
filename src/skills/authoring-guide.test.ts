@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { ACTION_INPUT_TYPES, ACTIONS_FILE, parseActionsYaml } from "@EE/invoke-skills/skill-actions/schema";
 import { readableContextFields } from "@SRC/templates/tools/context-read-tools";
+import { ARTIFACTS_BLOCK_HEADER } from "@EE/invoke-skills/artifact-filter";
 import { ACTIONS_EDIT_NO_EFFECT, SKILL_AUTHORING_GUIDE } from "./authoring-guide";
 
 jest.mock("@SRC/postgres/client", () => ({ postgresClient: jest.fn() }));
@@ -17,7 +18,7 @@ test.each([
   "timeout_seconds",
   "EXULU_INPUTS_DIR",
   "EXULU_SKILL_DIR",
-  "[exulu-artifacts]",
+  ARTIFACTS_BLOCK_HEADER,
   "run_skill_action",
   "args.json",
   ACTIONS_FILE,

@@ -1,4 +1,13 @@
-import { isActionInputsPath, ACTION_INPUTS_DIR, isIgnoredArtifactPath, capArtifacts, needsDownload } from "./artifact-filter";
+import {
+  isActionInputsPath,
+  ACTION_INPUTS_DIR,
+  isIgnoredArtifactPath,
+  capArtifacts,
+  needsDownload,
+  appendArtifactsBlock,
+  splitArtifactsBlock,
+  ARTIFACTS_BLOCK_HEADER,
+} from "./artifact-filter";
 
 describe("isIgnoredArtifactPath — dependency and cache trees are not session artifacts", () => {
   it("ignores virtualenvs, node_modules, caches and VCS metadata at any depth", () => {
@@ -59,5 +68,23 @@ describe("isActionInputsPath", () => {
     expect(isActionInputsPath("a/.exulu-inputs/x")).toBe(true);
     expect(isActionInputsPath("venv/x.py")).toBe(false);
     expect(isActionInputsPath("out/x-inputs.json")).toBe(false);
+  });
+});
+
+describe("the [exulu-artifacts] block", () => {
+  it("is appended in the runner's format and split back off exactly", () => {
+    const stdout = appendArtifactsBlock("hello", ["  a.txt: https://x/a"]);
+    expect(stdout).toBe(`hello\n\n${ARTIFACTS_BLOCK_HEADER}\n  a.txt: https://x/a`);
+    expect(splitArtifactsBlock(stdout, true)).toEqual({
+      output: "hello",
+      block: `\n\n${ARTIFACTS_BLOCK_HEADER}\n  a.txt: https://x/a`,
+    });
+  });
+
+  it("leaves stdout alone without entries, and without a real block", () => {
+    expect(appendArtifactsBlock("hello", [])).toBe("hello");
+    const printed = appendArtifactsBlock("hello", ["  fake: https://x"]);
+    expect(splitArtifactsBlock(printed, false)).toEqual({ output: printed, block: "" });
+    expect(splitArtifactsBlock("no block here", true)).toEqual({ output: "no block here", block: "" });
   });
 });

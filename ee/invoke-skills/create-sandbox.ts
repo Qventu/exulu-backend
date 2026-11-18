@@ -8,7 +8,7 @@ import { join, dirname, resolve, relative, posix } from 'node:path'
 import { exec, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { listS3ObjectsByPrefix, getS3ObjectBytes, uploadFile, getPresignedUrl, type S3FileObject } from '@SRC/uppy/index.ts'
-import { isIgnoredArtifactPath, isActionInputsPath, capArtifacts, needsDownload } from './artifact-filter'
+import { isIgnoredArtifactPath, isActionInputsPath, capArtifacts, needsDownload, appendArtifactsBlock } from './artifact-filter'
 import { getNpmGlobalRoot } from '@SRC/exulu/system-dependencies.ts'
 import { buildSkillEnv } from './skill-env'
 import { declarationFromBytes, type PinnedSkillActions } from './skill-actions/load'
@@ -1285,14 +1285,14 @@ export async function createSessionSandbox(
         const { kept, omitted } = capArtifacts(artifacts)
         const withUrls = kept.filter((a) => a.url)
         if (withUrls.length > 0) {
-            const lines = ['', '[exulu-artifacts]']
+            const lines: string[] = []
             for (const a of withUrls) {
                 lines.push(`  ${a.relativePath}: ${a.url}`)
             }
             if (omitted > 0) {
                 lines.push(`  … ${omitted} more file(s) were created and mirrored but are not listed here.`)
             }
-            stdout = `${stdout}\n${lines.join('\n')}`
+            stdout = appendArtifactsBlock(stdout, lines)
         }
 
         return {

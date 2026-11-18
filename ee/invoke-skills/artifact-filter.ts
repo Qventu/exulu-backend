@@ -46,3 +46,30 @@ export function capArtifacts<T>(artifacts: T[], max: number = DEFAULT_ARTIFACT_C
 export function needsDownload(localSize: number | undefined, remoteSize: number): boolean {
   return localSize === undefined || localSize !== remoteSize;
 }
+
+/** Header line of the download-link block the sandbox appends to a command's stdout. */
+export const ARTIFACTS_BLOCK_HEADER = "[exulu-artifacts]";
+
+/**
+ * What the runner puts between the command's own stdout and the block: the block is
+ * `stdout + "\n" + ["", ARTIFACTS_BLOCK_HEADER, ...entries].join("\n")`.
+ */
+const ARTIFACTS_BLOCK_SEPARATOR = `\n\n${ARTIFACTS_BLOCK_HEADER}\n`;
+
+/** Appends the download-link block (the given entry lines) to stdout; unchanged when there are none. */
+export function appendArtifactsBlock(stdout: string, entryLines: string[]): string {
+  if (entryLines.length === 0) return stdout;
+  return `${stdout}${ARTIFACTS_BLOCK_SEPARATOR}${entryLines.join("\n")}`;
+}
+
+/**
+ * Splits a runner stdout into the command's own output and the trailing block appendArtifactsBlock
+ * added. `hasBlock` must say whether the runner appended one (it does iff an artifact has a URL),
+ * so a command that prints the header itself is never mistaken for the block.
+ */
+export function splitArtifactsBlock(stdout: string, hasBlock: boolean): { output: string; block: string } {
+  if (!hasBlock) return { output: stdout, block: "" };
+  const at = stdout.lastIndexOf(ARTIFACTS_BLOCK_SEPARATOR);
+  if (at < 0) return { output: stdout, block: "" };
+  return { output: stdout.slice(0, at), block: stdout.slice(at) };
+}

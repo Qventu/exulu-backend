@@ -498,11 +498,13 @@ export const convertExuluToolsToAiSdkTools = async (
               : undefined,
             projectSearchContextIds,
           }),
-          // Same budget rules as the bash wrapper below.
-          truncate: (text, kind) =>
+          // Same head/tail rules as the bash wrapper below; the tool hands each stream
+          // its share of the guard's cap so the whole result (links included) fits.
+          truncate: (text, kind, charLimit) =>
             kind === "stdout"
-              ? truncateToolOutput(text, budget.contextWindow, RUN_SKILL_ACTION_TOOL_ID, 0.10, toolOutputCharLimit)
-              : truncateToolOutput(text, budget.contextWindow, `${RUN_SKILL_ACTION_TOOL_ID} stderr`, 0.40, toolOutputCharLimit),
+              ? truncateToolOutput(text, budget.contextWindow, RUN_SKILL_ACTION_TOOL_ID, 0.10, charLimit)
+              : truncateToolOutput(text, budget.contextWindow, `${RUN_SKILL_ACTION_TOOL_ID} stderr`, 0.40, charLimit),
+          resultCharLimit: toolOutputCharLimit,
         }),
       );
     }
