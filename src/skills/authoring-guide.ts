@@ -6,6 +6,14 @@ import { MAX_FILE_BYTES, MAX_FILES } from "./authoring-limits";
 export const ACTIONS_EDIT_NO_EFFECT =
   "Editing, replacing or deleting `skills/<name>/" + ACTIONS_FILE + "` inside a running session has no effect on which actions exist or what they read.";
 
+/** Pinned by authoring-guide.test.ts and backed by create-sandbox.readonly-skills(.sandbox).test.ts. */
+export const SKILL_FOLDER_READ_ONLY =
+  "The skill's own folder `skills/<name>/` is read-only in a session: nothing run in the sandbox can create, change, delete or rename files there, so a script writes its output to the working directory (the session directory). A skill changes only when a new version is saved; the session picks it up on the next turn or a reload of the skills.";
+
+/** Pinned by authoring-guide.test.ts: the degraded-mode limit of SKILL_FOLDER_READ_ONLY. */
+export const SKILL_FOLDER_READ_ONLY_DEGRADED =
+  "On a host where the platform runs commands without a kernel sandbox (degraded mode), only the writeFile tool refuses that folder; shell commands and actions are not confined there.";
+
 /**
  * What an agent reads (skill_guide) before it writes a skill for this platform.
  * Every statement below was checked against the code it describes
@@ -23,6 +31,7 @@ A skill is a folder of files. The format is the standard Agent Skills format and
 
 ## 2. Where scripts run
 - In the session sandbox, in the same working directory as the chat's other files (the session directory). The skill's own files are in \`skills/<name>/\` below it, so address scripts as \`skills/<name>/scripts/x.py\`.
+- ${SKILL_FOLDER_READ_ONLY} ${SKILL_FOLDER_READ_ONLY_DEGRADED}
 - The sandbox is configured to allow no network access. Do not write scripts that download or call anything.
 - Environment: the backend's declared secrets are removed from the environment and variables an administrator has explicitly granted to skills are added under their own name (skipped if the name is not a plain POSIX name or collides with an existing variable). The rest of the process environment passes through, so do not rely on any other variable being present or absent. Never hard-code credentials; tell the user which variable the skill expects.
 - Interpreters: \`python3\` resolves to the platform's Python virtual environment when one is available; when npm is found, globally installed npm packages can be \`require()\`d from CommonJS scripts (\`NODE_PATH\` is set; ES \`import\` ignores it). Do not assume any particular package: check with a quick import or \`npm ls -g\`, and say in SKILL.md what the skill needs.

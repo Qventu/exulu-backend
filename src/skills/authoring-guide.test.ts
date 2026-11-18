@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { ACTION_INPUT_TYPES, ACTIONS_FILE, parseActionsYaml } from "@EE/invoke-skills/skill-actions/schema";
 import { readableContextFields } from "@SRC/templates/tools/context-read-tools";
 import { ARTIFACTS_BLOCK_HEADER } from "@EE/invoke-skills/artifact-filter";
-import { ACTIONS_EDIT_NO_EFFECT, SKILL_AUTHORING_GUIDE } from "./authoring-guide";
+import {
+  ACTIONS_EDIT_NO_EFFECT,
+  SKILL_AUTHORING_GUIDE,
+  SKILL_FOLDER_READ_ONLY,
+  SKILL_FOLDER_READ_ONLY_DEGRADED,
+} from "./authoring-guide";
 
 jest.mock("@SRC/postgres/client", () => ({ postgresClient: jest.fn() }));
 jest.mock("@SRC/utils/check-record-access", () => ({ checkRecordAccess: jest.fn() }));
@@ -98,4 +103,16 @@ test("the guide says actions come from the saved version, and the registration n
   expect(load).not.toMatch(/from "node:fs|from "fs|safe-fs/);
   const convert = readFileSync(join(__dirname, "../templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts"), "utf8");
   expect(convert).toMatch(/loadSkillActions\([\s\S]{0,200}sharedSessionSandbox\.skillActions,?\s*\)/);
+});
+
+test("the guide says the skill folder is read-only, with the degraded-mode limit, and the sandbox policy says so too", () => {
+  expect(SKILL_AUTHORING_GUIDE).toContain(SKILL_FOLDER_READ_ONLY);
+  expect(SKILL_AUTHORING_GUIDE).toContain(SKILL_FOLDER_READ_ONLY_DEGRADED);
+  // Backed by: the per-session policy denies writes under skills/, the folder exists before
+  // the first command, and writeFile refuses it before touching disk (behaviour in
+  // create-sandbox.readonly-skills.test.ts; kernel enforcement in its .sandbox variant).
+  const source = readFileSync(join(__dirname, "../../ee/invoke-skills/create-sandbox.ts"), "utf8");
+  expect(source).toContain("denyWrite: [skillsDirectory],");
+  expect(source).toContain("await ensureRealDirectory(sessionDir, 'skills')");
+  expect(source).toMatch(/if \(await landsInside\(sessionDir, file\.path, 'skills'\)\) \{\s*throw/);
 });

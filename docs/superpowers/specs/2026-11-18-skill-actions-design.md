@@ -301,6 +301,41 @@ nothing tells it about the sandbox, file links or actions.
   fixed sentences"; the hand-built JSON path stays as documented fallback.
 - The agent's `get_mv_pitches_item` is already enabled at M&V.
 
+### 10. Skill folders are read-only in the session
+
+Decision (Daniel, 2026-11-18): "lets make them read only, the only time
+they should be updated is when loading a new version (skill authoring tool
+can do that)". What an action reads is pinned to the saved version
+(section 5); this pins what it runs. In a shared session a script changed
+in one speaker's turn would otherwise run with the next speaker's rights.
+
+- The per-session sandbox policy denies writes under `<sessionDir>/skills`
+  (`denyWrite`, layered over the session-dir `allowWrite`). `skills/` is
+  created before the first command, because the runtime resolves a deny
+  path only when it exists.
+- The `writeFile` tool refuses a path that really lands under `skills/`
+  (`..`, links and dangling links resolved, `safe-fs.ts` `landsInside`)
+  before touching disk, in sandboxed and in degraded mode alike.
+- The platform keeps writing the folder from the backend process
+  (download, version re-sync, reload, removal), outside the sandbox.
+- Degraded mode (no user namespaces, direct exec): nothing confines
+  `bash` or an action there, so they can still change the folder. Stated
+  in code, guide and docs; `EXULU_REQUIRE_SANDBOX=1` is the way out.
+
+Verified 2026-11-19 with the real runtime (0.0.49): macOS seatbelt on the
+dev machine (jest test `create-sandbox.readonly-skills.sandbox.test.ts`,
+which fails with the deny removed), and Linux bwrap in the shipped
+backend image run as uid 1000 with `seccomp=unconfined` and
+`apparmor=unconfined`: write, append, create, delete, rename of a file,
+of a skill folder and of `skills/` itself, writes through symlinks, hard
+links, chmod and touch all fail; session-dir writes and running a Python
+script that imports a module next to it work (`__pycache__` is skipped).
+Not covered: when the backend runs as uid 0 with the capabilities to
+sandbox (e.g. a privileged container), bwrap leaves the command its
+capabilities and it can `umount` or remount any of the sandbox's mounts,
+this one and the read-only root alike: that is a limit of the whole
+sandbox, not of this rule.
+
 ## Testing
 
 - Schema: valid file; each invalid shape (unknown key, bad name, wrong

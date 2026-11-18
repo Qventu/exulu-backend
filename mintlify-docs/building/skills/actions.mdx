@@ -120,7 +120,7 @@ Archived items are included unless the fixed `where` excludes them with `archive
 | Variable | Value |
 | --- | --- |
 | `EXULU_INPUTS_DIR` | The directory that holds the input files. It exists only while the command runs. |
-| `EXULU_SKILL_DIR` | The skill's own folder. Use it to address your scripts, as in `run`. |
+| `EXULU_SKILL_DIR` | The skill's own folder. Use it to address your scripts, as in `run`. The folder is read-only. |
 
 Never write output into `EXULU_INPUTS_DIR`. It is deleted after the run and never uploaded.
 
@@ -166,6 +166,8 @@ The agent starts an action with the tool `run_skill_action` and three arguments:
 A skill is a folder of files in the standard Agent Skills format, and this stays true on the IMP. The differences are in how scripts run:
 
 - Scripts run in the session sandbox, in the session directory. Your skill's files are in `skills/<name>/` below it, so address a script as `skills/<name>/scripts/x.py`.
+- Your skill's folder is read-only in a session. Nothing run in the sandbox can create, change, delete or rename files under `skills/`, so a script writes its output to the session directory, its working directory. A skill changes only when a new version is saved. The session picks it up on the next turn or when the skills are reloaded.
+- On a host where the platform runs commands without a kernel sandbox (degraded mode, see [Skill sandbox](/self-hosting/containers#skill-sandbox)), only the `writeFile` tool refuses the folder. Shell commands and actions are not confined there.
 - The sandbox is configured to allow no network access. Do not write scripts that download or call anything.
 - The backend's declared secrets are removed from the environment. Variables an administrator has explicitly granted to skills are added under their own name. The rest of the process environment passes through, so do not rely on any other variable being present or absent. Never hard-code credentials. Tell the user which variable the skill expects.
 - When the session has a user and file uploads are configured, files a script creates or changes under the session directory (not under `skills/`) are uploaded. The command output ends with an `[exulu-artifacts]` block that lists each file as `path: URL`. The agent gives the user exactly that URL.
