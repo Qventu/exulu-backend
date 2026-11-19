@@ -168,6 +168,7 @@
     "wink-nlp": "^2.4.0",
     "winston": "^3.17.0",
     "word-extractor": "^1.0.4",
+    "yaml": "^2.8.3",
     "zod": "^4.3.6",
     "zod-from-json-schema": "^0.5.2",
     "zod-to-json-schema": "^3.25.1",

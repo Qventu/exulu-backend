@@ -8,9 +8,11 @@ import { join, dirname, resolve, relative, posix } from 'node:path'
 import { exec, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { listS3ObjectsByPrefix, getS3ObjectBytes, uploadFile, getPresignedUrl, type S3FileObject } from '@SRC/uppy/index.ts'
-import { isIgnoredArtifactPath, capArtifacts, needsDownload } from './artifact-filter'
+import { isIgnoredArtifactPath, isActionInputsPath, capArtifacts, needsDownload, appendArtifactsBlock } from './artifact-filter'
 import { getNpmGlobalRoot } from '@SRC/exulu/system-dependencies.ts'
 import { buildSkillEnv } from './skill-env'
+import { declarationFromBytes, type PinnedSkillActions } from './skill-actions/load'
+import { ACTIONS_FILE } from './skill-actions/schema'
 import { isBinaryDocumentPath, looksBinary, binaryReadHint } from './binary-file-guard'
 import { selectGrantedVariables, selectRowsToDecrypt, deriveWithheldNames } from './variable-grants'
 import { readLiteLLMOsEnvironNames } from '@SRC/exulu/litellm/os-environ-names'
@@ -26,7 +28,7 @@ import { postgresClient } from "@SRC/postgres/client";
 import { PROJECT_DIR } from "@SRC/exulu/project-files.ts";
 import { ORIGIN_METADATA_KEY } from "@SRC/exulu/file-origin.ts";
 import { syncProjectDir, clearProjectSyncMarker } from "./project-sync";
-import { readRegularFileInside, writeFileInside, ensureRealDirectory, removeEntryInside, UnsafeSessionPathError } from "./safe-fs";
+import { readRegularFileInside, writeFileInside, ensureRealDirectory, removeEntryInside, landsInside, UnsafeSessionPathError } from "./safe-fs";
 
 /**
  * Load the variables an administrator has explicitly granted to the skill
@@ -212,6 +214,31 @@ export interface SessionSandboxHandle {
     tools: Record<string, Tool<any, any>>
     /** Wraps a shell command string so it runs inside the sandbox. */
     wrapCommand: (command: string) => Promise<string>
+    /**
+     * Runs a shell command in the session sandbox (same wrapping, cwd = sessionDir) with
+     * `extraEnv` merged over the session env for this call only. A timeout kills the whole
+     * process group (timedOut = true, exitCode 124). Files the command creates are mirrored
+     * and listed in an [exulu-artifacts] block appended to stdout, exactly as `bash` does.
+     */
+    runCommand: (
+        command: string,
+        options?: { extraEnv?: Record<string, string>; timeoutMs?: number },
+    ) => Promise<{
+        stdout: string
+        stderr: string
+        exitCode: number
+        timedOut: boolean
+        artifacts: Array<{ path: string; relativePath: string; key?: string; url?: string }>
+        artifactsOmitted?: number
+    }>
+    /**
+     * skill id -> the skill's actions.yaml as parsed from the bytes downloaded from skill
+     * storage for its installed version. Set only by a (re)download, never re-read from the
+     * session directory: the agent can edit skills/<name>/actions.yaml (in degraded mode; the
+     * sandbox policy denies writes under skills/ otherwise), and that must not
+     * change which actions exist or what they read.
+     */
+    skillActions: ReadonlyMap<string, PinnedSkillActions>
     /** Tears down the sandbox and deletes the session directory. */
     cleanup: () => Promise<void>
 }
@@ -229,16 +256,22 @@ interface CachedSandbox {
     handle: SessionSandboxHandle
     /** skill id -> installed version */
     installedSkills: Map<string, number>
+    /** skill id -> pinned actions declaration (the same map the handle exposes). */
+    skillActions: Map<string, PinnedSkillActions>
     projectState: ProjectState
 }
 
 const sandboxCache = new Map<string, CachedSandbox>()
 
+/**
+ * Downloads a skill version's files into skills/<name>/ and returns the bytes of its
+ * root actions.yaml as fetched from storage (undefined when the version has none).
+ */
 async function downloadSkill(
     skill: SkillRef,
     skillsDirectory: string,
     config: ExuluConfig,
-): Promise<void> {
+): Promise<Buffer | undefined> {
     // Skills created via the standard /skills/:skillId/initialize route always
     // get current_version=1. Older / manually-inserted rows may be missing it
     // — fall back to v1 (where the auto-generated SKILL.md lives) and warn.
@@ -267,6 +300,7 @@ async function downloadSkill(
     const sessionDir = dirname(skillsDirectory)
     await ensureRealDirectory(sessionDir, `skills/${skill.name}`)
 
+    let actionsBytes: Buffer | undefined
     for (const file of files) {
         // Extract the path relative to the version prefix, accounting for any S3 general prefix
         const prefixIndex = file.key.indexOf(versionPrefix)
@@ -279,6 +313,8 @@ async function downloadSkill(
         // Binary-safe download — skill bundles can ship images, fonts, and
         // other non-text assets alongside the SKILL.md / scripts.
         const bytes = await getS3ObjectBytes(file.key, config)
+        // Root of the skill only: a nested actions.yaml declares nothing.
+        if (relativePath === ACTIONS_FILE) actionsBytes = Buffer.from(bytes)
         try {
             await writeFileInside(sessionDir, `skills/${skill.name}/${relativePath}`, bytes)
         } catch (err) {
@@ -286,6 +322,28 @@ async function downloadSkill(
             console.error(`[SKILLS] Skipping skill file ${file.key}: ${err.message}`)
         }
     }
+    return actionsBytes
+}
+
+/**
+ * Downloads a skill and pins its actions declaration from the downloaded bytes. The old pin
+ * is dropped first, so a download that fails part-way leaves the skill without actions
+ * (fail closed) rather than with the previous version's.
+ */
+async function installSkill(
+    skill: SkillRef,
+    skillsDirectory: string,
+    config: ExuluConfig,
+    skillActions: Map<string, PinnedSkillActions>,
+): Promise<void> {
+    skillActions.delete(skill.id)
+    const actionsBytes = await downloadSkill(skill, skillsDirectory, config)
+    skillActions.set(skill.id, {
+        skillId: skill.id,
+        name: skill.name,
+        version: skill.current_version,
+        declaration: declarationFromBytes(actionsBytes),
+    })
 }
 
 /**
@@ -297,6 +355,13 @@ async function removeInstalledSkill(skillsDirectory: string, skillName: string):
     await ensureRealDirectory(sessionDir, 'skills')
     await removeEntryInside(sessionDir, `skills/${skillName}`)
 }
+
+/** The writeFile refusal for a path that lands in skills/ (see writeFilesInternal). */
+const SKILLS_READ_ONLY_MESSAGE = (path: string) =>
+    `writeFile refused: "${path}" is inside the skills/ folder, which is read-only in a session. ` +
+    'Write your files to the session directory instead (e.g. "./out/report.md"). ' +
+    'A skill changes only when a new version of it is saved (skill_update or the skill editor); ' +
+    'the session picks it up on the next turn or a reload of the skills.'
 
 /**
  * A file written inside the sandbox qualifies as a session artifact iff it lives
@@ -314,6 +379,7 @@ export function isArtifactPath(
     const resolved = resolve(absPath)
     const rel = relative(sessionDir, resolved)
     if (!rel || rel.startsWith('..')) return false
+    if (isActionInputsPath(rel)) return false
     const first = rel.split('/')[0]
     if (opts.hasProject && first === PROJECT_DIR) return false
     return first !== 'skills'
@@ -379,11 +445,22 @@ function resolveSessionPath(inputPath: string, sessionDir: string): string {
     if (resolved !== sessionDir && !resolved.startsWith(sessionDir + '/')) {
         throw new Error(
             `Path "${inputPath}" resolves outside the session directory. ` +
-            `Use a path inside "${sessionDir}" (relative paths recommended, e.g. "skills/<name>/SKILL.md").`,
+            `Use a path inside "${sessionDir}" (relative paths recommended, e.g. "out/report.md", or "skills/<name>/SKILL.md" to read a skill).`,
         )
     }
 
     return resolved
+}
+
+/**
+ * Whether a session file from storage would land in skills/ (real-path judgement:
+ * `.`/`..` segments, links and, on a case-insensitive file system, case variants all
+ * resolve to the real folder). Logs the key, never the content, when it does.
+ */
+async function landsInSkills(sessionDir: string, localPath: string, key: string): Promise<boolean> {
+    if (!(await landsInside(sessionDir, localPath, 'skills'))) return false
+    console.warn(`[SKILLS] Not writing session file ${key} into the session: it lands in skills/, which only a saved skill version fills.`)
+    return true
 }
 
 async function restoreArtifactsFromS3(
@@ -426,6 +503,9 @@ async function restoreArtifactsFromS3(
         if (opts.skipProjectDir && relativePath.split('/')[0] === PROJECT_DIR) continue
 
         const localPath = join(sessionDir, relativePath)
+        // skills/ changes only from a skill's saved version (installSkill), never from a
+        // session file: a key there would replace a script a later speaker runs.
+        if (await landsInSkills(sessionDir, localPath, obj.key)) continue
         if (opts.onlyMissing) {
             let localSize: number | undefined
             try {
@@ -444,7 +524,7 @@ async function restoreArtifactsFromS3(
             // bash-produced files). Reading as utf-8 would corrupt these.
             const bytes = await getS3ObjectBytes(obj.key, config)
             // Never writeFile into the agent-writable tree: it would follow links.
-            await writeFileInside(sessionDir, relativePath, bytes)
+            await writeFileInside(sessionDir, relativePath, bytes, { notUnder: 'skills' })
         } catch (err) {
             console.error(
                 `[SKILLS] Failed to restore artifact ${obj.key} -> ${localPath}; continuing.`,
@@ -492,10 +572,12 @@ export async function downloadKeyIntoSandbox(opts: {
     }
     const relativePath = fullS3Key.slice(idx + userPrefix.length)
     if (!relativePath) return { written: false } // directory marker
+    // Never into skills/ (see restoreArtifactsFromS3).
+    if (await landsInSkills(sessionDir, join(sessionDir, relativePath), fullS3Key)) return { written: false }
 
     const bytes = await getS3ObjectBytes(fullS3Key, config)
     // Refuses ".." in the key suffix and never writes through an agent-planted link.
-    const localPath = await writeFileInside(sessionDir, relativePath, bytes)
+    const localPath = await writeFileInside(sessionDir, relativePath, bytes, { notUnder: 'skills' })
 
     return { written: true, localPath }
 }
@@ -548,7 +630,7 @@ export async function refreshSessionSkills(
     let refreshed = 0
     for (const skill of skills) {
         await removeInstalledSkill(skillsDirectory, skill.name)
-        await downloadSkill(skill, skillsDirectory, config)
+        await installSkill(skill, skillsDirectory, config, cached.skillActions)
         cached.installedSkills.set(skill.id, skill.current_version)
         refreshed++
     }
@@ -600,7 +682,7 @@ export async function createSessionSandbox(
                 await removeInstalledSkill(skillsDirectory, skill.name)
             }
 
-            await downloadSkill(skill, skillsDirectory, config)
+            await installSkill(skill, skillsDirectory, config, cached.skillActions)
             cached.installedSkills.set(skill.id, skill.current_version)
         }
 
@@ -633,12 +715,19 @@ export async function createSessionSandbox(
     await mkdir(sessionDir, { recursive: true })
 
     const skillsDirectory = join(sessionDir, 'skills')
+    // Exists (as a real directory) before the sandbox policy below is first applied,
+    // even for a session without skills: the runtime resolves a deny path only when it
+    // exists — on macOS an unresolved /tmp/... path would never match the kernel's
+    // /private/tmp/... and the deny would silently not apply; on Linux a missing path
+    // gets a placeholder mount file created in the session dir on the host.
+    await ensureRealDirectory(sessionDir, 'skills')
 
     const installedSkills = new Map<string, number>()
+    const skillActions = new Map<string, PinnedSkillActions>()
 
     // Download each skill's files from S3 into the session directory
     for (const skill of skills) {
-        await downloadSkill(skill, skillsDirectory, config)
+        await installSkill(skill, skillsDirectory, config, skillActions)
         installedSkills.set(skill.id, skill.current_version)
     }
 
@@ -742,7 +831,21 @@ export async function createSessionSandbox(
                 ...(pythonVenvPath ? [pythonVenvPath] : []),
             ],
             allowWrite: [sessionDir],
-            denyWrite: [],
+            // Skill folders are read-only inside the sandbox; only the platform (this
+            // process: download, version re-sync, reload, removal) writes them. A script
+            // runs with the rights of whoever triggers it — in a shared session another
+            // speaker — so nothing run in the sandbox may change what a later run executes.
+            // The runtime layers this deny over the session-dir allow:
+            //  - macOS (seatbelt): `deny file-write*` + `deny file-write-unlink` on the
+            //    subpath come after the allow (later rules win), and unlink of each
+            //    ancestor is denied, so a rename of skills/ or a skill's folder fails too.
+            //  - Linux (bwrap): `--ro-bind skills skills` after the session-dir `--bind`;
+            //    writes get EROFS, renaming the mount point EBUSY, links into it EXDEV.
+            // Paths are resolved through symlinks when each command is wrapped, which is
+            // why skills/ is created above before the first command.
+            // Not enforced in degraded mode (useDirectExec): nothing is. The writeFile
+            // tool refuses skills/ paths itself; bash and runCommand cannot be confined.
+            denyWrite: [skillsDirectory],
         },
     }
 
@@ -851,7 +954,10 @@ export async function createSessionSandbox(
 
     // Either wrap a command with bwrap/sandbox-exec or return it unchanged when
     // the host can't sandbox. In degraded mode the container itself is the
-    // isolation boundary; resolveSessionPath still scopes readFile/writeFile.
+    // isolation boundary; resolveSessionPath still scopes readFile/writeFile, and
+    // writeFilesInternal still refuses skills/. A bash command or a skill action can
+    // then still change skills/ (or anything else the backend user may write): that
+    // limit is stated in the authoring guide and the docs.
     const wrapIfNeeded = async (command: string): Promise<string> => {
         if (useDirectExec) return command;
         return SandboxManager.wrapWithSandbox(command, undefined, sessionSandboxConfig);
@@ -986,6 +1092,14 @@ export async function createSessionSandbox(
     ): Promise<WriteResult[]> {
         const results: WriteResult[] = []
 
+        // All paths are checked before any is written, and before anything touches
+        // disk: the refusal holds in degraded mode too, where no sandbox policy exists.
+        for (const file of files) {
+            if (await landsInside(sessionDir, file.path, 'skills')) {
+                throw new Error(SKILLS_READ_ONLY_MESSAGE(file.path))
+            }
+        }
+
         for (const file of files) {
             // Pipe content via stdin so arbitrary file content (quotes, $, etc.)
             // doesn't need to be escaped into the shell command.
@@ -1083,7 +1197,9 @@ export async function createSessionSandbox(
         description:
             'Write content to a file in the sandbox. Creates parent directories if needed. ' +
             'Paths are always resolved against the session sandbox root — both relative paths ' +
-            '("skills/<Skill name>/SKILL.md") and leading-slash paths ("/skills/<Skill name>/SKILL.md") work and reach the same file. ' +
+            '("report.md", "out/report.md") and leading-slash paths ("/out/report.md") work and reach the same file. ' +
+            'The skills/ folder is read-only: a path inside it is refused. A skill changes only when a new version ' +
+            'of it is saved (skill_update or the skill editor); write your own files to the session directory. ' +
             'When the path is under the session artifact tree, the file is also uploaded to S3 ' +
             'and a short-lived presigned URL is returned in the tool output.',
         inputSchema: z.object({
@@ -1155,6 +1271,95 @@ export async function createSessionSandbox(
     //   5. Returns an `artifacts` array on the tool result AND appends an
     //      [exulu-artifacts] block to stdout so the model surfaces the URLs
     //      naturally in its reply.
+    // Shared by `bash` and `runCommand`: snapshot, run, snapshot, diff, mirror the changed
+    // files to S3, and append the [exulu-artifacts] block to stdout (see the comment above).
+    async function runWithArtifactMirroring<R extends { stdout?: string }>(
+        execute: () => Promise<R>,
+    ): Promise<
+        Omit<R, 'stdout'> & {
+            stdout: string
+            artifacts: Array<{ path: string; relativePath: string; key?: string; url?: string }>
+            artifactsOmitted?: number
+        }
+    > {
+        // Fixed for this command: both snapshots and the persist check use it.
+        const hasProject = hasProjectNow()
+        const before = persistenceEnabled
+            ? await snapshotSessionArtifacts(hasProject)
+            : null
+        const result = await execute()
+
+        // Determine new/modified files since the snapshot. mtimeMs strictly
+        // greater than the before-value catches "modified"; absence in
+        // `before` catches "new".
+        const artifacts: Array<{
+            path: string
+            relativePath: string
+            key?: string
+            url?: string
+        }> = []
+        if (persistenceEnabled && before) {
+            // Read once more after the command (see hasProjectNow).
+            const skipProject = hasProject || hasProjectNow()
+            const after = await snapshotSessionArtifacts(skipProject)
+            const changedPaths: string[] = []
+            for (const [path, mtime] of after) {
+                const beforeMtime = before.get(path)
+                if (beforeMtime === undefined || beforeMtime < mtime) {
+                    changedPaths.push(path)
+                }
+            }
+            for (const path of changedPaths) {
+                try {
+                    // Never fsReadFile here: the agent may have swapped the file (or a
+                    // parent directory) for a link to something the sandbox denies,
+                    // and this read runs with the backend's rights.
+                    const content = await readRegularFileInside(sessionDir, path)
+                    if (content === null) continue
+                    const persisted = await persistArtifactToS3(path, content, skipProject)
+                    artifacts.push({
+                        path,
+                        relativePath: relative(sessionDir, path),
+                        key: persisted.key,
+                        url: persisted.url,
+                    })
+                } catch (err) {
+                    console.error(
+                        `[SKILLS] Failed to mirror bash-produced artifact ${path} to S3; continuing.`,
+                        err,
+                    )
+                }
+            }
+        }
+
+        // Surface URLs in stdout so the agent sees them and includes them
+        // in its reply. We append after bash-tool's truncation pass so the
+        // marker block isn't truncated. Only files with a presigned URL
+        // appear here; locally-only entries would just confuse the user.
+        let stdout = result?.stdout ?? ''
+        // Cap the listing: one command can touch thousands of files, and every
+        // entry carries a presigned URL. The full set is still mirrored to S3.
+        const { kept, omitted } = capArtifacts(artifacts)
+        const withUrls = kept.filter((a) => a.url)
+        if (withUrls.length > 0) {
+            const lines: string[] = []
+            for (const a of withUrls) {
+                lines.push(`  ${a.relativePath}: ${a.url}`)
+            }
+            if (omitted > 0) {
+                lines.push(`  … ${omitted} more file(s) were created and mirrored but are not listed here.`)
+            }
+            stdout = appendArtifactsBlock(stdout, lines)
+        }
+
+        return {
+            ...result,
+            stdout,
+            artifacts: kept,
+            ...(omitted > 0 ? { artifactsOmitted: omitted } : {}),
+        }
+    }
+
     const originalBashTool = tools.bash
     const bashTool = tool({
         description: originalBashTool.description ?? '',
@@ -1162,11 +1367,6 @@ export async function createSessionSandbox(
             command: z.string().describe('The bash command to execute.'),
         }),
         execute: async (args, opts) => {
-            // Fixed for this command: both snapshots and the persist check use it.
-            const hasProject = hasProjectNow()
-            const before = persistenceEnabled
-                ? await snapshotSessionArtifacts(hasProject)
-                : null
             // Defer to bash-tool's bash tool so we keep its truncation, cwd
             // pinning, and any future bash-tool behaviour for free.
             const originalExecute = originalBashTool.execute as
@@ -1175,79 +1375,57 @@ export async function createSessionSandbox(
             if (!originalExecute) {
                 throw new Error('bash tool execute is undefined')
             }
-            const result = await originalExecute(args, opts)
-
-            // Determine new/modified files since the snapshot. mtimeMs strictly
-            // greater than the before-value catches "modified"; absence in
-            // `before` catches "new".
-            const artifacts: Array<{
-                path: string
-                relativePath: string
-                key?: string
-                url?: string
-            }> = []
-            if (persistenceEnabled && before) {
-                // Read once more after the command (see hasProjectNow).
-                const skipProject = hasProject || hasProjectNow()
-                const after = await snapshotSessionArtifacts(skipProject)
-                const changedPaths: string[] = []
-                for (const [path, mtime] of after) {
-                    const beforeMtime = before.get(path)
-                    if (beforeMtime === undefined || beforeMtime < mtime) {
-                        changedPaths.push(path)
-                    }
-                }
-                for (const path of changedPaths) {
-                    try {
-                        // Never fsReadFile here: the agent may have swapped the file (or a
-                        // parent directory) for a link to something the sandbox denies,
-                        // and this read runs with the backend's rights.
-                        const content = await readRegularFileInside(sessionDir, path)
-                        if (content === null) continue
-                        const persisted = await persistArtifactToS3(path, content, skipProject)
-                        artifacts.push({
-                            path,
-                            relativePath: relative(sessionDir, path),
-                            key: persisted.key,
-                            url: persisted.url,
-                        })
-                    } catch (err) {
-                        console.error(
-                            `[SKILLS] Failed to mirror bash-produced artifact ${path} to S3; continuing.`,
-                            err,
-                        )
-                    }
-                }
-            }
-
-            // Surface URLs in stdout so the agent sees them and includes them
-            // in its reply. We append after bash-tool's truncation pass so the
-            // marker block isn't truncated. Only files with a presigned URL
-            // appear here; locally-only entries would just confuse the user.
-            let stdout = result?.stdout ?? ''
-            // Cap the listing: one command can touch thousands of files, and every
-            // entry carries a presigned URL. The full set is still mirrored to S3.
-            const { kept, omitted } = capArtifacts(artifacts)
-            const withUrls = kept.filter((a) => a.url)
-            if (withUrls.length > 0) {
-                const lines = ['', '[exulu-artifacts]']
-                for (const a of withUrls) {
-                    lines.push(`  ${a.relativePath}: ${a.url}`)
-                }
-                if (omitted > 0) {
-                    lines.push(`  … ${omitted} more file(s) were created and mirrored but are not listed here.`)
-                }
-                stdout = `${stdout}\n${lines.join('\n')}`
-            }
-
-            return {
-                ...result,
-                stdout,
-                artifacts: kept,
-                ...(omitted > 0 ? { artifactsOmitted: omitted } : {}),
-            }
+            return runWithArtifactMirroring(() => originalExecute(args, opts))
         },
     })
+
+    // Programmatic command runner (skill actions): sandbox-wrapped, per-call extra env,
+    // optional timeout. The env is a fresh object per call; sandboxedExecEnv is never mutated.
+    const runCommand: SessionSandboxHandle['runCommand'] = (command, options = {}) =>
+        runWithArtifactMirroring(async () => {
+            // cd inside the wrapped command too (as bash-tool does): the spawn cwd alone
+            // cannot be relied on under a real sandbox wrapper. sessionDir is platform-controlled.
+            const wrapped = await wrapIfNeeded(`cd ${shellQuote(sessionDir)} && ${command}`)
+            const callEnv = { ...sandboxedExecEnv, ...(options.extraEnv ?? {}) }
+            return await new Promise<{ stdout: string; stderr: string; exitCode: number; timedOut: boolean }>((resolvePromise) => {
+                // detached: own process group, so a timeout can kill the whole tree.
+                const child = spawn('/bin/bash', ['-c', wrapped], { env: callEnv, cwd: sessionDir, detached: true })
+                let stdout = ''
+                let stderr = ''
+                let timedOut = false
+                let settled = false
+                let timer: NodeJS.Timeout | undefined
+                // setEncoding: the stream's decoder carries a multi-byte character split across
+                // chunks over to the next one (chunk.toString would turn each half into U+FFFD).
+                const append = (cur: string, chunk: string) =>
+                    cur.length >= EXEC_MAX_BUFFER ? cur : (cur + chunk).slice(0, EXEC_MAX_BUFFER)
+                child.stdout?.setEncoding('utf8')
+                child.stderr?.setEncoding('utf8')
+                child.stdout?.on('data', (c: string) => { stdout = append(stdout, c) })
+                child.stderr?.on('data', (c: string) => { stderr = append(stderr, c) })
+                const finish = (exitCode: number) => {
+                    if (settled) return
+                    settled = true
+                    if (timer) clearTimeout(timer)
+                    resolvePromise({ stdout, stderr, exitCode: timedOut ? 124 : exitCode, timedOut })
+                }
+                if (options.timeoutMs !== undefined && options.timeoutMs > 0) {
+                    timer = setTimeout(() => {
+                        timedOut = true
+                        try {
+                            if (child.pid) process.kill(-child.pid, 'SIGKILL')
+                        } catch {
+                            child.kill('SIGKILL')
+                        }
+                    }, options.timeoutMs)
+                }
+                child.on('error', (err) => {
+                    stderr = `${stderr}${err.message}`
+                    finish(1)
+                })
+                child.on('close', (code, signal) => finish(typeof code === 'number' ? code : signal ? 128 : 1))
+            })
+        })
 
     const wrappedTools = { ...tools, bash: bashTool, readFile: readFileTool, writeFile: writeFileTool }
 
@@ -1255,6 +1433,8 @@ export async function createSessionSandbox(
         sessionDir,
         tools: wrappedTools,
         wrapCommand: (command: string) => wrapIfNeeded(command),
+        runCommand,
+        skillActions,
         cleanup: async () => {
             sandboxCache.delete(sessionId)
             if (!useDirectExec) {
@@ -1265,7 +1445,7 @@ export async function createSessionSandbox(
         },
     }
 
-    sandboxCache.set(sessionId, { handle, installedSkills, projectState })
+    sandboxCache.set(sessionId, { handle, installedSkills, skillActions, projectState })
 
     return handle
 }

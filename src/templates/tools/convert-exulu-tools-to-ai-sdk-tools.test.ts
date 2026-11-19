@@ -6,6 +6,11 @@ import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index
 import { postgresClient } from "@SRC/postgres/client";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
 import { resolveSandboxProjectId } from "@EE/invoke-skills/project-sync";
+import { createRunSkillActionTool } from "@EE/invoke-skills/skill-actions/tool";
+import { declarationFromBytes, type PinnedSkillActions } from "@EE/invoke-skills/skill-actions/load";
+import { promises as fsp } from "node:fs";
+import os from "node:os";
+import { join as pathJoin } from "node:path";
 
 jest.mock("@EE/agentic-retrieval/pipeline/index", () => ({
   createAgenticRetrievalTool: jest.fn(() => ({
@@ -34,6 +39,11 @@ jest.mock("@SRC/exulu/audit/logger", () => ({
   getAuditLogger: jest.fn(() => ({ shouldAuditTool: () => true, failClosed: false })),
 }));
 jest.mock("@SRC/exulu/audit/emit-tool-call", () => ({ emitToolCallAudit: jest.fn(async () => undefined) }));
+
+jest.mock("@EE/invoke-skills/skill-actions/tool", () => {
+  const actual = jest.requireActual("@EE/invoke-skills/skill-actions/tool");
+  return { ...actual, createRunSkillActionTool: jest.fn(actual.createRunSkillActionTool) };
+});
 
 const factory = createAgenticRetrievalTool as jest.Mock;
 
@@ -683,5 +693,188 @@ describe("saveSessionFile in the tool context", () => {
   it("is undefined without a sessionID", async () => {
     const ctx = await run({ fileUploads: uploads }, undefined);
     expect(ctx.saveSessionFile).toBeUndefined();
+  });
+});
+
+describe("run_skill_action registration", () => {
+  const auditMock = jest.requireMock("@SRC/exulu/audit/emit-tool-call").emitToolCallAudit as jest.Mock;
+  const createMock = createRunSkillActionTool as unknown as jest.Mock;
+  const ACTIONS = `version: 1
+actions:
+  export:
+    description: Writes the workbook.
+    run: python3 export.py
+    inputs:
+      pitch:
+        type: item
+        context: docs
+`;
+  let root: string;
+  let sessionDir: string;
+  let pins: Map<string, PinnedSkillActions>;
+
+  // What the sandbox pins when it downloads a skill (create-sandbox installSkill): the
+  // declaration comes from the downloaded bytes, the session copy is only for the scripts.
+  const skillFiles = async (name: string, files: Record<string, string>) => {
+    const dir = pathJoin(sessionDir, "skills", name);
+    await fsp.mkdir(dir, { recursive: true });
+    for (const [file, content] of Object.entries(files)) await fsp.writeFile(pathJoin(dir, file), content);
+    const bytes = files["actions.yaml"];
+    pins.set(name, {
+      skillId: name,
+      name,
+      version: undefined as never, // the skills below carry no current_version
+      declaration: declarationFromBytes(bytes === undefined ? undefined : Buffer.from(bytes)),
+    });
+  };
+
+  const agentWith = (extra: Record<string, unknown> = {}) =>
+    ({ id: "a1", name: "A", sandbox_enabled: true, tools: [], ...extra }) as never;
+
+  const convert = (opts: {
+    agent?: unknown;
+    currentTools?: unknown[];
+    configs?: unknown[];
+    disabledTools?: string[];
+    skills?: string[];
+    project?: string;
+  } = {}) =>
+    convertExuluToolsToAiSdkTools(
+      (opts.currentTools ?? []) as never,
+      (opts.skills ?? ["a"]).map((name) => ({ id: name, name })) as never,
+      [], [],
+      (opts.configs ?? []) as never,
+      [docsContext, otherContext] as never,
+      { id: 7 } as never,
+      {} as never,
+      "s1",
+      undefined, opts.project, undefined, model,
+      (opts.agent ?? agentWith()) as never,
+      undefined, undefined,
+      opts.disabledTools,
+      7,
+    ) as Promise<Record<string, any>>;
+
+  beforeEach(async () => {
+    root = await fsp.mkdtemp(pathJoin(os.tmpdir(), "convert-skill-actions-"));
+    sessionDir = pathJoin(root, "session");
+    await fsp.mkdir(pathJoin(sessionDir, "skills"), { recursive: true });
+    pins = new Map();
+    (createSessionSandbox as jest.Mock)
+      .mockReset()
+      .mockResolvedValue({ tools: {}, sessionDir, runCommand: jest.fn(), skillActions: pins });
+    (resolveSandboxProjectId as jest.Mock).mockReset().mockResolvedValue(null);
+    createMock.mockClear();
+    auditMock.mockClear();
+    factory.mockClear();
+  });
+  afterEach(async () => {
+    await fsp.rm(root, { recursive: true, force: true });
+  });
+
+  it("no skill with actions → no run_skill_action tool", async () => {
+    await skillFiles("a", { "SKILL.md": "---\nname: a\n---\n" });
+    const tools = await convert();
+    expect(tools.run_skill_action).toBeUndefined();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("sandbox + a skill with actions → the tool is present and passes the audit loop", async () => {
+    await skillFiles("a", { "actions.yaml": ACTIONS });
+    const tools = await convert();
+    expect(tools.run_skill_action).toBeDefined();
+    expect(tools.run_skill_action.description).toContain("a / export —");
+    const out: any[] = [];
+    for await (const v of tools.run_skill_action.execute({ skill: "zzz", action: "export" }, { toolCallId: "c1" })) {
+      out.push(v);
+    }
+    expect(out[out.length - 1].result).toContain("Available: a");
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    expect(auditMock.mock.calls[0][1].tool.id).toBe("run_skill_action");
+    expect(auditMock.mock.calls[0][1].input).toEqual({ skill: "zzz", action: "export" });
+  });
+
+  it("an actions.yaml present only in the session copy registers nothing", async () => {
+    await skillFiles("a", { "SKILL.md": "---\nname: a\n---\n" });
+    await fsp.writeFile(pathJoin(sessionDir, "skills", "a", "actions.yaml"), ACTIONS);
+    const tools = await convert();
+    expect(tools.run_skill_action).toBeUndefined();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("a skill with a path-like name and no actions.yaml registers nothing", async () => {
+    await skillFiles("a/b", { "SKILL.md": "---\nname: a/b\n---\n" });
+    const tools = await convert({ skills: ["a/b"] });
+    expect(tools.run_skill_action).toBeUndefined();
+  });
+
+  it("a broken actions.yaml alone still registers the tool, so the agent can report it", async () => {
+    await skillFiles("a", { "actions.yaml": "version: 2\n" });
+    const tools = await convert();
+    expect(tools.run_skill_action.description).toContain('skill "a": actions.yaml ignored');
+  });
+
+  it("is absent when disabled for the turn or without a sandbox", async () => {
+    await skillFiles("a", { "actions.yaml": ACTIONS });
+    expect((await convert({ disabledTools: ["run_skill_action"] })).run_skill_action).toBeUndefined();
+    expect((await convert({ agent: agentWith({ sandbox_enabled: false }) })).run_skill_action).toBeUndefined();
+  });
+
+  it("connected contexts: the editor's contexts only, when the agent has no search", async () => {
+    await skillFiles("a", { "actions.yaml": ACTIONS });
+    const editorTools = [
+      {
+        id: "knowledge_base_editor",
+        type: "function",
+        config: [{ name: "knowledge_bases", type: "json", variable: JSON.stringify({ docs: { update: true } }) }],
+      },
+    ];
+    await convert({ agent: agentWith({ tools: editorTools }), configs: editorTools });
+    expect([...createMock.mock.calls[0][0].connectedContextIds]).toEqual(["docs"]);
+  });
+
+  it("connected contexts: an editor context whose read tools are disabled this turn does not count", async () => {
+    await skillFiles("a", { "actions.yaml": ACTIONS });
+    const editorTools = [
+      {
+        id: "knowledge_base_editor",
+        type: "function",
+        config: [{ name: "knowledge_bases", type: "json", variable: JSON.stringify({ docs: { update: true } }) }],
+      },
+    ];
+    await convert({
+      agent: agentWith({ tools: editorTools }),
+      configs: editorTools,
+      disabledTools: ["get_docs_item", "find_docs_items"],
+    });
+    expect([...createMock.mock.calls[0][0].connectedContextIds]).toEqual([]);
+  });
+
+  it("connected contexts: the agent's search minus disabled knowledge bases and memory", async () => {
+    await skillFiles("a", { "actions.yaml": ACTIONS });
+    const searchConfig = {
+      id: "agentic_context_search",
+      type: "context",
+      config: [{ name: "knowledge_bases", type: "json", variable: JSON.stringify({ other: { enabled: false } }) }],
+    };
+    await convert({ currentTools: [agenticEntry], configs: [searchConfig] });
+    expect([...createMock.mock.calls[0][0].connectedContextIds]).toEqual(["docs"]);
+
+    createMock.mockClear();
+    await convert({ currentTools: [agenticEntry], agent: agentWith({ memory: "docs" }) });
+    expect([...createMock.mock.calls[0][0].connectedContextIds]).toEqual(["other"]);
+  });
+
+  it("connected contexts: the project's contexts when only the project search is built", async () => {
+    await skillFiles("a", { "actions.yaml": ACTIONS });
+    mockProjectRow(PROJECT_ROW); // items in "docs"
+    await convert({ project: "p1" });
+    expect([...createMock.mock.calls[0][0].connectedContextIds]).toEqual(["docs"]);
+  });
+
+  it("connected contexts: nothing from a search that is disabled for the turn", async () => {
+    await skillFiles("a", { "actions.yaml": ACTIONS });
+    await convert({ currentTools: [agenticEntry], disabledTools: ["agentic_context_search"] });
+    expect([...createMock.mock.calls[0][0].connectedContextIds]).toEqual([]);
   });
 });

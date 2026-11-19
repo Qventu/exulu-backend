@@ -24,6 +24,9 @@ describe("parseSkillAuthorConfig", () => {
     ];
     expect(parseSkillAuthorConfig(JSON.stringify(tools))).toEqual({ enabled: true, create: false, update: true, skipApproval: true });
   });
+  test("the prompt points at skill_guide", () => {
+    expect(SKILL_AUTHOR_PROMPT).toContain("skill_guide");
+  });
   test("the prompt keeps skills to complex recurring work and sends corrections to memory", () => {
     expect(SKILL_AUTHOR_PROMPT).toMatch(/multi-step/);
     expect(SKILL_AUTHOR_PROMPT).toMatch(/belongs in memory/);

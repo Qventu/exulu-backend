@@ -14,6 +14,9 @@ import { ExuluTool } from "@SRC/exulu/tool";
 import { postgresClient } from "@SRC/postgres/client";
 import { canAccessSkill, filterReadableSkills, resolveSkillByName } from "@SRC/skills/skill-access";
 import { parseFrontmatter } from "@SRC/skills/frontmatter";
+import { MAX_FILE_BYTES, MAX_FILES } from "@SRC/skills/authoring-limits";
+import { SKILL_AUTHORING_GUIDE } from "@SRC/skills/authoring-guide";
+import { ACTIONS_FILE, parseActionsYaml } from "@EE/invoke-skills/skill-actions/schema";
 import { copyS3Object, deleteS3Object, getS3ObjectContent, listS3ObjectsByPrefix, uploadFile } from "@SRC/uppy/index";
 import { handleRBACUpdate } from "@EE/rbac-update.ts";
 
@@ -23,8 +26,6 @@ import { parseSkillAuthorConfig, SKILL_AUTHOR_TOOL_ID } from "./skill-author-con
 type CreateDecision = Extract<SkillDecision, { kind: "create" }>;
 type UpdateDecision = Extract<SkillDecision, { kind: "update" }>;
 
-const MAX_FILES = 100;
-const MAX_FILE_BYTES = 200 * 1024;
 const MAX_READ_BYTES = 60 * 1024;
 
 export type SkillFileInput = { path: string; content: string };
@@ -32,6 +33,7 @@ export type SkillFileInput = { path: string; content: string };
 export type SkillToolOutput =
   | { type: "skill_list"; skills: Array<{ id: string; name: string; description: string; version: number }>; result: string }
   | { type: "skill_read"; skillId: string; name: string; version: number; files: string[]; path: string; content: string; result: string }
+  | { type: "skill_guide"; result: string }
   | { type: "skill_created"; skillId: string; name: string; version: number; rights_mode: string; files: string[]; enableOnAgent: boolean; result: string }
   | { type: "skill_updated"; skillId: string; name: string; version: number; rights_mode: string; changed: string[]; removed: string[]; enableOnAgent: boolean; result: string }
   | { type: "skill_no_access"; skill: string; result: string }
@@ -128,6 +130,17 @@ const normalizeFiles = (raw: unknown): { files: SkillFileInput[] } | { error: st
   return { files };
 };
 
+/**
+ * An actions.yaml at the skill root must parse before anything is written, so a
+ * skill never ships with an action file the platform would ignore. Null = fine.
+ */
+const actionsFileError = (files: SkillFileInput[]): SkillToolOutput | null => {
+  const file = files.find((f) => f.path === ACTIONS_FILE);
+  if (!file) return null;
+  const parsed = parseActionsYaml(file.content);
+  return parsed.ok ? null : err(`${ACTIONS_FILE} is invalid: ${parsed.error}. Nothing was saved; fix the file and call the tool again (skill_guide describes the format).`);
+};
+
 export const createSkillAuthorTools = (agent: ExuluAgent, deps: SkillToolDeps = {}): ExuluTool[] => {
   const config = parseSkillAuthorConfig(agent.tools as any);
   if (!config.enabled) return [];
@@ -214,6 +227,21 @@ export const createSkillAuthorTools = (agent: ExuluAgent, deps: SkillToolDeps = 
     }),
   );
 
+  tools.push(
+    new ExuluTool({
+      id: "skill_guide",
+      name: "skill_guide",
+      category,
+      type: "function",
+      config: [],
+      needsApproval: false,
+      description:
+        "Read how skills on this platform differ from other hosts: where scripts run, what they can reach, how files come back, how to read knowledge-base data (actions.yaml). Call it before writing or changing a skill that contains scripts or needs platform data.",
+      inputSchema: z.object({}),
+      execute: async (): Promise<SkillToolOutput> => ({ type: "skill_guide", result: SKILL_AUTHORING_GUIDE }),
+    }),
+  );
+
   if (config.create) {
     tools.push(
       new ExuluTool({
@@ -246,6 +274,8 @@ export const createSkillAuthorTools = (agent: ExuluAgent, deps: SkillToolDeps = 
           const parsed = normalizeFiles(params.files);
           if ("error" in parsed) return err(parsed.error);
           const files = parsed.files;
+          const invalidActions = actionsFileError(files);
+          if (invalidActions) return invalidActions;
           const skillMd = files.find((f) => f.path === "SKILL.md");
           if (!skillMd) return err("A skill needs a SKILL.md at its root.");
           skillMd.content = ensureFrontmatter(skillMd.content, name, description);
@@ -322,6 +352,8 @@ export const createSkillAuthorTools = (agent: ExuluAgent, deps: SkillToolDeps = 
           const parsed = normalizeFiles(params.files);
           if ("error" in parsed) return err(parsed.error);
           const changes = parsed.files;
+          const invalidActions = actionsFileError(changes);
+          if (invalidActions) return invalidActions;
           const removals: string[] = [];
           for (const raw of Array.isArray(params.deletePaths) ? params.deletePaths : []) {
             const p = safeSkillPath(raw);
