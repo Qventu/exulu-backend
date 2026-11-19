@@ -279,6 +279,14 @@ const agentsSchema: ExuluTableDefinition = {
       type: "text",
     },
     {
+      // The welcome message in further languages: { "<locale>": "<text>" },
+      // e.g. { "de": "Hallo …" }. `welcomemessage` stays the default (English,
+      // and any language without an entry). Read through welcomeTranslations()
+      // in public-agents.ts. Auto-ALTERed on boot.
+      name: "welcomemessage_translations",
+      type: "json",
+    },
+    {
       name: "instructions",
       type: "text",
     },
