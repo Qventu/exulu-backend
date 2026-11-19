@@ -47,6 +47,7 @@ import {
 } from "@SRC/exulu/transcripts-settings";
 import { parseSettingsInput } from "./transcripts-settings-input";
 import { markSessionSeenForViewer } from "./mark-session-seen";
+import { canWritePublicSkill } from "@SRC/skills/skill-access";
 
 // Same allow-list as utils/check-item-write-access.ts — the modes a client
 // may explicitly set on create.
@@ -380,9 +381,13 @@ export function createMutations(
         throw new Error("Record not found");
       }
 
-      // Check if record is public (any user can edit)
+      // Check if record is public (any user can edit) -- except a skill:
+      // for skills "public" grants read and use, not write (decision
+      // 2026-11-18), the same rule as the REST skill routes and skill tools.
       if (record.rights_mode === "public") {
-        return true;
+        if (table.name.plural !== "skills") return true;
+        if (await canWritePublicSkill(db, { id, ...record }, user)) return true;
+        throw new Error("Only the owners of a public skill can change it.");
       }
 
       // Check if record is private and user is creator. `created_by` is a

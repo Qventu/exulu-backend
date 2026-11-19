@@ -4,6 +4,8 @@ import {
   FIND_MAX_LIMIT,
   checkItemReadAccess,
   createContextReadTools,
+  findContextItems,
+  readContextItem,
 } from "./context-read-tools";
 import { itemNotFoundMessage } from "./context-write-tools";
 import { checkRecordAccess } from "@SRC/utils/check-record-access";
@@ -636,5 +638,78 @@ describe("operator surface details (Minors 4, 5, 6, 8)", () => {
       expect(describeOf(tool)).toContain("id");
       expect(describeOf(tool)).toContain("always");
     }
+  });
+});
+
+describe("data-returning read functions", () => {
+  beforeEach(() => jest.clearAllMocks());
+  const allow = { checkAccess: jest.fn(async () => true) };
+
+  it("readContextItem returns the projected item as data", async () => {
+    const r = await readContextItem(makeContext(), { id: "item-1", fields: ["name"] }, { user }, allow);
+    expect(r).toEqual({ ok: true, item: { id: "item-1", name: "Widget" } });
+  });
+
+  it("readContextItem: unreadable and missing give the same failure", async () => {
+    const forbidden = await readContextItem(
+      makeContext(),
+      { id: "item-1" },
+      { user },
+      { checkAccess: jest.fn(async () => false) },
+    );
+    const missing = await readContextItem(
+      makeContext({ getItem: jest.fn(async () => undefined) }),
+      { id: "nope" },
+      { user },
+      allow,
+    );
+    expect(forbidden.ok).toBe(false);
+    expect(forbidden).toEqual(missing);
+    expect(!forbidden.ok && forbidden.message).toBe(itemNotFoundMessage(makeContext(), "read"));
+  });
+
+  it("findContextItems honours maxLimit and reports truncation (fetches limit + 1)", async () => {
+    const rows = [{ id: "1" }, { id: "2" }, { id: "3" }];
+    const context = makeContext({ getItems: jest.fn(async () => rows) });
+    const r = await findContextItems(context, { limit: 2, maxLimit: 500 }, { user });
+    expect(r.ok && r.items).toEqual([{ id: "1" }, { id: "2" }]);
+    expect(r.ok && r.truncated).toBe(true);
+    expect(r.ok && r.limit).toBe(2);
+    expect((context.getItems as jest.Mock).mock.calls[0][0].limit).toBe(3);
+  });
+
+  it("findContextItems is not truncated when exactly limit rows match", async () => {
+    const context = makeContext({ getItems: jest.fn(async () => [{ id: "1" }, { id: "2" }]) });
+    const r = await findContextItems(context, { limit: 2 }, { user });
+    expect(r.ok && r.truncated).toBe(false);
+    expect(r.ok && r.items.length).toBe(2);
+  });
+
+  it("maxLimit raises the cap; without it the cap stays FIND_MAX_LIMIT", async () => {
+    const capped = await findContextItems(makeContext(), { limit: 999 }, { user });
+    expect(capped.ok && capped.limit).toBe(FIND_MAX_LIMIT);
+    const raised = await findContextItems(makeContext(), { limit: 999, maxLimit: 500 }, { user });
+    expect(raised.ok && raised.limit).toBe(500);
+  });
+
+  it("the find tool never leaks the extra row or asks for it", async () => {
+    const context = makeContext({
+      getItems: jest.fn(async ({ limit }: any) =>
+        Array.from({ length: limit }, (_, i) => ({ id: `r${i}` })),
+      ),
+    });
+    const result = await run(findTool(context), { limit: 2 });
+    expect(result.result).toBe('Found 2 item(s): [{"id":"r0"},{"id":"r1"}]');
+    expect((context.getItems as jest.Mock).mock.calls[0][0].limit).toBe(2);
+  });
+
+  it("a guest reads nothing: a failure for one item, an empty list for find", async () => {
+    const context = makeContext();
+    const one = await readContextItem(context, { id: "item-1" }, {}, allow);
+    expect(one.ok).toBe(false);
+    const many = await findContextItems(context, {}, {});
+    expect(many.ok && many.items).toEqual([]);
+    expect(context.getItem).not.toHaveBeenCalled();
+    expect(context.getItems).not.toHaveBeenCalled();
   });
 });

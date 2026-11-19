@@ -141,7 +141,8 @@
               "building/prompts",
               "building/skills/overview",
               "building/skills/editing-and-versions",
-              "building/skills/connect-your-agent"
+              "building/skills/connect-your-agent",
+              "building/skills/actions"
             ]
           },
           {

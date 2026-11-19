@@ -29,6 +29,13 @@ import { createTurnProject } from "@SRC/exulu/turn-project";
 import { createCreateProjectTool } from "./create-project-tool";
 import { createSaveToProjectTool } from "./save-to-project-tool";
 import { collectSkillAuthorTools } from "./skill-author-tools";
+import { parseKbEditorConfig } from "./kb-editor-config";
+import { loadSkillActions } from "@EE/invoke-skills/skill-actions/load";
+import {
+  createRunSkillActionTool,
+  deriveConnectedContextIds,
+  RUN_SKILL_ACTION_TOOL_ID,
+} from "@EE/invoke-skills/skill-actions/tool";
 import type { SkillDecision } from "@SRC/exulu/skills/decisions";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import type { ExuluSkill } from "@EXULU_TYPES/skill";
@@ -389,6 +396,10 @@ export const convertExuluToolsToAiSdkTools = async (
     currentTools.push(viewDocumentPageTool);
   }
 
+  // Which retrieval search this turn actually builds — skill actions may read
+  // exactly the contexts the agent's own tools reach (deriveConnectedContextIds).
+  let agenticSearchActive = false;
+  let projectSearchContextIds: string[] | undefined;
   console.log("[EXULU] Creating agentic search tool", contexts?.length, model);
   if (contexts?.length && model && !disabled.has("agentic_context_search")) {
     const index = currentTools.findIndex((tool) => tool.id === "agentic_context_search");
@@ -409,6 +420,7 @@ export const convertExuluToolsToAiSdkTools = async (
         projectScope,
       });
       if (agenticSearchTool) {
+        agenticSearchActive = true;
         currentTools[index] = {
           ...currentTools[index], // important to keep the original tool config
           ...agenticSearchTool,
@@ -439,6 +451,7 @@ export const convertExuluToolsToAiSdkTools = async (
           projectScope,
         });
         if (projectSearchTool) {
+          projectSearchContextIds = scopedContexts.map((c) => c.id);
           currentTools.push(projectSearchTool);
         }
       }
@@ -449,6 +462,51 @@ export const convertExuluToolsToAiSdkTools = async (
     const agenticSearchTool = currentTools.find((tool) => tool.id === "agentic_context_search");
     if (agenticSearchTool) {
       currentTools.splice(currentTools.indexOf(agenticSearchTool), 1);
+    }
+  }
+
+  // Skill actions (actions.yaml): one run_skill_action tool, only with a sandbox
+  // and at least one enabled skill whose downloaded version declares actions (or
+  // ships a broken actions.yaml worth telling the agent about). Pushed into currentTools, so
+  // it passes the approval, guard and audit wrapper below like every tool.
+  if (sharedSessionSandbox && !disabled.has(RUN_SKILL_ACTION_TOOL_ID)) {
+    // From the declarations pinned at download time, never from the session copy the agent can write.
+    const loadedActions = loadSkillActions(
+      sharedSessionSandbox.sessionDir,
+      currentSkills ?? [],
+      sharedSessionSandbox.skillActions,
+    );
+    const hasActions = Object.values(loadedActions.bySkill).some((s) => Object.keys(s.actions).length > 0);
+    if (hasActions || loadedActions.problems.length > 0) {
+      const contextIds = contexts.map((c) => c.id);
+      const editor = parseKbEditorConfig(agent?.tools as any);
+      const sandbox = sharedSessionSandbox;
+      currentTools.push(
+        createRunSkillActionTool({
+          handle: sandbox,
+          loaded: loadedActions,
+          contexts,
+          connectedContextIds: deriveConnectedContextIds({
+            contextIds,
+            memoryContextId: agent?.memory,
+            editorContextIds: editor.enabled
+              ? Object.keys(editor.knowledgeBases).filter((id) => contextIds.includes(id))
+              : [],
+            disabledToolIds: disabled,
+            agenticSearch: agenticSearchActive
+              ? { config: configs?.find((c) => c.id === "agentic_context_search") }
+              : undefined,
+            projectSearchContextIds,
+          }),
+          // Same head/tail rules as the bash wrapper below; the tool hands each stream
+          // its share of the guard's cap so the whole result (links included) fits.
+          truncate: (text, kind, charLimit) =>
+            kind === "stdout"
+              ? truncateToolOutput(text, budget.contextWindow, RUN_SKILL_ACTION_TOOL_ID, 0.10, charLimit)
+              : truncateToolOutput(text, budget.contextWindow, `${RUN_SKILL_ACTION_TOOL_ID} stderr`, 0.40, charLimit),
+          resultCharLimit: toolOutputCharLimit,
+        }),
+      );
     }
   }
 
