@@ -8,6 +8,12 @@ export interface PublicAgentView {
   description: string;
   image: string | null;
   welcomemessage: string;
+  /**
+   * The welcome message in further languages, keyed by locale ("de", "pt-BR").
+   * `welcomemessage` is the default — shown for English and for every language
+   * without an entry here. Always an object, empty when none are written.
+   */
+  welcomemessage_translations: Record<string, string>;
   slug: string;
   guest_auth_mode: GuestAuthMode;
   guest_has_cover: boolean;
@@ -20,6 +26,34 @@ export interface PublicAgentView {
   guest_has_responding_animation: boolean;
 }
 
+const LOCALE_KEY = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/;
+
+/**
+ * The language versions of a welcome message, reduced to what is safe to hand
+ * to an anonymous visitor: locale-shaped keys with non-empty text. The column
+ * is free-form JSON, so anything else an API call wrote into it is dropped
+ * here rather than trusted. Accepts the object or its JSON string — json
+ * columns come back as either.
+ */
+export const welcomeTranslations = (raw: unknown): Record<string, string> => {
+  let value = raw;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: Record<string, string> = {};
+  for (const [key, text] of Object.entries(value)) {
+    if (!LOCALE_KEY.test(key) || typeof text !== "string") continue;
+    const trimmed = text.trim();
+    if (trimmed) result[key] = trimmed;
+  }
+  return result;
+};
+
 /**
  * The ONLY projection public endpoints may return. Never widen without
  * updating the spec's security section (no instructions/tools/model leak).
@@ -31,6 +65,7 @@ export const publicAgentView = (
     description?: string | null;
     image?: string | null;
     welcomemessage?: string | null;
+    welcomemessage_translations?: unknown;
     guest_auth_mode?: string | null;
     guest_cover_image?: string | null;
     animation_idle?: string | null;
@@ -43,6 +78,7 @@ export const publicAgentView = (
   description: row.description ?? "",
   image: row.image ?? null,
   welcomemessage: row.welcomemessage ?? "",
+  welcomemessage_translations: welcomeTranslations(row.welcomemessage_translations),
   slug,
   guest_auth_mode: (row.guest_auth_mode as GuestAuthMode) || "regular",
   guest_has_cover: !!row.guest_cover_image,

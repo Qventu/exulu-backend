@@ -5811,6 +5811,7 @@ export const createExpressRoutes = async (
         "description",
         "image",
         "welcomemessage",
+        "welcomemessage_translations",
         "model",
         "guest_auth_mode",
         "guest_cover_image",

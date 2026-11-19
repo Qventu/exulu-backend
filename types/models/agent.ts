@@ -9,6 +9,8 @@ export interface ExuluAgent {
     /** Memory behaviour (retrieval limit, visibility preselect, guest display). null = defaults. */
     memory_config?: Record<string, unknown> | string | null;
     welcomemessage?: string;
+    /** Further language versions of the welcome message, keyed by locale. null = none. */
+    welcomemessage_translations?: Record<string, string> | string | null;
     defaultagent?: boolean;
     type: "agent";
     name: string;

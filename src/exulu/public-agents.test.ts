@@ -25,6 +25,7 @@ describe("publicAgentView", () => {
       description: "Helps",
       image: "s3/avatar.png",
       welcomemessage: "Hi!",
+      welcomemessage_translations: {},
       slug: "/agents/litellm/run",
       guest_auth_mode: "password",
       guest_has_cover: true,
@@ -34,6 +35,54 @@ describe("publicAgentView", () => {
     expect(JSON.stringify(view)).not.toContain("SECRET");
     expect(JSON.stringify(view)).not.toContain("$2a$");
   });
+
+  test("passes the welcome message's language versions through", () => {
+    const view = publicAgentView(
+      { id: "a4", welcomemessage: "Hello", welcomemessage_translations: { de: "Hallo" } },
+      "/s",
+    );
+    expect(view.welcomemessage).toBe("Hello");
+    expect(view.welcomemessage_translations).toEqual({ de: "Hallo" });
+  });
+
+  test("reads language versions stored as a JSON string", () => {
+    // json columns come back as strings on some driver paths.
+    const view = publicAgentView(
+      { id: "a5", welcomemessage_translations: '{"de":"Hallo"}' },
+      "/s",
+    );
+    expect(view.welcomemessage_translations).toEqual({ de: "Hallo" });
+  });
+
+  test("keeps only well-formed language versions", () => {
+    // The column is free-form JSON an admin API call can write anything into,
+    // and this projection is served to anonymous visitors.
+    const view = publicAgentView(
+      {
+        id: "a6",
+        welcomemessage_translations: {
+          de: "  Hallo  ",
+          "pt-BR": "Olá",
+          fr: "",
+          es: "   ",
+          en: 42,
+          "not a locale!": "x",
+          __proto__: "y",
+          nested: { de: "z" },
+        },
+      } as any,
+      "/s",
+    );
+    expect(view.welcomemessage_translations).toEqual({ de: "Hallo", "pt-BR": "Olá" });
+  });
+
+  test.each([null, undefined, "", "not json", "[1,2]", 7, ["de"]])(
+    "treats %p as no language versions",
+    (raw) => {
+      const view = publicAgentView({ id: "a7", welcomemessage_translations: raw } as any, "/s");
+      expect(view.welcomemessage_translations).toEqual({});
+    },
+  );
 
   test("exposes animation PRESENCE but never the storage keys", () => {
     // The guest chat needs to know an animation exists so it can request it
@@ -67,6 +116,7 @@ describe("publicAgentView", () => {
       description: "",
       image: null,
       welcomemessage: "",
+      welcomemessage_translations: {},
       slug: "",
       guest_auth_mode: "regular",
       guest_has_cover: false,
