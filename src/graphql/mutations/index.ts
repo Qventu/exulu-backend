@@ -24,6 +24,7 @@ import { startImport, cancelImport, StartImportError } from "@SRC/exulu/import/s
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
+import { deleteChannelsForAgent, syncChannelsWithGuestAccess } from "@SRC/exulu/channels/api";
 import { shouldGenerateEmbeddings } from "./should-generate-embeddings";
 import { changeContextEmbedder } from "@SRC/exulu/embedder-change";
 import { dropProjection } from "@SRC/exulu/projection/store";
@@ -52,6 +53,12 @@ import { canWritePublicSkill } from "@SRC/skills/skill-access";
 // Same allow-list as utils/check-item-write-access.ts — the modes a client
 // may explicitly set on create.
 const VALID_RIGHTS_MODES = ["private", "users", "roles", "teams", "public"];
+
+// WhatsApp channel spec: an agent that stops being guest-accessible in regular mode loses its
+// channels. These mutations run without a transaction, so this runs right after the agent
+// write; the inbound gate (channelAccessAllowed) refuses such an agent's messages anyway.
+const touchesGuestFields = (input: Record<string, unknown> | undefined): boolean =>
+  !!input && ("guest_access" in input || "guest_auth_mode" in input);
 
 const postprocessDeletion = async ({
   table,
@@ -658,6 +665,10 @@ export function createMutations(
 
       let results = await insert;
 
+      if (tableNamePlural === "agents" && args.upsert && touchesGuestFields(args.input) && results[0]) {
+        await syncChannelsWithGuestAccess(db, results[0]);
+      }
+
       // Handle RBAC records if provided
       if (table.RBAC && rbacData && results[0]) {
         await handleRBACUpdate(db, table.name.singular, results[0].id, rbacData, []);
@@ -799,6 +810,10 @@ export function createMutations(
 
       if (!result?.id) {
         throw new Error("Something went wrong with the update, no id returned.");
+      }
+
+      if (tableNamePlural === "agents" && touchesGuestFields(args.input)) {
+        await syncChannelsWithGuestAccess(db, result);
       }
 
       // Update RBAC records if provided
@@ -946,6 +961,10 @@ export function createMutations(
         .select(Object.keys(columns))
         .where({ id })
         .first();
+
+      if (tableNamePlural === "agents" && touchesGuestFields(args.input) && result) {
+        await syncChannelsWithGuestAccess(db, result);
+      }
       const { job } = await postprocessUpdate({
         table,
         requestedFields,
@@ -998,6 +1017,11 @@ export function createMutations(
       }
 
       await db(tableNamePlural).where({ id }).del();
+
+      // no foreign keys on the channel tables: remove the agent's channels and links here
+      if (tableNamePlural === "agents") {
+        await deleteChannelsForAgent(db, id);
+      }
 
       if (table.RBAC) {
         await db
@@ -1058,6 +1082,10 @@ export function createMutations(
       // Delete by the resolved id — safer than re-applying the filter and
       // matches the UpdateOne pattern above (`.where({id: item.id})`).
       await db(tableNamePlural).where({ id: result.id }).del();
+
+      if (tableNamePlural === "agents") {
+        await deleteChannelsForAgent(db, result.id);
+      }
       await postprocessDeletion({
         table,
         requestedFields,
