@@ -1,6 +1,7 @@
 import {
   CHAT_STATE_PURGE_INTERVAL_MS,
   ensureChatStateTables,
+  initChatStateTables,
   purgeChatStateThrottled,
   purgeExpiredChatState,
   resetChatStatePurgeThrottle,
@@ -136,5 +137,86 @@ describe("purgeExpiredChatState", () => {
     expect(purgeChatStateThrottled({} as any, 5, purge)).toBe(true);
     await new Promise((r) => setImmediate(r));
     expect(error).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("initChatStateTables (the utils:initdb step)", () => {
+  let error: jest.SpyInstance;
+  beforeEach(() => {
+    error = jest.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => error.mockRestore());
+
+  const fakePool = () => ({ query: jest.fn(async () => ({ rows: [] })), end: jest.fn(async () => {}) });
+
+  it("a loader that throws: resolves, logs one clear line, ends the pool", async () => {
+    const pool = fakePool();
+    const load = jest.fn(async () => {
+      throw Object.assign(new Error("Cannot find package '@chat-adapter/state-pg' imported from /app"), {
+        code: "ERR_MODULE_NOT_FOUND",
+      });
+    });
+    await expect(initChatStateTables({ createPool: () => pool as any, load })).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0][0]).toBe(
+      "[EXULU-CHANNEL] chat state tables not created; WhatsApp channels will not work until this succeeds",
+    );
+    expect(error.mock.calls[0][1]).toEqual({ name: "Error", code: "ERR_MODULE_NOT_FOUND" });
+    expect(pool.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("failing DDL: resolves, logs once, ends the pool", async () => {
+    const pool = fakePool();
+    const state = {
+      connect: jest.fn(async () => {
+        throw new Error("permission denied for schema public");
+      }),
+      disconnect: jest.fn(async () => {}),
+    };
+    await initChatStateTables({ createPool: () => pool as any, load: async () => ({ createPostgresState: () => state }) });
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(pool.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("a pool that cannot be created: resolves and logs once", async () => {
+    await initChatStateTables({
+      createPool: () => {
+        throw new Error("bad config");
+      },
+      load: async () => ({ createPostgresState: jest.fn() as any }),
+    });
+    expect(error).toHaveBeenCalledTimes(1);
+  });
+
+  it("a pool.end that rejects does not escape", async () => {
+    const pool = { ...fakePool(), end: jest.fn(async () => Promise.reject(new Error("end failed"))) };
+    const state = { connect: jest.fn(async () => {}), disconnect: jest.fn(async () => {}) };
+    await expect(
+      initChatStateTables({ createPool: () => pool as any, load: async () => ({ createPostgresState: () => state }) }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("success: creates the tables, purges, ends the pool, logs nothing", async () => {
+    const saved = process.env.EXULU_ENTERPRISE_LICENSE;
+    process.env.EXULU_ENTERPRISE_LICENSE = "EXULU_EE_test";
+    try {
+      const pool = fakePool();
+      const order: string[] = [];
+      const state = {
+        connect: jest.fn(async () => void order.push("ddl")),
+        disconnect: jest.fn(async () => {}),
+      };
+      pool.query.mockImplementation(async () => {
+        order.push("purge");
+        return { rows: [] };
+      });
+      pool.end.mockImplementation(async () => void order.push("end"));
+      await initChatStateTables({ createPool: () => pool as any, load: async () => ({ createPostgresState: () => state }) });
+      expect(order).toEqual(["ddl", "purge", "end"]);
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      if (saved === undefined) delete process.env.EXULU_ENTERPRISE_LICENSE;
+      else process.env.EXULU_ENTERPRISE_LICENSE = saved;
+    }
   });
 });

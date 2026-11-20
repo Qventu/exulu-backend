@@ -10,8 +10,7 @@ import { ensureEntityTables } from "@SRC/exulu/entities";
 import { contextFieldsForSync } from "@SRC/exulu/context-fields-for-sync";
 import { getTableName, getChunksTableName } from "@SRC/exulu/table-names";
 import { hydrateContextEmbedders } from "@SRC/exulu/hydrate-embedders";
-import { ensureChatStateTables, purgeExpiredChatState } from "@SRC/exulu/channels/state-tables";
-import { Pool } from "pg";
+import { initChatStateTables } from "@SRC/exulu/channels/state-tables";
 
 const {
   agentsSchema,
@@ -410,24 +409,9 @@ const up = async function (knex: Knex) {
           ON channel_links (channel, identity)`,
     );
     // The chat SDK's own tables (subscriptions, locks, cache, ...), created by
-    // the adapter so a later SDK version brings its own schema.
-    // The adapter wants a pg.Pool, not knex: use a short-lived one built from
-    // the same connection settings as postgresClient() and end it afterwards.
-    const pool = new Pool({
-      host: process.env.POSTGRES_DB_HOST,
-      port: parseInt(process.env.POSTGRES_DB_PORT || "5432"),
-      user: process.env.POSTGRES_DB_USER,
-      database: process.env.POSTGRES_DB_NAME || "exulu",
-      password: process.env.POSTGRES_DB_PASSWORD,
-      ssl: process.env.POSTGRES_DB_SSL === "true" ? { rejectUnauthorized: false } : false,
-      max: 2,
-    });
-    try {
-      await ensureChatStateTables(pool);
-      await purgeExpiredChatState(pool);
-    } finally {
-      await pool.end();
-    }
+    // the adapter so a later SDK version brings its own schema. Never throws:
+    // a failure is logged and boot continues.
+    await initChatStateTables();
   }
 
   /*  if (!await knex.schema.hasTable('sessions')) {

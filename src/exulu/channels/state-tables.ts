@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import { Pool } from "pg";
 import { channelsLicensed } from "./licence";
 import { safeError } from "./log";
 
@@ -71,6 +71,46 @@ export async function purgeExpiredChatState(pool: Pool): Promise<void> {
     }
   } catch (error) {
     console.error("[EXULU-CHANNEL] purging expired chat state failed", safeError(error));
+  }
+}
+
+/**
+ * The pool for the initdb step: short-lived, built from the same connection settings as
+ * postgresClient() (the adapter wants a pg.Pool, not knex).
+ */
+const initdbPool = (): Pool =>
+  new Pool({
+    host: process.env.POSTGRES_DB_HOST,
+    port: parseInt(process.env.POSTGRES_DB_PORT || "5432"),
+    user: process.env.POSTGRES_DB_USER,
+    database: process.env.POSTGRES_DB_NAME || "exulu",
+    password: process.env.POSTGRES_DB_PASSWORD,
+    ssl: process.env.POSTGRES_DB_SSL === "true" ? { rejectUnauthorized: false } : false,
+    max: 2,
+  });
+
+/**
+ * The `utils:initdb` step for the chat SDK's tables: pool, dynamic import, the adapter's DDL,
+ * then purgeExpiredChatState. utils:initdb runs on every server and worker boot and a failing
+ * step is fatal there, so this never throws: any failure is one log line and boot continues
+ * (channels then fail per webhook until a later initdb succeeds). The pool is always ended.
+ */
+export async function initChatStateTables(
+  opts: { createPool?: () => Pool; load?: () => Promise<StateModule> } = {},
+): Promise<void> {
+  let pool: Pool | undefined;
+  try {
+    pool = (opts.createPool ?? initdbPool)();
+    await ensureChatStateTables(pool, opts.load ?? loadStateModule);
+    await purgeExpiredChatState(pool);
+  } catch (error) {
+    console.error(
+      "[EXULU-CHANNEL] chat state tables not created; WhatsApp channels will not work until this succeeds",
+      safeError(error),
+    );
+  } finally {
+    // ending a short-lived pool cannot fail the boot either
+    await pool?.end().catch(() => undefined);
   }
 }
 
