@@ -59,11 +59,12 @@ describe("createChannelAuditor", () => {
 
   it("never throws: a failing de-duplication store is logged and the event is dropped", async () => {
     const error = jest.spyOn(console, "error").mockImplementation(() => {});
-    const kv = { set: async () => Promise.reject(new Error("redis down")) };
+    const kv = { set: async () => Promise.reject(new Error("ERR key channel-audit:code_lockout:chan-1:a1111")) };
     const audit = createChannelAuditor({ channelId: "chan-1", kv });
     await expect(audit({ type: "code_lockout", identity: "a1111" })).resolves.toBeUndefined();
     expect(error).toHaveBeenCalled();
     expect(JSON.stringify(error.mock.calls)).not.toContain("a1111");
+    expect(error.mock.calls.flat().some((x) => x instanceof Error)).toBe(false);
     error.mockRestore();
   });
 });

@@ -1,4 +1,5 @@
 import { maskIdentity } from "./config";
+import { safeError } from "./log";
 import type { DecideDeps } from "./decide";
 
 export type ChannelAuditEvent = Parameters<DecideDeps["audit"]>[0];
@@ -39,6 +40,6 @@ export const createChannelAuditor =
         }),
       );
     } catch (error) {
-      console.error(`[EXULU-CHANNEL] audit ${event.type} on channel ${deps.channelId} failed`, error);
+      console.error(`[EXULU-CHANNEL] audit ${event.type} on channel ${deps.channelId} failed`, safeError(error));
     }
   };

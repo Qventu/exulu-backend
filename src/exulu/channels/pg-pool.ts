@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { safeError } from "./log";
 
 let pool: Pool | undefined;
 
@@ -20,7 +21,7 @@ export const getChannelPgPool = (): Pool => {
     });
     // An idle client's error is emitted on the pool; without a listener it would crash the process.
     pool.on("error", (error: Error) => {
-      console.error("[EXULU-CHANNEL] chat state database connection error", error.message);
+      console.error("[EXULU-CHANNEL] chat state database connection error", safeError(error));
     });
   }
   return pool;

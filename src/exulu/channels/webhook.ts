@@ -1,5 +1,6 @@
 import type { Request as ExpressRequest, Response as ExpressResponse } from "express";
 import type { ChannelTransport } from "./chat-instance";
+import { safeError } from "./log";
 import type { AgentChannelRow } from "./types";
 
 export interface ChannelWebhookDeps {
@@ -105,7 +106,7 @@ export const createChannelWebhookHandler =
     try {
       row = await deps.loadChannel(channelId);
     } catch (error) {
-      console.error(`${LOG_PREFIX} webhook channel lookup failed`, error);
+      console.error(`${LOG_PREFIX} webhook channel lookup failed`, safeError(error));
       res.status(503).json({ detail: "temporarily unavailable" });
       return;
     }
@@ -122,11 +123,7 @@ export const createChannelWebhookHandler =
       }
       transport = await deps.transportFor(row);
     } catch (error) {
-      // only the error class: building the SDK instance involves the channel's credentials
-      console.error(
-        `${LOG_PREFIX} webhook setup failed on channel ${channelId}`,
-        error instanceof Error ? error.name : typeof error,
-      );
+      console.error(`${LOG_PREFIX} webhook setup failed on channel ${channelId}`, safeError(error));
       res.status(503).json({ detail: "temporarily unavailable" });
       return;
     }
@@ -156,11 +153,7 @@ export const createChannelWebhookHandler =
       }
       await writeResponse(res, response);
     } catch (error) {
-      // only the error class: SDK errors can quote the payload
-      console.error(
-        `${LOG_PREFIX} webhook handling failed on channel ${channelId}`,
-        error instanceof Error ? error.name : typeof error,
-      );
+      console.error(`${LOG_PREFIX} webhook handling failed on channel ${channelId}`, safeError(error));
       if (!res.headersSent) res.status(500).json({ detail: "internal error" });
     }
   };

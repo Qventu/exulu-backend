@@ -119,6 +119,29 @@ describe("getTransport: inbound and post-only instances", () => {
   });
 });
 
+describe("the SDK logger", () => {
+  it("drops errors' messages, thread ids and bodies", async () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const sdk = makeSdk();
+      await getTransport(makeRow(), deps(sdk));
+      const logger = sdk.chats[0].config.logger;
+      logger.error("Message processing error", {
+        error: new Error("insert '4915112345678' 'Wie tausche ich'"),
+        threadId: "whatsapp:111:4915112345678",
+        text: "Wie tausche ich",
+      });
+      logger.error("failed", new Error("to 4915112345678"));
+      const out = JSON.stringify(error.mock.calls);
+      expect(out).not.toContain("4915112345678");
+      expect(out).not.toContain("Wie tausche");
+      expect(error.mock.calls.flat().some((a) => a instanceof Error)).toBe(false);
+    } finally {
+      error.mockRestore();
+    }
+  });
+});
+
 describe("getTransport", () => {
   it("builds one Chat per channel and reuses it for the same row", async () => {
     const sdk = makeSdk();

@@ -102,7 +102,7 @@ const handleInbound = async (
   // the instance that is handling this message, from the transport cache
   const transport = await (env.getTransport ?? defaultGetTransport)(row, transportDeps);
   if (!transport) throw new Error("channel transport unavailable");
-  await actOnDecision(msg, decision, { config, transport, enqueue: env.enqueue });
+  await actOnDecision(msg, decision, { config, transport, enqueue: env.enqueue, store });
 };
 
 export const createChannelWebhookDeps = (env: ChannelServerEnv): ChannelWebhookDeps => ({

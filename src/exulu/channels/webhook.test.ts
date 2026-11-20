@@ -168,11 +168,18 @@ describe("createChannelWebhookHandler: status codes in order", () => {
     expect(logged).not.toContain("entry");
   });
 
-  it("a failing channel lookup is 503 and leaks nothing", async () => {
-    const deps = makeDeps({ loadChannel: jest.fn(async () => Promise.reject(new Error("db down"))) });
+  it("a failing channel lookup is 503 and leaks nothing, not even to the log", async () => {
+    const deps = makeDeps({
+      loadChannel: jest.fn(async () =>
+        Promise.reject(Object.assign(new Error(`select * from "agent_channels" where "id" = '${CHANNEL_ID}' - db down`), { code: "ECONNREFUSED" })),
+      ),
+    });
     const res = await run(deps);
     expect(res.statusCode).toBe(503);
     expect(JSON.stringify(res.body)).not.toContain("db down");
+    expect(JSON.stringify(errorSpy.mock.calls)).toContain("ECONNREFUSED");
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain("db down");
+    expect(errorSpy.mock.calls.flat().some((a) => a instanceof Error)).toBe(false);
   });
 });
 
