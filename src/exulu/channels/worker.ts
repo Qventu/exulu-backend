@@ -7,6 +7,7 @@ import { exuluApp } from "../app/singleton";
 import type { ExuluContext } from "../context";
 import type { ExuluTool } from "../tool";
 import { channelAccessAllowed, type GuestAgent } from "./access";
+import { ANSWERED_TTL_SECONDS, answeredKey } from "./act";
 import { runChannelAgentTurn } from "./agent-turn";
 import { getTransport as defaultGetTransport, type TransportDeps } from "./chat-instance";
 import { parseChannelConfig } from "./config";
@@ -136,6 +137,10 @@ export const createRunDeps = async (env: ChannelWorkerEnv): Promise<RunDeps> => 
       });
     },
     lock: createRunLock(store),
+    async markAnswered(job) {
+      const set = await store.set(answeredKey(job.channelId, job.messageId), "1", { EX: ANSWERED_TTL_SECONDS, NX: true });
+      return set !== null;
+    },
     sessions: createChannelSessions(db),
     runAgentTurn: env.runAgentTurn,
     transport: {

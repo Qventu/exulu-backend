@@ -11,11 +11,18 @@ export const CHANNEL_JOB_TIMEOUT_SECONDS = 600;
 /** How long a message id counts as handled, so a redelivery stays a no-op. */
 export const SEEN_TTL_SECONDS = 24 * 60 * 60;
 
+/** How long a message id counts as answered, so a second execution of its job posts nothing. */
+export const ANSWERED_TTL_SECONDS = 24 * 60 * 60;
+
 /** A wamid encodes the sender's number, so it is only ever used hashed. */
-const hashMessageId = (messageId: string): string => createHash("sha256").update(messageId).digest("hex");
+export const hashMessageId = (messageId: string): string => createHash("sha256").update(messageId).digest("hex");
 
 export const seenKey = (channelId: string, messageId: string): string =>
   `channel-seen:${channelId}:${hashMessageId(messageId)}`;
+
+/** Set by the worker right before it posts the answer (or runFailed) for a message (RunDeps.markAnswered). */
+export const answeredKey = (channelId: string, messageId: string): string =>
+  `channel-answered:${channelId}:${hashMessageId(messageId)}`;
 
 /**
  * One attempt only: a retry after a failed post would run the agent again or post the

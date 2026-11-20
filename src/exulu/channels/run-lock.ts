@@ -11,10 +11,15 @@ export interface LockRedis {
 export const RELEASE_SCRIPT =
   'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end';
 
+/** Renews the key's TTL (seconds) only while it still holds the caller's token, atomically. */
+export const EXTEND_SCRIPT =
+  'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("expire", KEYS[1], ARGV[2]) else return 0 end';
+
 /**
  * The per-identity run lock (RunDeps.lock) and its read side (DecideDeps.runInFlight).
  * `acquire` returns an owner token or null when the lock is held; `release` is a
- * compare-and-delete, so a job that outlived the TTL cannot remove a newer job's lock.
+ * compare-and-delete, so a job that outlived the TTL cannot remove a newer job's lock;
+ * `extend` is a compare-and-expire with the same guarantee, true only if it renewed.
  */
 export const createRunLock = (redis: LockRedis) => ({
   async acquire(key: string, ttlSeconds: number): Promise<string | null> {
@@ -24,6 +29,10 @@ export const createRunLock = (redis: LockRedis) => ({
   },
   async release(key: string, token: string): Promise<void> {
     await redis.eval(RELEASE_SCRIPT, { keys: [key], arguments: [token] });
+  },
+  async extend(key: string, token: string, ttlSeconds: number): Promise<boolean> {
+    const result = await redis.eval(EXTEND_SCRIPT, { keys: [key], arguments: [token, String(ttlSeconds)] });
+    return Number(result) === 1;
   },
   async held(key: string): Promise<boolean> {
     return (await redis.exists(key)) > 0;

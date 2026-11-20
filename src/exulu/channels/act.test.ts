@@ -10,7 +10,7 @@ import {
 } from "./act";
 import type { ChannelTransport } from "./chat-instance";
 import type { InboundMessage } from "./decide";
-import { RUN_LOCK_TTL_SECONDS, type ChannelMessageJob } from "./run";
+import { RUN_LOCK_RENEW_MS, RUN_LOCK_TTL_SECONDS, type ChannelMessageJob } from "./run";
 import { replyText } from "./texts";
 import type { WhatsAppChannelConfig } from "./types";
 
@@ -228,7 +228,9 @@ describe("enqueueChannelMessage", () => {
     }
   });
 
-  it("the run lock outlives the job timeout", () => {
-    expect(RUN_LOCK_TTL_SECONDS).toBeGreaterThan(CHANNEL_JOB_TIMEOUT_SECONDS);
+  it("the run lock is short and renewed well within its TTL while the run is alive", () => {
+    // since the lock is renewed (run.ts), it no longer has to outlive the job timeout
+    expect(RUN_LOCK_TTL_SECONDS).toBeLessThan(CHANNEL_JOB_TIMEOUT_SECONDS);
+    expect(RUN_LOCK_TTL_SECONDS * 1000).toBeGreaterThanOrEqual(3 * RUN_LOCK_RENEW_MS);
   });
 });

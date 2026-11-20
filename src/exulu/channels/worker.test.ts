@@ -3,6 +3,7 @@ process.env.NEXTAUTH_SECRET = "test-secret";
 jest.mock("./agent-turn", () => ({ runChannelAgentTurn: jest.fn() }));
 jest.mock("./pg-pool", () => ({ getChannelPgPool: jest.fn(() => ({ fake: "pool" })) }));
 
+import { createHash } from "crypto";
 import Knex from "knex";
 import {
   createChannelSessions,
@@ -41,10 +42,12 @@ const job: ChannelMessageJob = {
 
 class FakeRedis {
   values = new Map<string, string>();
+  ttls = new Map<string, number>();
   isReady = true;
   async set(key: string, value: string, opts: { NX?: true; EX: number }) {
     if (opts.NX && this.values.has(key)) return null;
     this.values.set(key, value);
+    this.ttls.set(key, opts.EX);
     return "OK";
   }
   async eval(_s: string, o: { keys: string[]; arguments: string[] }) {
@@ -191,6 +194,18 @@ describe("createRunDeps", () => {
     expect(redis.values.has(key)).toBe(false);
   });
 
+  it("markAnswered sets the hashed answered key once, for 24 h, and is true only the first time", async () => {
+    const redis = new FakeRedis();
+    const deps = await createRunDeps(makeEnv({ getRedis: async () => redis as any }));
+    expect(await deps.markAnswered(job)).toBe(true);
+    expect(await deps.markAnswered(job)).toBe(false);
+    const key = `channel-answered:${CHANNEL_ID}:${createHash("sha256").update(job.messageId).digest("hex")}`;
+    expect([...redis.values.keys()]).toEqual([key]);
+    expect(redis.ttls.get(key)).toBe(86400);
+    expect(key).not.toContain(job.messageId);
+    expect(await deps.markAnswered({ ...job, messageId: "wamid.2" })).toBe(true);
+  });
+
   it("posts through a post-only transport of the loaded channel", async () => {
     const post = jest.fn(async () => {});
     const typing = jest.fn(async () => {});
@@ -335,7 +350,10 @@ describe("runChannelMessageJob", () => {
     expect(result).toEqual({ sessionId: "sess-1", posted: "answer" });
     expect(runAgentTurn).toHaveBeenCalledWith({ agentId: "agent-1", userId: 7, sessionId: "sess-1", text: job.text });
     expect(post).toHaveBeenCalledWith(job.threadId, "Das Relais tauschen Sie so");
-    expect(redis.values.size).toBe(0);
+    // the run lock is released; only the answered marker (hashed message id) stays
+    expect([...redis.values.keys()]).toEqual([
+      `channel-answered:${CHANNEL_ID}:${createHash("sha256").update(job.messageId).digest("hex")}`,
+    ]);
   });
 
   it("a failed job rethrows a sanitized error: no message text, number or cause", async () => {

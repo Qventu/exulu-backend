@@ -24,8 +24,19 @@ export interface RunDeps {
   /**
    * `acquire` returns an owner token, or null when the lock is held. `release` must be a
    * compare-and-delete on that token, so a job that outlived the TTL cannot remove a newer job's lock.
+   * `extend` renews the TTL only while the token still matches (compare-and-expire); true if it did.
    */
-  lock: { acquire(key: string, ttlSeconds: number): Promise<string | null>; release(key: string, token: string): Promise<void> };
+  lock: {
+    acquire(key: string, ttlSeconds: number): Promise<string | null>;
+    release(key: string, token: string): Promise<void>;
+    extend(key: string, token: string, ttlSeconds: number): Promise<boolean>;
+  };
+  /**
+   * Marks this message id as answered (SET NX, 24 h); true if this call set it. Called right
+   * before the answer or the runFailed notice of a run that executed, so a second execution of
+   * the same message (a stalled job picked up again) posts nothing.
+   */
+  markAnswered(job: ChannelMessageJob): Promise<boolean>;
   sessions: {
     findRecent(p: { agentId: string; userId: number; channelId: string; idleHours: number; now: Date }): Promise<string | null>;
     create(p: {
@@ -39,8 +50,14 @@ export interface RunDeps {
   transport: { post(threadId: string, markdown: string): Promise<void>; typing(threadId: string): Promise<void> };
 }
 
-export const RUN_LOCK_TTL_SECONDS = 900;
-const TYPING_REFRESH_MS = 20_000;
+/**
+ * Short, and renewed every RUN_LOCK_RENEW_MS while the run is pending: a run cut by a crash or a
+ * deploy blocks its sender for at most this long. BullMQ only re-queues a stalled job after its
+ * own lock (lockDuration 300 s in ee/workers.ts) has lapsed, by which time this one has too.
+ */
+export const RUN_LOCK_TTL_SECONDS = 90;
+/** The typing indicator lapses after about 25 s; the lock is renewed on the same timer. */
+export const RUN_LOCK_RENEW_MS = 20_000;
 
 /**
  * Channel ids are uuids (fixed shape, no ":"), so the first ":" after the prefix
@@ -116,8 +133,20 @@ export const handleChannelMessage = async (
         console.warn(`[EXULU-CHANNEL] typing indicator failed for ${who}`, safeError(e)),
       );
     };
+    const extendLock = () => {
+      // keeps the lock while the run is alive; a failure is logged and the run goes on
+      void (async () => deps.lock.extend(key, token, RUN_LOCK_TTL_SECONDS))().then(
+        (extended) => {
+          if (!extended) console.warn(`[EXULU-CHANNEL] run lock could not be extended on channel ${job.channelId}`);
+        },
+        (e) => console.error(`[EXULU-CHANNEL] run lock extension failed on channel ${job.channelId}`, safeError(e)),
+      );
+    };
     typing();
-    const timer = setInterval(typing, TYPING_REFRESH_MS);
+    const timer = setInterval(() => {
+      typing();
+      extendLock();
+    }, RUN_LOCK_RENEW_MS);
 
     let answer: string | null = null;
     try {
@@ -134,6 +163,18 @@ export const handleChannelMessage = async (
     }
 
     const ok = typeof answer === "string" && answer.trim() !== "";
+    // Another execution of this same message may already have answered it.
+    let first = true;
+    try {
+      first = await deps.markAnswered(job);
+    } catch (error) {
+      // a missing answer is worse than a rare duplicate: post anyway
+      console.error(`[EXULU-CHANNEL] could not mark the message answered on channel ${job.channelId}`, safeError(error));
+    }
+    if (!first) {
+      console.warn(`[EXULU-CHANNEL] message on channel ${job.channelId} already answered; nothing posted`);
+      return { sessionId, posted: "skipped" };
+    }
     try {
       await deps.transport.post(job.threadId, ok ? (answer as string) : replyText("runFailed", config));
     } catch (error) {
