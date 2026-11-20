@@ -24,7 +24,7 @@ const isCitation = (inner: string): boolean => {
   // a citation starts with one of its own unquoted keys; JSON ("key": …), placeholders
   // ({name}) and other objects ({a: 1}) do not
   const first = /^\s*([a-z_]+)\s*:/i.exec(inner);
-  if (!first || !CITATION_KEYS.includes(first[1].toLowerCase())) return false;
+  if (!first?.[1] || !CITATION_KEYS.includes(first[1].toLowerCase())) return false;
   if (hasKey(inner, "item_name") && (hasKey(inner, "item_id") || hasKey(inner, "context") || hasKey(inner, "chunk_id"))) {
     return true;
   }
