@@ -18,15 +18,20 @@ export type LinkState =
 const TABLE = "channel_links";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+const timeOf = (v: unknown): number => (v instanceof Date ? v.getTime() : NaN);
+
 /**
  * Access-control rule: valid only if the link exists, is not revoked and
  * `now` is strictly before `expires_at` (exactly at expiry it is expired).
- * Revoked wins over an unexpired date.
+ * Revoked wins over an unexpired date. Fails closed: any revoked_at value, even an
+ * unreadable one, is revoked; an unreadable expiry (or now) is expired.
  */
 export const linkState = (link: ChannelLink | undefined, now: Date): LinkState => {
   if (!link) return { state: "none" };
-  if (link.revoked_at) return { state: "revoked" };
-  if (now.getTime() >= link.expires_at.getTime()) return { state: "expired" };
+  if (link.revoked_at !== null && link.revoked_at !== undefined) return { state: "revoked" };
+  const expiry = timeOf(link.expires_at);
+  const at = timeOf(now);
+  if (!Number.isFinite(expiry) || !Number.isFinite(at) || at >= expiry) return { state: "expired" };
   return { state: "valid", link };
 };
 

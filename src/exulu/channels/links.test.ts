@@ -32,6 +32,34 @@ describe("linkState", () => {
     const revoked = { ...base, revoked_at: new Date("2026-11-17T00:00:00Z") };
     expect(linkState(revoked, new Date("2027-01-01T00:00:00Z"))).toEqual({ state: "revoked" });
   });
+  it("an unreadable expiry is expired, never valid (fails closed)", () => {
+    expect(linkState({ ...base, expires_at: new Date("not a date") }, new Date("2026-11-18T00:00:00Z"))).toEqual({
+      state: "expired",
+    });
+    expect(linkState({ ...base, expires_at: undefined as any }, new Date("2026-11-18T00:00:00Z"))).toEqual({
+      state: "expired",
+    });
+    expect(linkState({ ...base, expires_at: "2099-01-01" as any }, new Date("2026-11-18T00:00:00Z"))).toEqual({
+      state: "expired",
+    });
+  });
+  it("an unreadable now is expired, never valid", () => {
+    expect(linkState(base, new Date("not a date"))).toEqual({ state: "expired" });
+  });
+  it("an unreadable revoked_at on a row that has one counts as revoked", () => {
+    for (const revoked_at of [new Date("not a date"), "garbage" as any, 0 as any, "" as any]) {
+      expect(linkState({ ...base, revoked_at }, new Date("2026-11-18T00:00:00Z"))).toEqual({ state: "revoked" });
+    }
+  });
+  it("a row read from the database with unreadable dates fails closed", async () => {
+    const row = { ...base, expires_at: "garbage", revoked_at: null };
+    const db: any = () => ({ where: () => ({ first: async () => row }) });
+    const found = await createLinkStore(db).find("c1", "i");
+    expect(linkState(found, new Date("2026-11-18T00:00:00Z")).state).toBe("expired");
+    const revokedRow = { ...base, revoked_at: "garbage" };
+    const db2: any = () => ({ where: () => ({ first: async () => revokedRow }) });
+    expect(linkState(await createLinkStore(db2).find("c1", "i"), new Date("2026-11-18T00:00:00Z")).state).toBe("revoked");
+  });
 });
 
 describe("expiryFor", () => {

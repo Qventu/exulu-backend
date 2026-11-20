@@ -10,32 +10,50 @@
  * `{...}` group containing `item_name` + `item_id`, or `url` + `title` + `snippet`).
  * Here they are removed, and only the spacing and brackets they leave behind are tidied.
  * Memory recall cites with quoted values ({item_name: "…", context: "…"}), so quoted
- * values and nested braces inside a group are allowed.
+ * values and nested braces inside a group are allowed. Only a whole group that ends on its
+ * own line and reads as a citation is removed; anything else is left exactly as it is.
  */
 
 const MARK = "\u0000";
 
+const CITATION_KEYS = ["item_name", "item_id", "context", "chunk_id", "chunk_index", "url", "title", "snippet"];
+
 const hasKey = (inner: string, key: string): boolean => new RegExp(`(?:^|[\\s,])${key}\\s*:`).test(inner);
 
 const isCitation = (inner: string): boolean => {
-  // a citation starts with an unquoted key; JSON ("key": …) and placeholders ({name}) do not
-  if (!/^\s*[a-z_]+\s*:/i.test(inner)) return false;
+  // a citation starts with one of its own unquoted keys; JSON ("key": …), placeholders
+  // ({name}) and other objects ({a: 1}) do not
+  const first = /^\s*([a-z_]+)\s*:/i.exec(inner);
+  if (!first || !CITATION_KEYS.includes(first[1].toLowerCase())) return false;
   if (hasKey(inner, "item_name") && (hasKey(inner, "item_id") || hasKey(inner, "context") || hasKey(inner, "chunk_id"))) {
     return true;
   }
   return hasKey(inner, "url") && hasKey(inner, "title") && hasKey(inner, "snippet");
 };
 
-/** Index of the `}` closing the group opened at `start`, on the same line, or -1. */
+/** `"` opens a quoted value only directly after a field's `key:` (`{key: "` or `, key: "`). */
+const OPENS_QUOTE = /(?:^|[{,])\s*[a-z_]+\s*:\s*$/i;
+/** and closes it only where the value can end: before `,`, `}` or the end of the line. */
+const CLOSES_QUOTE = /^[ \t]*(?:[,}]|\n|$)/;
+
+/**
+ * Index of the `}` closing the group opened at `start`, on the same line, or -1. Braces
+ * inside a quoted value do not count; any other `"` (an inch mark, a quote in a file name)
+ * is an ordinary character.
+ */
 const closingBrace = (text: string, start: number): number => {
   let depth = 0;
   let quoted = false;
   for (let i = start; i < text.length; i++) {
     const c = text[i];
     if (c === "\n") return -1;
-    if (c === '"') quoted = !quoted;
-    else if (!quoted && c === "{") depth++;
-    else if (!quoted && c === "}" && --depth === 0) return i;
+    if (quoted) {
+      if (c === '"' && CLOSES_QUOTE.test(text.slice(i + 1, i + 33))) quoted = false;
+      continue;
+    }
+    if (c === '"' && OPENS_QUOTE.test(text.slice(start, i))) quoted = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return i;
   }
   return -1;
 };
