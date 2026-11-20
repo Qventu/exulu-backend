@@ -2,12 +2,13 @@ import { createHash, randomInt } from "crypto";
 
 /** The slice of node-redis v4 this module needs; the real client is passed in by the caller. */
 export interface KeyValueStore {
-  set(key: string, value: string, opts: { EX: number }): Promise<unknown>;
+  set(key: string, value: string, opts: { EX: number; NX?: true }): Promise<string | null>;
   getDel(key: string): Promise<string | null>;
   del(key: string): Promise<unknown>;
   incr(key: string): Promise<number>;
   expire(key: string, seconds: number): Promise<unknown>;
   get(key: string): Promise<string | null>;
+  ttl(key: string): Promise<number>; // -2 missing, -1 no expiry, else seconds left
 }
 
 export const CODE_TTL_SECONDS = 600;
@@ -79,7 +80,8 @@ export const codeAttemptsExceeded = async (
 ): Promise<boolean> => {
   const key = `channel-link:attempts:${channelId}:${identity}`;
   const n = await kv.incr(key);
-  if (n === 1) await kv.expire(key, ATTEMPT_WINDOW_SECONDS);
+  // Also heal a counter that lost its expiry (failed expire after the first incr).
+  if (n === 1 || (await kv.ttl(key)) === -1) await kv.expire(key, ATTEMPT_WINDOW_SECONDS);
   return n > MAX_ATTEMPTS;
 };
 
@@ -90,7 +92,6 @@ export const linkPromptAllowed = async (
   identity: string,
 ): Promise<boolean> => {
   const key = `channel-link:prompt:${channelId}:${identity}`;
-  const n = await kv.incr(key);
-  if (n === 1) await kv.expire(key, PROMPT_WINDOW_SECONDS);
-  return n === 1;
+  // One atomic call: the key can never exist without its expiry.
+  return (await kv.set(key, "1", { EX: PROMPT_WINDOW_SECONDS, NX: true })) !== null;
 };

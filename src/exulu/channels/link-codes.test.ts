@@ -12,7 +12,9 @@ import {
 class FakeStore implements KeyValueStore {
   values = new Map<string, string>();
   ttls = new Map<string, number>();
-  async set(key: string, value: string, opts: { EX: number }) {
+  failNextExpire = false;
+  async set(key: string, value: string, opts: { EX: number; NX?: true }) {
+    if (opts.NX && this.values.has(key)) return null;
     this.values.set(key, value);
     this.ttls.set(key, opts.EX);
     return "OK";
@@ -32,7 +34,15 @@ class FakeStore implements KeyValueStore {
     this.values.set(key, String(n));
     return n;
   }
+  async ttl(key: string) {
+    if (!this.values.has(key)) return -2;
+    return this.ttls.get(key) ?? -1;
+  }
   async expire(key: string, seconds: number) {
+    if (this.failNextExpire) {
+      this.failNextExpire = false;
+      throw new Error("redis down");
+    }
     if (!this.values.has(key)) return 0;
     this.ttls.set(key, seconds);
     return 1;
@@ -147,6 +157,24 @@ describe("limits", () => {
     expect(await linkPromptAllowed(kv, "c", "id")).toBe(false);
     expect(await linkPromptAllowed(kv, "c", "id")).toBe(false);
     expect(await linkPromptAllowed(kv, "c", "other")).toBe(true);
+  });
+  it("sets the prompt key with TTL 600 in the same call", async () => {
+    await linkPromptAllowed(kv, "c", "id");
     expect(kv.ttls.get("channel-link:prompt:c:id")).toBe(600);
+  });
+  it("two concurrent prompt checks yield exactly one true", async () => {
+    const r = await Promise.all([linkPromptAllowed(kv, "c", "id"), linkPromptAllowed(kv, "c", "id")]);
+    expect(r.filter(Boolean)).toHaveLength(1);
+  });
+  it("a counter that lost its expiry gets one again and the lockout ends", async () => {
+    kv.failNextExpire = true;
+    await expect(codeAttemptsExceeded(kv, "c", "id")).rejects.toThrow();
+    const key = "channel-link:attempts:c:id";
+    expect(kv.ttls.has(key)).toBe(false);
+    for (let i = 0; i < 5; i++) await codeAttemptsExceeded(kv, "c", "id");
+    expect(kv.ttls.get(key)).toBe(3600);
+    kv.values.delete(key); // window elapsed
+    kv.ttls.delete(key);
+    expect(await codeAttemptsExceeded(kv, "c", "id")).toBe(false);
   });
 });
