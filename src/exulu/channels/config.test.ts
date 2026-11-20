@@ -4,6 +4,7 @@ import {
   ChannelConfigError,
   canEnableChannel,
   channelView,
+  linkPageUrl,
   maskIdentity,
   parseChannelConfig,
   readSecrets,
@@ -112,4 +113,21 @@ it("maskIdentity shows only the last four characters", () => {
   expect(maskIdentity("4915112345678")).toMatch(/5678$/);
   expect(maskIdentity("4915112345678")).not.toContain("49151");
   expect(maskIdentity("ab")).not.toContain("ab");
+});
+
+describe("linkPageUrl", () => {
+  const original = process.env.NEXTAUTH_URL;
+  afterEach(() => {
+    process.env.NEXTAUTH_URL = original;
+  });
+
+  it("points at the public link page of the agent", () => {
+    process.env.NEXTAUTH_URL = "https://newton.example.de";
+    expect(linkPageUrl("agent-1")).toBe("https://newton.example.de/public/agents/agent-1/link/whatsapp");
+  });
+
+  it("does not double a trailing slash and encodes the agent id", () => {
+    process.env.NEXTAUTH_URL = "https://newton.example.de/";
+    expect(linkPageUrl("a b")).toBe("https://newton.example.de/public/agents/a%20b/link/whatsapp");
+  });
 });

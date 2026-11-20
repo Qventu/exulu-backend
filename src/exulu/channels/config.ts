@@ -136,3 +136,7 @@ export const channelView = (row: AgentChannelRow): ChannelView => ({
 /** Identity is opaque: only the last four characters are shown. */
 export const maskIdentity = (identity: string): string =>
   identity.length < 4 ? "••••" : `•••• ${identity.slice(-4)}`;
+
+/** The page where a signed-in user gets a link code (the `linkRequired` reply and the link route). */
+export const linkPageUrl = (agentId: string): string =>
+  `${(process.env.NEXTAUTH_URL ?? "").replace(/\/+$/, "")}/public/agents/${encodeURIComponent(agentId)}/link/whatsapp`;
