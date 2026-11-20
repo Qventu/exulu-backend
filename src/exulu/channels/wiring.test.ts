@@ -1,4 +1,5 @@
 process.env.NEXTAUTH_SECRET = "test-secret";
+process.env.CHANNEL_LINK_BASE_URL = "https://kunden.example.de";
 
 jest.mock("./pg-pool", () => ({ getChannelPgPool: jest.fn(() => ({ fake: "pool" })) }));
 
@@ -149,10 +150,7 @@ describe("createDecideDeps", () => {
     createDecideDeps({ row, config, db: fakeDb({ users: { id: 7 } }), store, env });
 
   it("links to the agent's public link page", () => {
-    const original = process.env.NEXTAUTH_URL;
-    process.env.NEXTAUTH_URL = "https://newton.example.de";
-    expect(build().linkUrl).toBe("https://newton.example.de/public/agents/agent-1/link/whatsapp");
-    process.env.NEXTAUTH_URL = original;
+    expect(build().linkUrl).toBe("https://kunden.example.de/public/agents/agent-1/link/whatsapp");
   });
 
   it("runInFlight reads the run lock key of this channel and identity", async () => {
