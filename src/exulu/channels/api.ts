@@ -9,6 +9,7 @@ import {
   ChannelConfigError,
   canEnableChannel,
   channelView,
+  linkPageUrl,
   maskIdentity,
   parseChannelConfig,
   readSecrets,
@@ -332,7 +333,8 @@ export const registerChannelApi = (app: Express, deps: ChannelApiDeps): void => 
         sealed = sealSecrets(merged);
       }
 
-      // 3. Enabling, in this order: entitlements, the agent's guest mode, credentials, config.
+      // 3. Enabling, in this order: entitlements, the agent's guest mode, credentials, config,
+      // the link page URL.
       if (body.enabled === true) {
         const refuse = (reason: string, detail: string) => res.status(409).json({ detail, reason });
         if (!deps.entitled()) return void refuse("not_entitled", "The channels and queues entitlements are required.");
@@ -350,6 +352,15 @@ export const registerChannelApi = (app: Express, deps: ChannelApiDeps): void => 
         const effective = config ?? (existing ? tryParseConfig(existing.config) : null);
         if (!effective || effective.phoneNumberId.trim() === "") {
           return void refuse("invalid_config", "A valid configuration with a phone number ID is required.");
+        }
+        // the linkRequired reply needs the link page's address on this server process
+        try {
+          linkPageUrl(agent.id);
+        } catch {
+          return void refuse(
+            "link_url_not_configured",
+            "Set CHANNEL_LINK_BASE_URL (the customer-facing web address) on the server; NEXTAUTH_URL is not set here either.",
+          );
         }
       }
 

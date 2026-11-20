@@ -103,6 +103,10 @@ export const ENV_CLASSIFICATION: Record<string, "secret" | "runtime"> = {
   DEBUG: "runtime",
   BACKEND: "runtime",
   FRONTEND: "runtime",
+  // Public web addresses, like BACKEND/FRONTEND: the WhatsApp link page base
+  // (channels/config.ts linkPageUrl) and its fallback.
+  CHANNEL_LINK_BASE_URL: "runtime",
+  NEXTAUTH_URL: "runtime",
   // Found via `rg process\.env\.[A-Z0-9_]+ src ee` (Step 3 of the task brief):
   AUTH_MODE: "runtime", // "password" | "otp" mode selector, echoed by GET /config
   // Platform fallback model for POST /claims/check when the request names no

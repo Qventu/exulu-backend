@@ -2,6 +2,8 @@ process.env.NEXTAUTH_SECRET = "test-secret";
 // the channel tables exist only with the channels licence; tests switch it per case
 const LICENSED = "EXULU_EE_test";
 process.env.EXULU_ENTERPRISE_LICENSE = LICENSED;
+// the link page the linkRequired reply points to; enabling refuses without it
+process.env.CHANNEL_LINK_BASE_URL = "https://kunden.example.de";
 
 import express from "express";
 import request from "supertest";
@@ -365,6 +367,35 @@ describe("PUT /agents/:agentId/channels/whatsapp", () => {
     const res = await as(request(app).put(adminPath()), ADMIN).send({ enabled: true });
     expect(res.status).toBe(409);
     expect(res.body.reason).toBe("invalid_config");
+  });
+
+  it("enabling without a link page URL is a 409 link_url_not_configured, after the other reasons", async () => {
+    const saved = { link: process.env.CHANNEL_LINK_BASE_URL, auth: process.env.NEXTAUTH_URL };
+    delete process.env.CHANNEL_LINK_BASE_URL;
+    delete process.env.NEXTAUTH_URL;
+    try {
+      // an earlier reason still wins
+      const missingConfig = build({ seed: { agent_channels: [channelRow({ enabled: false, config: null })] } });
+      const first = await as(request(missingConfig.app).put(adminPath()), ADMIN).send({ enabled: true });
+      expect(first.body.reason).toBe("invalid_config");
+
+      const { app, tables } = build({ seed: { agent_channels: [channelRow({ enabled: false })] } });
+      const res = await as(request(app).put(adminPath()), ADMIN).send({ enabled: true });
+      expect(res.status).toBe(409);
+      expect(res.body.reason).toBe("link_url_not_configured");
+      expect(res.body.detail).toMatch(/CHANNEL_LINK_BASE_URL/);
+      expect(tables.agent_channels[0].enabled).toBe(false);
+
+      // NEXTAUTH_URL on the server process is enough
+      process.env.NEXTAUTH_URL = "https://newton.example.de";
+      const ok = await as(request(app).put(adminPath()), ADMIN).send({ enabled: true });
+      expect(ok.status).toBe(200);
+    } finally {
+      if (saved.link !== undefined) process.env.CHANNEL_LINK_BASE_URL = saved.link;
+      else delete process.env.CHANNEL_LINK_BASE_URL;
+      if (saved.auth !== undefined) process.env.NEXTAUTH_URL = saved.auth;
+      else delete process.env.NEXTAUTH_URL;
+    }
   });
 
   it("disabling needs none of that", async () => {
