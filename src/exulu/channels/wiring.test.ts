@@ -12,6 +12,7 @@ import {
   type ChannelStore,
 } from "./wiring";
 import { runLockKey } from "./run";
+import { ChannelSetupError, safeError } from "./log";
 import { replyText } from "./texts";
 import type { AgentChannelRow, WhatsAppChannelConfig } from "./types";
 import type { InboundMessage } from "./decide";
@@ -150,7 +151,7 @@ describe("createDecideDeps", () => {
     createDecideDeps({ row, config, db: fakeDb({ users: { id: 7 } }), store, env });
 
   it("links to the agent's public link page", () => {
-    expect(build().linkUrl).toBe("https://kunden.example.de/public/agents/agent-1/link/whatsapp");
+    expect(build().linkUrl()).toBe("https://kunden.example.de/public/agents/agent-1/link/whatsapp");
   });
 
   it("runInFlight reads the run lock key of this channel and identity", async () => {
@@ -288,5 +289,84 @@ describe("channelStoreFromRedis", () => {
     expect(client.eval).toHaveBeenCalledWith("script", { keys: ["k"], arguments: ["t"] });
     expect(await store.exists("k")).toBe(1);
     expect(await store.getDel("k")).toBe("v");
+  });
+});
+
+describe("a missing link URL variable", () => {
+  const unset = () => {
+    const saved = { link: process.env.CHANNEL_LINK_BASE_URL, auth: process.env.NEXTAUTH_URL };
+    delete process.env.CHANNEL_LINK_BASE_URL;
+    delete process.env.NEXTAUTH_URL;
+    return () => {
+      if (saved.link !== undefined) process.env.CHANNEL_LINK_BASE_URL = saved.link;
+      if (saved.auth !== undefined) process.env.NEXTAUTH_URL = saved.auth;
+    };
+  };
+
+  const setup = async (linked: boolean) => {
+    const post = jest.fn(async () => {});
+    const enqueue = jest.fn(async () => {});
+    let onMessage: ((msg: InboundMessage) => Promise<void>) | undefined;
+    const getTransport = jest.fn(async (_row: AgentChannelRow, deps: any) => {
+      onMessage = onMessage ?? deps.onMessage;
+      return { post, typing: jest.fn(async () => {}), markRead: jest.fn(async () => {}) } as any;
+    });
+    const store = new FakeStore();
+    const link = {
+      id: "l1",
+      channel: CHANNEL_ID,
+      identity: "4915112345678",
+      user: 7,
+      linked_at: new Date("2026-11-19T00:00:00Z"),
+      expires_at: new Date("2099-01-01T00:00:00Z"),
+      revoked_at: null,
+      last_seen_at: null,
+    };
+    const db: any = (table: string) => ({
+      where: () => ({
+        first: async () => (table === "channel_links" ? (linked ? link : undefined) : table === "users" ? { id: 7 } : row),
+        update: async () => 1,
+      }),
+    });
+    const deps = createChannelWebhookDeps(
+      makeEnv({ getDb: async () => db, getTransport, storeFor: () => store, enqueue }),
+    );
+    await deps.transportFor(row);
+    const message: InboundMessage = {
+      channelId: CHANNEL_ID,
+      threadId: "whatsapp:pn-1:4915112345678",
+      identity: "4915112345678",
+      messageId: "wamid.1",
+      text: "Wie tausche ich das Relais?",
+      hasAttachments: false,
+    };
+    return { post, enqueue, run: () => onMessage!(message) };
+  };
+
+  it("a linked user's message is still enqueued", async () => {
+    const restore = unset();
+    try {
+      const { enqueue, run } = await setup(true);
+      await run();
+      expect(enqueue).toHaveBeenCalledTimes(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("an unlinked sender gets no reply; the error names both variables and survives safeError", async () => {
+    const restore = unset();
+    try {
+      const { post, run } = await setup(false);
+      const error = await run().then(
+        () => undefined,
+        (e) => e,
+      );
+      expect(error).toBeInstanceOf(ChannelSetupError);
+      expect(post).not.toHaveBeenCalled();
+      expect(safeError(error).message).toMatch(/CHANNEL_LINK_BASE_URL.*NEXTAUTH_URL/);
+    } finally {
+      restore();
+    }
   });
 });

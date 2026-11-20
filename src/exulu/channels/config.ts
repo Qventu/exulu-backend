@@ -1,4 +1,5 @@
 import { decrypt, encrypt } from "@SRC/exulu/auth/credential-store";
+import { ChannelSetupError } from "./log";
 import {
   REPLY_KEYS,
   type AgentChannelRow,
@@ -147,7 +148,7 @@ export const linkPageUrl = (agentId: string): string => {
     .map((v) => (v ?? "").trim())
     .find((v) => v !== "");
   if (!base) {
-    throw new Error("Neither CHANNEL_LINK_BASE_URL nor NEXTAUTH_URL is set; the channel link page has no URL");
+    throw new ChannelSetupError("Neither CHANNEL_LINK_BASE_URL nor NEXTAUTH_URL is set; the channel link page has no URL");
   }
   return `${base.replace(/\/+$/, "")}/public/agents/${encodeURIComponent(agentId)}/link/whatsapp`;
 };

@@ -11,7 +11,7 @@ import { runChannelAgentTurn } from "./agent-turn";
 import { getTransport as defaultGetTransport, type TransportDeps } from "./chat-instance";
 import { parseChannelConfig } from "./config";
 import { createLinkStore, linkState } from "./links";
-import { sanitizedError } from "./log";
+import { ChannelSetupError, sanitizedError } from "./log";
 import { getChannelPgPool } from "./pg-pool";
 import { handleChannelMessage, type ChannelMessageJob, type RunDeps } from "./run";
 import { createRunLock } from "./run-lock";
@@ -95,7 +95,7 @@ export const createChannelSessions = (db: Knex): RunDeps["sessions"] => ({
 export const createRunDeps = async (env: ChannelWorkerEnv): Promise<RunDeps> => {
   const db = await env.getDb();
   const client = await env.getRedis();
-  if (!client) throw new Error("redis unavailable");
+  if (!client) throw new ChannelSetupError("redis unavailable");
   const store = channelStoreFromRedis(client);
 
   let loadedRow: AgentChannelRow | null = null;
@@ -103,9 +103,9 @@ export const createRunDeps = async (env: ChannelWorkerEnv): Promise<RunDeps> => 
   const transportDeps: TransportDeps = { pgPool: getChannelPgPool() };
   const now = env.now ?? (() => new Date());
   const transport = async () => {
-    if (!loadedRow) throw new Error("no channel loaded for this job");
+    if (!loadedRow) throw new ChannelSetupError("no channel loaded for this job");
     const t = await (env.getTransport ?? defaultGetTransport)(loadedRow, transportDeps);
-    if (!t) throw new Error(`channel ${loadedRow.id} has no usable credentials`);
+    if (!t) throw new ChannelSetupError(`channel ${loadedRow.id} has no usable credentials`);
     return t;
   };
 

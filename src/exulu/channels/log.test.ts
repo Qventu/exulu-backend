@@ -1,4 +1,4 @@
-import { safeError, sanitizedError } from "./log";
+import { ChannelSetupError, safeError, sanitizedError } from "./log";
 
 const leaky = () => {
   const e = new Error(`insert into "channel_links" values ('4915112345678', 'Wie tausche ich das Relais?')`) as Error & {
@@ -40,5 +40,18 @@ describe("sanitizedError", () => {
     const e = sanitizedError("channel_message job failed on channel c1", leaky());
     expect(e.message).toBe("channel_message job failed on channel c1 (Error 23505)");
     expect(e.stack ?? "").not.toMatch(/4915112345678|Relais/);
+  });
+});
+
+describe("ChannelSetupError", () => {
+  it("keeps its own message, which this module writes and which holds no user data", () => {
+    expect(safeError(new ChannelSetupError("redis unavailable"))).toEqual({
+      name: "ChannelSetupError",
+      message: "redis unavailable",
+    });
+  });
+
+  it("any other error still loses its message", () => {
+    expect(safeError(new Error("secret 4915112345678"))).toEqual({ name: "Error" });
   });
 });

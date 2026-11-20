@@ -1,4 +1,5 @@
 import { decideInbound, isUserActive, type DecideDeps, type InboundMessage } from "./decide";
+import { ChannelSetupError } from "./log";
 import type { ChannelLink } from "./links";
 
 const NOW = new Date("2026-11-16T12:00:00Z");
@@ -30,7 +31,7 @@ const makeDeps = (over: Partial<DecideDeps> = {}) => {
   const deps = {
     now: () => NOW,
     config: { linkTtlDays: 30 } as any,
-    linkUrl: "https://app.example/link",
+    linkUrl: jest.fn(() => "https://app.example/link"),
     links: {
       find: jest.fn(async () => link()),
       upsert: jest.fn(async (p: any) => link({ user: p.userId, expires_at: new Date("2026-12-16T12:00:00Z") })),
@@ -311,5 +312,35 @@ describe("isUserActive", () => {
     expect(isUserActive({})).toBe(true);
     expect(isUserActive({ status: null })).toBe(true);
     expect(isUserActive({ status: "disabled" })).toBe(true); // no deactivation rule exists today
+  });
+});
+
+describe("decideInbound: link URL only when a link reply is built", () => {
+  const missing = () =>
+    jest.fn((): string => {
+      throw new ChannelSetupError("Neither CHANNEL_LINK_BASE_URL nor NEXTAUTH_URL is set");
+    });
+
+  it("a linked user still decides run when the link URL cannot be built", async () => {
+    const linkUrl = missing();
+    const deps = makeDeps({ linkUrl });
+    expect(await decideInbound(msg(), deps)).toEqual({ kind: "run", userId: 7, newSession: false });
+    expect(linkUrl).not.toHaveBeenCalled();
+  });
+
+  it("an unlinked sender's message rejects with ChannelSetupError and no reply", async () => {
+    const deps = makeDeps({ linkUrl: missing(), links: { ...makeDeps().links, find: jest.fn(async () => undefined) } });
+    await expect(decideInbound(msg(), deps)).rejects.toBeInstanceOf(ChannelSetupError);
+  });
+
+  it("the URL is not built when the prompt window is used", async () => {
+    const linkUrl = missing();
+    const deps = makeDeps({
+      linkUrl,
+      linkPromptAllowed: jest.fn(async () => false),
+      links: { ...makeDeps().links, find: jest.fn(async () => undefined) },
+    });
+    expect(await decideInbound(msg(), deps)).toEqual({ kind: "silent" });
+    expect(linkUrl).not.toHaveBeenCalled();
   });
 });

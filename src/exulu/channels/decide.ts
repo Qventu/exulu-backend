@@ -20,7 +20,8 @@ export type Decision =
 export interface DecideDeps {
   now: () => Date;
   config: WhatsAppChannelConfig;
-  linkUrl: string;
+  /** Built only when a linkRequired reply is sent; may throw ChannelSetupError (no URL configured). */
+  linkUrl: () => string;
   links: Pick<ReturnType<typeof createLinkStore>, "find" | "upsert" | "revoke" | "touch">;
   consumeCode(code: string): Promise<{ channelId: string; userId: number } | null>;
   /** Counts the attempt when called: call once per code-shaped message only. */
@@ -58,7 +59,7 @@ const reply = (key: ReplyKey, vars?: { linkUrl?: string; expiresAt?: Date }): De
 /** Step 4 outcome: ask to link, at most once per window, otherwise stay silent. */
 const notLinked = async (msg: InboundMessage, deps: DecideDeps): Promise<Decision> =>
   (await deps.linkPromptAllowed(msg.identity))
-    ? reply("linkRequired", { linkUrl: deps.linkUrl })
+    ? reply("linkRequired", { linkUrl: deps.linkUrl() })
     : { kind: "silent" };
 
 /**

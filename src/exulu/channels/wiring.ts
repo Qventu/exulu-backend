@@ -9,6 +9,7 @@ import { decideInbound, type DecideDeps, type InboundMessage } from "./decide";
 import { channelAccessAllowed, type GuestAgent } from "./access";
 import { codeAttemptsExceeded, consumeCode, linkPromptAllowed, type KeyValueStore } from "./link-codes";
 import { createLinkStore } from "./links";
+import { ChannelSetupError } from "./log";
 import { getChannelPgPool } from "./pg-pool";
 import { runLockKey, type ChannelMessageJob } from "./run";
 import { createRunLock, type LockRedis } from "./run-lock";
@@ -63,7 +64,8 @@ export const createDecideDeps = (p: {
   return {
     now: env.now ?? (() => new Date()),
     config,
-    linkUrl: linkPageUrl(row.agent),
+    // lazily: a missing URL variable must only affect the link reply, never linked users
+    linkUrl: () => linkPageUrl(row.agent),
     links: createLinkStore(db),
     consumeCode: (code) => consumeCode(store, code),
     codeAttemptsExceeded: (identity) => codeAttemptsExceeded(store, row.id, identity),
@@ -94,14 +96,14 @@ const handleInbound = async (
   transportDeps: TransportDeps,
 ): Promise<void> => {
   const client = await readyClient(env);
-  if (!client) throw new Error("redis unavailable");
+  if (!client) throw new ChannelSetupError("redis unavailable");
   const store = (env.storeFor ?? channelStoreFromRedis)(client);
   const config = parseChannelConfig(row.config);
   const db = await env.getDb();
   const decision = await decideInbound(msg, createDecideDeps({ row, config, db, store, env }));
   // the instance that is handling this message, from the transport cache
   const transport = await (env.getTransport ?? defaultGetTransport)(row, transportDeps);
-  if (!transport) throw new Error("channel transport unavailable");
+  if (!transport) throw new ChannelSetupError("channel transport unavailable");
   await actOnDecision(msg, decision, { config, transport, enqueue: env.enqueue, store });
 };
 

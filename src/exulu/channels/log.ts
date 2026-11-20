@@ -7,6 +7,20 @@
 export interface SafeError {
   name: string;
   code?: string;
+  /** only for ChannelSetupError */
+  message?: string;
+}
+
+/**
+ * An error whose message is written by this module and never contains user data
+ * (configuration problems, unavailable infrastructure). safeError keeps its message,
+ * so the operator can see the cause.
+ */
+export class ChannelSetupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ChannelSetupError";
+  }
 }
 
 const CODE = /^[A-Za-z0-9_.-]{1,32}$/;
@@ -19,11 +33,13 @@ export const safeError = (error: unknown): SafeError => {
         : "Error"
       : typeof error;
   const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && CODE.test(code) ? { name, code } : { name };
+  const safe: SafeError = typeof code === "string" && CODE.test(code) ? { name, code } : { name };
+  if (error instanceof ChannelSetupError) safe.message = error.message;
+  return safe;
 };
 
 /** A plain Error carrying only the safe parts, for errors that leave the channel code (BullMQ stores failedReason). */
 export const sanitizedError = (context: string, error: unknown): Error => {
   const safe = safeError(error);
-  return new Error(`${context} (${safe.name}${safe.code ? ` ${safe.code}` : ""})`);
+  return new Error(`${context} (${safe.name}${safe.code ? ` ${safe.code}` : ""}${safe.message ? `: ${safe.message}` : ""})`);
 };
