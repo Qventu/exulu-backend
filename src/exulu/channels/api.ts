@@ -2,6 +2,7 @@ import { randomBytes } from "crypto";
 import type { Express, Request, Response } from "express";
 import type { Knex } from "knex";
 import type { User } from "@EXULU_TYPES/models/user";
+import { checkLicense } from "@EE/entitlements.ts";
 import { channelAccessAllowed, type GuestAgent } from "./access";
 import { createChannelAuditor } from "./audit";
 import {
@@ -130,8 +131,15 @@ const codeIssueLimitExceeded = async (kv: KeyValueStore, userId: number): Promis
 
 // --- auto-disable and clean-up (called from the agent mutations) -------------------------
 
+/**
+ * The channel tables exist only with the `channels` licence (core-schema), so every helper
+ * below is a no-op without it. Read at call time: the licence is an environment variable.
+ */
+const channelsLicensed = (): boolean => checkLicense()["channels"] === true;
+
 /** Turns off every channel of this agent; bumps updatedAt so cached transports are dropped. */
 export const disableChannelsForAgent = async (db: Knex, agentId: string, now: Date = new Date()): Promise<void> => {
+  if (!channelsLicensed()) return;
   await db(TABLE).where({ agent: agentId, enabled: true }).update({ enabled: false, updatedAt: now });
 };
 
@@ -140,16 +148,46 @@ export const syncChannelsWithGuestAccess = async (
   db: Knex,
   agent: { id: string; guest_access?: boolean | null; guest_auth_mode?: string | null },
 ): Promise<void> => {
-  if (!agent?.id) return;
+  if (!channelsLicensed() || !agent?.id) return;
   if (!canEnableChannel(agent).ok) await disableChannelsForAgent(db, agent.id);
 };
 
 /** There are no foreign keys on the channel tables: an agent's deletion removes them here. */
 export const deleteChannelsForAgent = async (db: Knex, agentId: string): Promise<void> => {
+  if (!channelsLicensed()) return;
   const rows: { id: string }[] = await db(TABLE).where({ agent: agentId }).select("id");
   const ids = rows.map((r) => r.id);
   if (ids.length > 0) await db("channel_links").whereIn("channel", ids).del();
   await db(TABLE).where({ agent: agentId }).del();
+};
+
+const touchesGuestFields = (input: unknown): boolean =>
+  isPlainObject(input) && ("guest_access" in input || "guest_auth_mode" in input);
+
+/**
+ * For the generic agent mutations, after an agent write. Never throws: the agent write has
+ * already happened, and the inbound gate (channelAccessAllowed) refuses a channel whose agent
+ * is no longer guest-accessible, so a failed clean-up is a logged inconsistency only.
+ */
+export const afterAgentWrite = async (db: Knex, agent: unknown, changedFields: unknown): Promise<void> => {
+  if (!touchesGuestFields(changedFields) || !isPlainObject(agent) || typeof agent.id !== "string") return;
+  if (!channelsLicensed()) return;
+  try {
+    await syncChannelsWithGuestAccess(db, agent as { id: string });
+  } catch (error) {
+    console.error(`${LOG} disabling the channels of agent ${agent.id} failed`, safeError(error));
+  }
+};
+
+/** For the generic agent mutations, after an agent delete. Never throws (see afterAgentWrite). */
+export const afterAgentDelete = async (db: Knex, agentId: unknown): Promise<void> => {
+  if (typeof agentId !== "string" || agentId === "") return;
+  if (!channelsLicensed()) return;
+  try {
+    await deleteChannelsForAgent(db, agentId);
+  } catch (error) {
+    console.error(`${LOG} removing the channels of agent ${agentId} failed`, safeError(error));
+  }
 };
 
 // --- routes -------------------------------------------------------------------------------
@@ -394,7 +432,9 @@ export const registerChannelApi = (app: Express, deps: ChannelApiDeps): void => 
       if (response.ok) {
         const name = clean(json?.verified_name);
         const number = clean(json?.display_phone_number);
-        return void result(true, name || number ? `Connected: ${[name, number].filter(Boolean).join(", ")}` : "Connected.");
+        // a 2xx that is not Graph's answer for a phone number (not JSON, fields missing) is no proof
+        if (!name || !number) return void result(false, "Meta answered, but not with the expected phone number details.");
+        return void result(true, `Connected: ${name}, ${number}`);
       }
       result(false, clean(json?.error?.message) ?? `Meta answered with HTTP ${response.status}.`);
     }),
@@ -470,7 +510,10 @@ export const registerChannelApi = (app: Express, deps: ChannelApiDeps): void => 
       if (!deps.entitled()) return void res.status(404).json(NOT_FOUND);
       const found = await customerChannel(req, { requireEnabled: true });
       const config = found ? tryParseConfig(found.row.config) : null;
-      if (!found || !config) return void res.status(404).json(NOT_FOUND);
+      // canEnableChannel too: evaluateGuestChatAccess lets any signed-in user through whenever
+      // guest_access is on, whatever the mode, so a channel left enabled on a public- or
+      // password-mode agent (failed or raced auto-disable) must not issue codes
+      if (!found || !config || !canEnableChannel(found.agent).ok) return void res.status(404).json(NOT_FOUND);
       const { db, agent, row } = found;
 
       // the same check the inbound gate and the worker run, so linking and messaging agree

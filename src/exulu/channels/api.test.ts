@@ -1,10 +1,15 @@
 process.env.NEXTAUTH_SECRET = "test-secret";
+// the channel tables exist only with the channels licence; tests switch it per case
+const LICENSED = "EXULU_EE_test";
+process.env.EXULU_ENTERPRISE_LICENSE = LICENSED;
 
 import express from "express";
 import request from "supertest";
 
 import {
   CODE_ISSUE_LIMIT,
+  afterAgentDelete,
+  afterAgentWrite,
   GRAPH_HOST,
   deleteChannelsForAgent,
   disableChannelsForAgent,
@@ -486,6 +491,17 @@ describe("POST /agents/:agentId/channels/whatsapp/test", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["not JSON", new Response("<html>ok</html>", { status: 200 })],
+    ["JSON without the fields", new Response(JSON.stringify({ id: "1234567890" }), { status: 200 })],
+    ["JSON with only one field", new Response(JSON.stringify({ verified_name: "Newlift" }), { status: 200 })],
+  ])("a 2xx that is %s is not a success", async (_n, response) => {
+    const { app, fetchMock } = build({ seed: { agent_channels: [channelRow()] } });
+    fetchMock.mockResolvedValue(response);
+    const res = await as(request(app).post(`${adminPath()}/test`), ADMIN);
+    expect(res.body).toEqual({ ok: false, detail: "Meta answered, but not with the expected phone number details." });
+  });
+
   it("refuses without credentials without calling out", async () => {
     const { app, fetchMock } = build({ seed: { agent_channels: [channelRow({ secrets: null })] } });
     const res = await as(request(app).post(`${adminPath()}/test`), ADMIN);
@@ -584,6 +600,27 @@ describe("POST /public-agents/:id/channels/whatsapp/link-code", () => {
     for (const r of [disabled, noChannel, unknown, bad]) expect(r.status).toBe(404);
     expect(new Set([disabled, noChannel, unknown, bad].map((r) => JSON.stringify(r.body))).size).toBe(1);
   });
+
+  it.each([PUBLIC_MODE_AGENT, "password"])(
+    "404 (same body) for a still-enabled channel on an agent that cannot carry one (%s)",
+    async (which) => {
+      const agentId = which === "password" ? OTHER_AGENT : PUBLIC_MODE_AGENT;
+      const saved = { ...agents[OTHER_AGENT] };
+      if (which === "password") agents[OTHER_AGENT] = { ...saved, guest_auth_mode: "password" };
+      try {
+        const { app, data } = build({
+          seed: { agent_channels: [channelRow({ agent: agentId }), channelRow({ id: "c1000000-0000-4000-8000-000000000003", agent: MISSING_AGENT })] },
+        });
+        const res = await as(request(app).post(linkCodePath(agentId)), CUSTOMER);
+        const unknown = await as(request(app).post(linkCodePath(MISSING_AGENT)), CUSTOMER);
+        expect(res.status).toBe(404);
+        expect(res.body).toEqual(unknown.body);
+        expect(data.size).toBe(0); // no code issued, no counter touched
+      } finally {
+        agents[OTHER_AGENT] = saved;
+      }
+    },
+  );
 
   it("404 when not entitled", async () => {
     const { app } = build({ seed: { agent_channels: [channelRow()] }, deps: { entitled: () => false } });
@@ -769,5 +806,73 @@ describe("disableChannelsForAgent / syncChannelsWithGuestAccess / deleteChannels
     await deleteChannelsForAgent(db, AGENT_ID);
     expect(tables.agent_channels.map((r: any) => r.id)).toEqual(["c2"]);
     expect(tables.channel_links.map((r: any) => r.id)).toEqual(["l2"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Licence gate and the never-throwing wrappers for the agent mutations
+
+const recordingDb = (opts: { fail?: boolean } = {}) => {
+  const { db: inner, tables } = fakeDb({
+    agent_channels: [channelRow(), channelRow({ id: "c2", agent: OTHER_AGENT })],
+    channel_links: [linkRow({ channel: channelRow().id }), linkRow({ id: "l2", channel: "c2" })],
+  });
+  const queries: string[] = [];
+  const db: any = (t: string) => {
+    queries.push(t);
+    if (opts.fail) throw new Error('relation "agent_channels" does not exist');
+    return inner(t);
+  };
+  return { db, tables, queries };
+};
+
+describe("without the channels licence nothing touches the channel tables", () => {
+  beforeEach(() => {
+    process.env.EXULU_ENTERPRISE_LICENSE = "";
+  });
+  afterEach(() => {
+    process.env.EXULU_ENTERPRISE_LICENSE = LICENSED;
+  });
+
+  it("disable, sync, delete and both wrappers make zero queries", async () => {
+    const { db, queries } = recordingDb();
+    const unpublished = { id: AGENT_ID, guest_access: false, guest_auth_mode: "regular" };
+    await disableChannelsForAgent(db, AGENT_ID);
+    await syncChannelsWithGuestAccess(db, unpublished);
+    await deleteChannelsForAgent(db, AGENT_ID);
+    await afterAgentWrite(db, unpublished, { guest_access: false });
+    await afterAgentDelete(db, AGENT_ID);
+    expect(queries).toEqual([]);
+  });
+});
+
+describe("afterAgentWrite / afterAgentDelete", () => {
+  it("unpublishing disables the agent's channels; deleting removes them with their links", async () => {
+    const { db, tables } = recordingDb();
+    await afterAgentWrite(db, { id: AGENT_ID, guest_access: false, guest_auth_mode: "regular" }, { guest_access: false });
+    expect(tables.agent_channels.map((r: any) => r.enabled)).toEqual([false, true]);
+    await afterAgentDelete(db, AGENT_ID);
+    expect(tables.agent_channels.map((r: any) => r.id)).toEqual(["c2"]);
+    expect(tables.channel_links.map((r: any) => r.id)).toEqual(["l2"]);
+  });
+
+  it("an agent write without guest fields makes no query", async () => {
+    const { db, queries } = recordingDb();
+    await afterAgentWrite(db, { id: AGENT_ID, guest_access: false }, { name: "x" });
+    expect(queries).toEqual([]);
+  });
+
+  it("a failing table query resolves and logs one safe line with the agent id", async () => {
+    const { db } = recordingDb({ fail: true });
+    await expect(
+      afterAgentWrite(db, { id: AGENT_ID, guest_access: false }, { guest_access: false }),
+    ).resolves.toBeUndefined();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain(AGENT_ID);
+    expect(logs[0]).not.toContain("does not exist");
+    await expect(afterAgentDelete(db, AGENT_ID)).resolves.toBeUndefined();
+    expect(logs).toHaveLength(2);
+    expect(logs[1]).toContain(AGENT_ID);
+    expect(logs[1]).not.toContain("does not exist");
   });
 });

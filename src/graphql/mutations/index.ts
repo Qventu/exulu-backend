@@ -24,7 +24,7 @@ import { startImport, cancelImport, StartImportError } from "@SRC/exulu/import/s
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
-import { deleteChannelsForAgent, syncChannelsWithGuestAccess } from "@SRC/exulu/channels/api";
+import { afterAgentDelete, afterAgentWrite } from "@SRC/exulu/channels/api";
 import { shouldGenerateEmbeddings } from "./should-generate-embeddings";
 import { changeContextEmbedder } from "@SRC/exulu/embedder-change";
 import { dropProjection } from "@SRC/exulu/projection/store";
@@ -53,12 +53,6 @@ import { canWritePublicSkill } from "@SRC/skills/skill-access";
 // Same allow-list as utils/check-item-write-access.ts — the modes a client
 // may explicitly set on create.
 const VALID_RIGHTS_MODES = ["private", "users", "roles", "teams", "public"];
-
-// WhatsApp channel spec: an agent that stops being guest-accessible in regular mode loses its
-// channels. These mutations run without a transaction, so this runs right after the agent
-// write; the inbound gate (channelAccessAllowed) refuses such an agent's messages anyway.
-const touchesGuestFields = (input: Record<string, unknown> | undefined): boolean =>
-  !!input && ("guest_access" in input || "guest_auth_mode" in input);
 
 const postprocessDeletion = async ({
   table,
@@ -665,8 +659,9 @@ export function createMutations(
 
       let results = await insert;
 
-      if (tableNamePlural === "agents" && args.upsert && touchesGuestFields(args.input) && results[0]) {
-        await syncChannelsWithGuestAccess(db, results[0]);
+      // WhatsApp channel: never throws, a no-op without the channels licence
+      if (tableNamePlural === "agents" && args.upsert) {
+        await afterAgentWrite(db, results[0], args.input);
       }
 
       // Handle RBAC records if provided
@@ -812,8 +807,9 @@ export function createMutations(
         throw new Error("Something went wrong with the update, no id returned.");
       }
 
-      if (tableNamePlural === "agents" && touchesGuestFields(args.input)) {
-        await syncChannelsWithGuestAccess(db, result);
+      // WhatsApp channel: never throws, a no-op without the channels licence
+      if (tableNamePlural === "agents") {
+        await afterAgentWrite(db, result, args.input);
       }
 
       // Update RBAC records if provided
@@ -962,8 +958,9 @@ export function createMutations(
         .where({ id })
         .first();
 
-      if (tableNamePlural === "agents" && touchesGuestFields(args.input) && result) {
-        await syncChannelsWithGuestAccess(db, result);
+      // WhatsApp channel: never throws, a no-op without the channels licence
+      if (tableNamePlural === "agents") {
+        await afterAgentWrite(db, result, args.input);
       }
       const { job } = await postprocessUpdate({
         table,
@@ -1018,11 +1015,6 @@ export function createMutations(
 
       await db(tableNamePlural).where({ id }).del();
 
-      // no foreign keys on the channel tables: remove the agent's channels and links here
-      if (tableNamePlural === "agents") {
-        await deleteChannelsForAgent(db, id);
-      }
-
       if (table.RBAC) {
         await db
           .from("rbac")
@@ -1040,6 +1032,12 @@ export function createMutations(
         tools,
         result,
       });
+
+      // No foreign keys on the channel tables: remove the agent's WhatsApp channels and links.
+      // Last, after everything that existed before; never throws, a no-op without the licence.
+      if (tableNamePlural === "agents") {
+        await afterAgentDelete(db, id);
+      }
       return finalizeRequestedFields({
         args,
         table,
@@ -1082,10 +1080,6 @@ export function createMutations(
       // Delete by the resolved id — safer than re-applying the filter and
       // matches the UpdateOne pattern above (`.where({id: item.id})`).
       await db(tableNamePlural).where({ id: result.id }).del();
-
-      if (tableNamePlural === "agents") {
-        await deleteChannelsForAgent(db, result.id);
-      }
       await postprocessDeletion({
         table,
         requestedFields,
@@ -1093,6 +1087,11 @@ export function createMutations(
         tools,
         result,
       });
+
+      // see RemoveOneById: last, never throws, a no-op without the licence
+      if (tableNamePlural === "agents") {
+        await afterAgentDelete(db, result.id);
+      }
       return finalizeRequestedFields({
         args,
         table,
