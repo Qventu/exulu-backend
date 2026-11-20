@@ -4,6 +4,7 @@ import { createLinkStore } from "./links";
 import { safeError } from "./log";
 
 const LOG = "[EXULU-CHANNEL]";
+const TABLE = "channel_links";
 
 /**
  * The channel tables exist only on installations licensed for `channels`. The generic user
@@ -19,6 +20,7 @@ const channelsLicensed = (): boolean => checkLicense()["channels"] === true;
 export const channelLinksForExport = async (db: Knex, userId: number): Promise<unknown[]> => {
   if (!channelsLicensed()) return [];
   try {
+    if (!(await db.schema.hasTable(TABLE))) return [];
     const links = await createLinkStore(db).listAllForUser(userId);
     return links.map((l) => ({
       channel: l.channel,
@@ -43,6 +45,8 @@ export const afterUserDelete = async (db: Knex, userId: unknown): Promise<void> 
   const id = Number(userId);
   if (!Number.isFinite(id)) return;
   if (!channelsLicensed()) return;
+  // Licence added but the schema not yet initialised: no table, no personal data. Same guard as claim_checks.
+  if (!(await db.schema.hasTable(TABLE))) return;
   await createLinkStore(db).deleteForUser(id);
 };
 
@@ -51,6 +55,6 @@ export const afterUserDeleteBestEffort = async (db: Knex, userId: unknown): Prom
   try {
     await afterUserDelete(db, userId);
   } catch (error) {
-    console.error(`${LOG} removing the links of a deleted user failed`, safeError(error));
+    console.error(`${LOG} removing the links of deleted user ${Number(userId)} failed`, safeError(error));
   }
 };

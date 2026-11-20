@@ -36,6 +36,7 @@ const strictDb = (rows: any[] = []) => {
     };
     return q;
   };
+  db.schema = { hasTable: async () => true };
   return { db, queries, rows };
 };
 const throwingDb = () => {
@@ -44,6 +45,7 @@ const throwingDb = () => {
     queries.push(table);
     throw new Error(`relation "channel_links" does not exist`);
   };
+  db.schema = { hasTable: async () => true };
   return { db, queries };
 };
 
@@ -57,6 +59,26 @@ const row = (o: any) => ({
   revoked_at: null,
   last_seen_at: null,
   ...o,
+});
+
+const noTableDb = () => {
+  const { db, queries } = throwingDb();
+  db.schema = { hasTable: async () => false };
+  return { db, queries };
+};
+
+describe("licensed install without the channel_links table", () => {
+  it("export, delete and best-effort delete resolve with zero queries and no error line", async () => {
+    licensed();
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    const { db, queries } = noTableDb();
+    await expect(channelLinksForExport(db, 7)).resolves.toEqual([]);
+    await expect(afterUserDelete(db, 7)).resolves.toBeUndefined();
+    await expect(afterUserDeleteBestEffort(db, 7)).resolves.toBeUndefined();
+    expect(queries).toEqual([]);
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
 });
 
 describe("channelLinksForExport", () => {
@@ -122,6 +144,7 @@ describe("afterUserDelete", () => {
     const { db } = throwingDb();
     await expect(afterUserDeleteBestEffort(db, 7)).resolves.toBeUndefined();
     expect(error).toHaveBeenCalled();
+    expect(String(error.mock.calls[0][0])).toContain("deleted user 7");
     expect(JSON.stringify(error.mock.calls)).not.toContain("channel_links");
     error.mockRestore();
   });
