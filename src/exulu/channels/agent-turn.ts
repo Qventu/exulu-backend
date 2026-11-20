@@ -15,6 +15,7 @@ import { resolveModel } from "../resolve-model";
 import { resolveContextWindow } from "../resolve-context-window";
 import { markSessionAnswered, markSessionGenerating, markSessionIdle } from "../session-activity";
 import { PUBLIC_SURFACE_HEADER } from "../public-surface";
+import { stripCitations } from "./plain-text";
 
 /**
  * A channel turn has no browser request. This header is what the public agent page's
@@ -58,6 +59,7 @@ export const loadTurnUser = async (db: Knex, userId: number): Promise<User | und
  * glossary-extended instructions. That branch persists nothing, so the turn is saved
  * here the way the stream branch's onFinish does (saveChat + session activity marks),
  * which is what puts it in the user's history and gives the next turn its context.
+ * The returned text has the inline citation markup removed (plain-text.ts).
  */
 export const runChannelAgentTurn = async (
   p: { agentId: string; userId: number; sessionId: string; text: string },
@@ -117,5 +119,8 @@ export const runChannelAgentTurn = async (
     model: resolved.model.id,
   });
   await markSessionAnswered(db, p.sessionId);
-  return text;
+  // The history keeps the citations (the web chat renders them); WhatsApp gets plain text.
+  // Nothing but citations → empty, so the caller posts runFailed.
+  const plain = stripCitations(text);
+  return plain.trim() === "" ? "" : plain;
 };

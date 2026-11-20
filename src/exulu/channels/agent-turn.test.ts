@@ -106,6 +106,21 @@ describe("runChannelAgentTurn", () => {
     expect(markSessionIdle).not.toHaveBeenCalled();
   });
 
+  it("persists the answer with its citations and returns it without them", async () => {
+    const cited = "Das Relais tauschen Sie so {item_name: FST.pdf, item_id: i1, context: tech_doc, chunk_id: c1, chunk_index: 0}.";
+    m(generateSync).mockResolvedValue(cited);
+    expect(await runChannelAgentTurn(turn, ctx())).toBe("Das Relais tauschen Sie so.");
+    expect(m(saveChat).mock.calls[0][0].messages[1].parts).toEqual([{ type: "text", text: cited }]);
+    expect(markSessionAnswered).toHaveBeenCalled();
+  });
+
+  it("an answer that is only citations is persisted and returned empty", async () => {
+    const cited = "{item_name: FST.pdf, item_id: i1, context: tech_doc, chunk_id: c1, chunk_index: 0}";
+    m(generateSync).mockResolvedValue(cited);
+    expect(await runChannelAgentTurn(turn, ctx())).toBe("");
+    expect(m(saveChat).mock.calls[0][0].messages[1].parts).toEqual([{ type: "text", text: cited }]);
+  });
+
   it("a failing run persists nothing, leaves the session idle and rethrows", async () => {
     m(generateSync).mockRejectedValue(new Error("model down"));
     await expect(runChannelAgentTurn(turn, ctx())).rejects.toThrow("model down");
