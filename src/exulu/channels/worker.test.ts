@@ -157,6 +157,7 @@ describe("createRunDeps", () => {
   const makeEnv = (over: Partial<ChannelWorkerEnv> = {}): ChannelWorkerEnv => ({
     getDb: async () => tableDb(row),
     getRedis: async () => new FakeRedis() as any,
+    loadAgent: async () => ({ id: "agent-1", guest_access: true }),
     runAgentTurn: jest.fn(async () => "answer"),
     ...over,
   });
@@ -190,12 +191,12 @@ describe("createRunDeps", () => {
     expect(redis.values.has(key)).toBe(false);
   });
 
-  it("posts through the transport of the loaded channel, with a no-op message handler", async () => {
+  it("posts through a post-only transport of the loaded channel", async () => {
     const post = jest.fn(async () => {});
     const typing = jest.fn(async () => {});
     const getTransport = jest.fn(async (_row: AgentChannelRow, deps: any) => {
       expect(deps.pgPool).toEqual({ fake: "pool" });
-      await expect(deps.onMessage({})).resolves.toBeUndefined();
+      expect(deps.onMessage).toBeUndefined();
       return { post, typing } as any;
     });
     const deps = await createRunDeps(makeEnv({ getTransport }));
@@ -209,27 +210,106 @@ describe("createRunDeps", () => {
   });
 });
 
+describe("stillAllowed", () => {
+  const NOW = new Date("2026-11-20T12:00:00Z");
+  const validLink = {
+    id: "l1",
+    channel: CHANNEL_ID,
+    identity: job.identity,
+    user: 7,
+    linked_at: new Date("2026-11-19T12:00:00Z"),
+    expires_at: new Date("2026-11-26T12:00:00Z"),
+    revoked_at: null,
+    last_seen_at: null,
+  };
+  const dbWith = (link: unknown, opts: { userDeleted?: boolean } = {}) => {
+    const user = opts.userDeleted ? undefined : { id: 7 };
+    const calls: Array<{ table: string; where: unknown }> = [];
+    const db: any = (table: string) => ({
+      where: (where: unknown) => {
+        calls.push({ table, where });
+        const value = table === "channel_links" ? link : table === "users" ? user : table === "agent_channels" ? row : undefined;
+        return { first: async () => value };
+      },
+    });
+    db.calls = calls;
+    return db;
+  };
+  const check = async (db: any, loadAgent: ChannelWorkerEnv["loadAgent"] = async () => ({ id: "agent-1", guest_access: true })) => {
+    const deps = await createRunDeps({
+      getDb: async () => db,
+      getRedis: async () => new FakeRedis() as any,
+      loadAgent,
+      runAgentTurn: jest.fn(),
+      now: () => NOW,
+    });
+    return deps.stillAllowed(job, row);
+  };
+
+  it("valid link of the job's user with access → true, checked against the channel's current agent", async () => {
+    const loadAgent = jest.fn(async () => ({ id: "agent-1", guest_access: true }));
+    const db = dbWith(validLink);
+    expect(await check(db, loadAgent)).toBe(true);
+    expect(db.calls[0]).toEqual({ table: "channel_links", where: { channel: CHANNEL_ID, identity: job.identity } });
+    expect(loadAgent).toHaveBeenCalledWith("agent-1");
+  });
+
+  it.each([
+    ["no link", undefined],
+    ["revoked link", { ...validLink, revoked_at: new Date("2026-11-20T10:00:00Z") }],
+    ["expired link", { ...validLink, expires_at: new Date("2026-11-20T11:00:00Z") }],
+    ["link now belonging to another user", { ...validLink, user: 8 }],
+  ])("%s → false", async (_label, link) => {
+    expect(await check(dbWith(link))).toBe(false);
+  });
+
+  it("access withdrawn (agent no longer guest-published) → false", async () => {
+    expect(await check(dbWith(validLink), async () => ({ id: "agent-1", guest_access: false }))).toBe(false);
+  });
+
+  it("user deleted → false", async () => {
+    expect(await check(dbWith(validLink, { userDeleted: true }))).toBe(false);
+  });
+});
+
 describe("runChannelMessageJob", () => {
-  it("runs the job and returns only ids and the outcome, never text", async () => {
-    const redis = new FakeRedis();
-    const post = jest.fn(async () => {});
-    const db: any = (table: string) => {
-      if (table === "agent_channels") return { where: () => ({ first: async () => row }) };
+  const link = {
+    id: "l1",
+    channel: CHANNEL_ID,
+    identity: job.identity,
+    user: 7,
+    linked_at: new Date("2026-11-19T12:00:00Z"),
+    expires_at: new Date("2099-01-01T00:00:00Z"),
+    revoked_at: null,
+    last_seen_at: null,
+  };
+  /** agent_channels, channel_links, users answer by table; agent_sessions finds or inserts. */
+  const jobDb = (session: { find?: string; insert?: string }) =>
+    ((table: string) => {
+      const byTable: Record<string, unknown> = { agent_channels: row, channel_links: link, users: { id: 7 } };
+      if (table in byTable) return { where: () => ({ first: async () => byTable[table] }) };
       const builder: any = {
         where: () => builder,
         whereNull: () => builder,
         whereRaw: () => builder,
         orderByRaw: () => builder,
-        first: async () => ({ id: "sess-1" }),
+        first: async () => (session.find ? { id: session.find } : undefined),
+        insert: () => ({ returning: async () => [{ id: session.insert }] }),
       };
       return builder;
-    };
+    }) as any;
+  const loadAgent = async () => ({ id: "agent-1", guest_access: true });
+
+  it("runs the job and returns only ids and the outcome, never text", async () => {
+    const redis = new FakeRedis();
+    const post = jest.fn(async () => {});
     const runAgentTurn = jest.fn(async () => "Das Relais tauschen Sie so");
     const result = await runChannelMessageJob(
       { ...job },
       {
-        getDb: async () => db,
+        getDb: async () => jobDb({ find: "sess-1" }),
         getRedis: async () => redis as any,
+        loadAgent,
         runAgentTurn,
         getTransport: (async () => ({ post, typing: jest.fn(async () => {}) })) as any,
       },
@@ -240,23 +320,19 @@ describe("runChannelMessageJob", () => {
     expect(redis.values.size).toBe(0);
   });
 
-  it("a failed job rethrows without the underlying error text", async () => {
+  it("a failed job rethrows a sanitized error: no message text, number or cause", async () => {
     const error = jest.spyOn(console, "error").mockImplementation(() => {});
-    const db: any = () => ({ where: () => ({ first: async () => row }) });
     const post = jest.fn(async () => {
-      throw new Error("Graph 400 for recipient 4915112345678");
+      throw Object.assign(new Error("Graph 400 for recipient 4915112345678: 'Wie tausche ich'"), { code: "E400" });
     });
     let thrown: Error | undefined;
     try {
       await runChannelMessageJob(
         { ...job, newSession: true },
         {
-          getDb: async () =>
-            ((table: string) =>
-              table === "agent_sessions"
-                ? { insert: () => ({ returning: async () => [{ id: "s" }] }) }
-                : db(table)) as any,
+          getDb: async () => jobDb({ insert: "s" }),
           getRedis: async () => new FakeRedis() as any,
+          loadAgent,
           runAgentTurn: jest.fn(async () => "answer"),
           getTransport: (async () => ({ post, typing: jest.fn(async () => {}) })) as any,
         },
@@ -265,8 +341,16 @@ describe("runChannelMessageJob", () => {
       thrown = e as Error;
     }
     expect(thrown).toBeDefined();
-    expect(thrown!.message).toContain(CHANNEL_ID);
-    expect(thrown!.message).not.toContain("4915112345678");
+    expect(thrown!.message).toBe(`channel_message job failed on channel ${CHANNEL_ID} (Error E400)`);
+    expect((thrown as any).cause).toBeUndefined();
+    expect(error.mock.calls.flat().some((a) => a instanceof Error)).toBe(false);
+    expect(JSON.stringify(error.mock.calls)).not.toContain("4915112345678");
     error.mockRestore();
+  });
+
+  it("an invalid job is rejected with a sanitized error", async () => {
+    await expect(
+      runChannelMessageJob({ ...job, userId: "7" }, { getDb: jest.fn(), getRedis: jest.fn(), loadAgent, runAgentTurn: jest.fn() } as any),
+    ).rejects.toThrow("Invalid channel_message job: userId");
   });
 });

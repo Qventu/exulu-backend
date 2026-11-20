@@ -2,8 +2,8 @@ process.env.NEXTAUTH_SECRET = "test-secret";
 
 jest.mock("./pg-pool", () => ({ getChannelPgPool: jest.fn(() => ({ fake: "pool" })) }));
 
+import { channelAccessAllowed } from "./access";
 import {
-  channelAccessAllowed,
   channelStoreFromRedis,
   createChannelWebhookDeps,
   createDecideDeps,

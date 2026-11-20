@@ -1,12 +1,12 @@
 import type { Knex } from "knex";
 import type { RedisClientType } from "redis";
-import { evaluateGuestChatAccess } from "../public-agents";
 import { externalRateLimitExceeded } from "../external-rate-limit";
 import { actOnDecision } from "./act";
 import { createChannelAuditor } from "./audit";
 import { getTransport as defaultGetTransport, type TransportDeps } from "./chat-instance";
 import { linkPageUrl, parseChannelConfig } from "./config";
-import { decideInbound, isUserActive, type DecideDeps, type InboundMessage } from "./decide";
+import { decideInbound, type DecideDeps, type InboundMessage } from "./decide";
+import { channelAccessAllowed, type GuestAgent } from "./access";
 import { codeAttemptsExceeded, consumeCode, linkPromptAllowed, type KeyValueStore } from "./link-codes";
 import { createLinkStore } from "./links";
 import { getChannelPgPool } from "./pg-pool";
@@ -31,9 +31,6 @@ export const channelStoreFromRedis = (client: RedisClientType): ChannelStore => 
   exists: (key) => client.exists(key),
 });
 
-/** The agent fields evaluateGuestChatAccess reads. */
-type GuestAgent = Parameters<typeof evaluateGuestChatAccess>[0];
-
 export interface ChannelServerEnv {
   /** channels && queues */
   entitled(): boolean;
@@ -50,33 +47,6 @@ export interface ChannelServerEnv {
   getTransport?: typeof defaultGetTransport;
   storeFor?(client: RedisClientType): ChannelStore;
 }
-
-const LOG_PREFIX = "[EXULU-CHANNEL]";
-
-/**
- * DecideDeps.accessAllowed (spec §5.3 step 5): the user row exists, isUserActive, and the
- * web guest chat's gate allows this user on this agent. Any error fails closed.
- */
-export const channelAccessAllowed = async (p: {
-  db: Knex;
-  loadAgent: (id: string) => Promise<GuestAgent | undefined>;
-  agentId: string;
-  channelId: string;
-  userId: number;
-}): Promise<boolean> => {
-  try {
-    const user = await p.db("users").where({ id: p.userId }).first();
-    if (!isUserActive(user)) return false;
-    const agent = await p.loadAgent(p.agentId);
-    if (!agent) return false;
-    // as the run route calls it, for a signed-in caller without a guest password
-    const gate = await evaluateGuestChatAccess(agent, user.id, undefined);
-    return gate.allowed;
-  } catch (error) {
-    console.error(`${LOG_PREFIX} access check failed on channel ${p.channelId}`, error);
-    return false;
-  }
-};
 
 const newSessionKey = (channelId: string, identity: string) => `channel-new-session:${channelId}:${identity}`;
 

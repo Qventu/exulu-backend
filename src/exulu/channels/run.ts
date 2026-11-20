@@ -1,4 +1,5 @@
 import { maskIdentity } from "./config";
+import { safeError } from "./log";
 import { replyText } from "./texts";
 import type { AgentChannelRow, WhatsAppChannelConfig } from "./types";
 
@@ -15,6 +16,11 @@ export interface ChannelMessageJob {
 export interface RunDeps {
   now: () => Date;
   loadChannel(id: string): Promise<{ row: AgentChannelRow; config: WhatsAppChannelConfig } | null>;
+  /**
+   * Re-checks at run time what decide checked at enqueue time: the link is still valid
+   * and belongs to job.userId, and that user may still use the channel's current agent.
+   */
+  stillAllowed(job: ChannelMessageJob, row: AgentChannelRow): Promise<boolean>;
   /**
    * `acquire` returns an owner token, or null when the lock is held. `release` must be a
    * compare-and-delete on that token, so a job that outlived the TTL cannot remove a newer job's lock.
@@ -53,9 +59,25 @@ export const handleChannelMessage = async (
   if (!loaded || !loaded.row.enabled) return { sessionId: null, posted: "skipped" };
   const { row, config } = loaded;
 
+  // Before the lock: a job that may no longer run must not block or answer anything.
+  let allowed = false;
+  try {
+    allowed = await deps.stillAllowed(job, row);
+  } catch (error) {
+    console.error(`[EXULU-CHANNEL] run-time access check failed on channel ${job.channelId}`, safeError(error));
+  }
+  if (!allowed) {
+    console.warn(`[EXULU-CHANNEL] message on channel ${job.channelId} skipped: link or access no longer valid`);
+    return { sessionId: null, posted: "skipped" };
+  }
+
   const key = runLockKey(job.channelId, job.identity);
   const token = await deps.lock.acquire(key, RUN_LOCK_TTL_SECONDS);
   if (token === null) {
+    // Another message of this sender is being answered (both passed decide before it started).
+    await deps.transport.post(job.threadId, replyText("stillWorking", config)).catch((e) =>
+      console.error(`[EXULU-CHANNEL] could not post stillWorking for ${who}`, safeError(e)),
+    );
     return { sessionId: null, posted: "skipped" };
   }
 
@@ -80,10 +102,10 @@ export const handleChannelMessage = async (
           channel: { type: "whatsapp", id: job.channelId, identity: job.identity },
         }));
     } catch (error) {
-      console.error(`[EXULU-CHANNEL] session lookup/creation failed for ${who}`, error);
+      console.error(`[EXULU-CHANNEL] session lookup/creation failed for ${who}`, safeError(error));
       // The job failed, but the user should still be told.
       await deps.transport.post(job.threadId, replyText("runFailed", config)).catch((e) =>
-        console.error(`[EXULU-CHANNEL] could not post failure notice for ${who}`, e),
+        console.error(`[EXULU-CHANNEL] could not post failure notice for ${who}`, safeError(e)),
       );
       throw error;
     }
@@ -91,7 +113,7 @@ export const handleChannelMessage = async (
     const typing = () => {
       // Typing is cosmetic: never let it fail the job or leave an unhandled rejection.
       void (async () => deps.transport.typing(job.threadId))().catch((e) =>
-        console.warn(`[EXULU-CHANNEL] typing indicator failed for ${who}`, e),
+        console.warn(`[EXULU-CHANNEL] typing indicator failed for ${who}`, safeError(e)),
       );
     };
     typing();
@@ -106,7 +128,7 @@ export const handleChannelMessage = async (
         text: job.text,
       });
     } catch (error) {
-      console.error(`[EXULU-CHANNEL] agent run failed for ${who}`, error);
+      console.error(`[EXULU-CHANNEL] agent run failed for ${who}`, safeError(error));
     } finally {
       clearInterval(timer);
     }
@@ -115,11 +137,11 @@ export const handleChannelMessage = async (
     try {
       await deps.transport.post(job.threadId, ok ? (answer as string) : replyText("runFailed", config));
     } catch (error) {
-      console.error(`[EXULU-CHANNEL] posting to WhatsApp failed for ${who}`, error);
+      console.error(`[EXULU-CHANNEL] posting to WhatsApp failed for ${who}`, safeError(error));
       throw error;
     }
     return { sessionId, posted: ok ? "answer" : "runFailed" };
   } finally {
-    await deps.lock.release(key, token).catch((e) => console.error(`[EXULU-CHANNEL] lock release failed for ${who}`, e));
+    await deps.lock.release(key, token).catch((e) => console.error(`[EXULU-CHANNEL] lock release failed for ${who}`, safeError(e)));
   }
 };

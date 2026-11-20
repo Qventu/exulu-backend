@@ -6,9 +6,12 @@ import type { ExuluConfig } from "../app";
 import { exuluApp } from "../app/singleton";
 import type { ExuluContext } from "../context";
 import type { ExuluTool } from "../tool";
+import { channelAccessAllowed, type GuestAgent } from "./access";
 import { runChannelAgentTurn } from "./agent-turn";
 import { getTransport as defaultGetTransport, type TransportDeps } from "./chat-instance";
 import { parseChannelConfig } from "./config";
+import { createLinkStore, linkState } from "./links";
+import { sanitizedError } from "./log";
 import { getChannelPgPool } from "./pg-pool";
 import { handleChannelMessage, type ChannelMessageJob, type RunDeps } from "./run";
 import { createRunLock } from "./run-lock";
@@ -20,6 +23,7 @@ const LOG_PREFIX = "[EXULU-CHANNEL]";
 export interface ChannelWorkerEnv {
   getDb(): Promise<Knex>;
   getRedis(): Promise<RedisClientType | null>;
+  loadAgent(id: string): Promise<GuestAgent | undefined>;
   runAgentTurn: RunDeps["runAgentTurn"];
   now?(): Date;
   /** test seam */
@@ -95,11 +99,9 @@ export const createRunDeps = async (env: ChannelWorkerEnv): Promise<RunDeps> => 
   const store = channelStoreFromRedis(client);
 
   let loadedRow: AgentChannelRow | null = null;
-  const transportDeps: TransportDeps = {
-    pgPool: getChannelPgPool(),
-    // the worker only posts; inbound messages are the server's
-    onMessage: async () => {},
-  };
+  // no onMessage: the worker's instance only posts; inbound messages are the server's
+  const transportDeps: TransportDeps = { pgPool: getChannelPgPool() };
+  const now = env.now ?? (() => new Date());
   const transport = async () => {
     if (!loadedRow) throw new Error("no channel loaded for this job");
     const t = await (env.getTransport ?? defaultGetTransport)(loadedRow, transportDeps);
@@ -108,7 +110,7 @@ export const createRunDeps = async (env: ChannelWorkerEnv): Promise<RunDeps> => 
   };
 
   return {
-    now: env.now ?? (() => new Date()),
+    now,
     async loadChannel(id) {
       const row: AgentChannelRow | undefined = await db("agent_channels").where({ id }).first();
       if (!row) return null;
@@ -120,6 +122,18 @@ export const createRunDeps = async (env: ChannelWorkerEnv): Promise<RunDeps> => 
         console.error(`${LOG_PREFIX} channel ${id} has an invalid config; message skipped`);
         return null;
       }
+    },
+    async stillAllowed(job, row) {
+      const state = linkState(await createLinkStore(db).find(job.channelId, job.identity), now());
+      if (state.state !== "valid" || state.link.user !== job.userId) return false;
+      // the channel's agent now, which may differ from the one decide checked
+      return channelAccessAllowed({
+        db,
+        loadAgent: env.loadAgent,
+        agentId: row.agent,
+        channelId: row.id,
+        userId: job.userId,
+      });
     },
     lock: createRunLock(store),
     sessions: createChannelSessions(db),
@@ -144,9 +158,7 @@ export const runChannelMessageJob = async (
   try {
     return await handleChannelMessage(job, await createRunDeps(env));
   } catch (error) {
-    throw new Error(
-      `channel_message job failed on channel ${job.channelId} (${error instanceof Error ? error.name : typeof error})`,
-    );
+    throw sanitizedError(`channel_message job failed on channel ${job.channelId}`, error);
   }
 };
 
@@ -157,14 +169,11 @@ export const createChannelWorkerEnv = (ctx: {
   config: ExuluConfig;
 }): ChannelWorkerEnv => {
   const getDb = async () => (await postgresClient()).db;
+  const loadAgent = (id: string) => exuluApp.get().agent(id);
   return {
     getDb,
     getRedis: async () => (await redisClient()).client,
-    runAgentTurn: (p) =>
-      runChannelAgentTurn(p, {
-        ...ctx,
-        getDb,
-        loadAgent: (id) => exuluApp.get().agent(id),
-      }),
+    loadAgent,
+    runAgentTurn: (p) => runChannelAgentTurn(p, { ...ctx, getDb, loadAgent }),
   };
 };

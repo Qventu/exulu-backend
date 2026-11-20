@@ -20,6 +20,7 @@ const makeDeps = (over: Partial<RunDeps> = {}) => {
       findRecent: jest.fn(async () => "sess-old" as string | null),
       create: jest.fn(async () => "sess-new"),
     },
+    stillAllowed: jest.fn(async () => true),
     runAgentTurn: jest.fn(async () => "Die Antwort"),
     transport: { post: jest.fn(async () => undefined), typing: jest.fn(async () => undefined) },
     ...over,
@@ -104,13 +105,51 @@ describe("handleChannelMessage", () => {
     expect(d.lock.release).toHaveBeenCalledTimes(1);
   });
 
-  it("skips when the lock is not acquired and does not release it", async () => {
+  it("tells the user it is still working when the lock is not acquired, and does not release it", async () => {
     const d = makeDeps({ lock: { acquire: jest.fn(async () => null), release: jest.fn(async () => undefined) } });
     const r = await handleChannelMessage(job(), d);
     expect(r).toEqual({ sessionId: null, posted: "skipped" });
     expect(d.runAgentTurn).not.toHaveBeenCalled();
-    expect(d.transport.post).not.toHaveBeenCalled();
+    expect(d.transport.post).toHaveBeenCalledTimes(1);
+    expect(d.transport.post).toHaveBeenCalledWith("t1", replyText("stillWorking", config));
     expect(d.lock.release).not.toHaveBeenCalled();
+  });
+
+  it("a failing stillWorking notice is logged and swallowed", async () => {
+    const d = makeDeps({
+      lock: { acquire: jest.fn(async () => null), release: jest.fn(async () => undefined) },
+      transport: { post: jest.fn(async () => { throw new Error("graph down for 4915112345678"); }), typing: jest.fn(async () => undefined) },
+    });
+    await expect(handleChannelMessage(job(), d)).resolves.toEqual({ sessionId: null, posted: "skipped" });
+    expect(console.error).toHaveBeenCalled();
+    expect(JSON.stringify((console.error as jest.Mock).mock.calls)).not.toContain("4915112345678");
+  });
+
+  it.each([
+    ["false", jest.fn(async () => false)],
+    ["a throw", jest.fn(async () => { throw new Error("db down 4915112345678"); })],
+  ])("skips without lock, post or run when stillAllowed is %s", async (_label, stillAllowed) => {
+    const d = makeDeps({ stillAllowed });
+    const r = await handleChannelMessage(job(), d);
+    expect(r).toEqual({ sessionId: null, posted: "skipped" });
+    expect(stillAllowed).toHaveBeenCalledWith(job(), row);
+    expect(d.lock.acquire).not.toHaveBeenCalled();
+    expect(d.runAgentTurn).not.toHaveBeenCalled();
+    expect(d.transport.post).not.toHaveBeenCalled();
+    const logged = JSON.stringify([(console.error as jest.Mock).mock.calls, (console.warn as jest.Mock).mock.calls]);
+    expect(logged).not.toContain("4915112345678");
+    expect(logged).not.toContain("Aufzug");
+  });
+
+  it("logs a failing run without the error message", async () => {
+    const d = makeDeps({ runAgentTurn: jest.fn(async () => { throw new Error("insert ... 'Wie reset ich den Aufzug?' 4915112345678"); }) });
+    await handleChannelMessage(job(), d);
+    const logged = JSON.stringify((console.error as jest.Mock).mock.calls);
+    expect(logged).toContain("chA");
+    expect(logged).not.toContain("4915112345678");
+    expect(logged).not.toContain("Aufzug");
+    // an Error object would be printed with its message by console.error
+    expect((console.error as jest.Mock).mock.calls.flat().some((a) => a instanceof Error)).toBe(false);
   });
 
   it("skips when the channel is missing or disabled, without taking the lock", async () => {
