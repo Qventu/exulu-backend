@@ -11,6 +11,7 @@ export const ENTITLEMENTS: {
     "advanced-document-processing": boolean,
     "rate-limits": boolean,
     "claim-check": boolean,
+    "channels": boolean,
 } = {
     "rbac": false,
     "advanced-markdown-chunker": false,
@@ -24,6 +25,7 @@ export const ENTITLEMENTS: {
     "advanced-document-processing": false,
     "rate-limits": false,
     "claim-check": false,
+    "channels": false,
 }
 
 export const checkLicense = () => {
@@ -49,6 +51,7 @@ export const checkLicense = () => {
             "advanced-document-processing": true,
             "rate-limits": true,
             "claim-check": true,
+            "channels": true,
         }
     }
 

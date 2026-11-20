@@ -17,6 +17,7 @@ export const global_queues = {
   eval_runs: "eval_runs",
   email_intake: "email_intake",
   import: "import",
+  channel_inbound: "channel_inbound",
 };
 
 // Used for workflows and embedders

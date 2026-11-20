@@ -10,6 +10,8 @@ import { ensureEntityTables } from "@SRC/exulu/entities";
 import { contextFieldsForSync } from "@SRC/exulu/context-fields-for-sync";
 import { getTableName, getChunksTableName } from "@SRC/exulu/table-names";
 import { hydrateContextEmbedders } from "@SRC/exulu/hydrate-embedders";
+import { ensureChatStateTables } from "@SRC/exulu/channels/state-tables";
+import { Pool } from "pg";
 
 const {
   agentsSchema,
@@ -30,6 +32,8 @@ const {
   variablesSchema,
   workflowTemplatesSchema,
   workflowTriggersSchema,
+  agentChannelsSchema,
+  channelLinksSchema,
   rbacSchema,
   projectsSchema,
   jobResultsSchema,
@@ -155,6 +159,10 @@ const up = async function (knex: Knex) {
     skillsSchema(),
     workflowTemplatesSchema(),
     workflowTriggersSchema(),
+    // Only present when the "channels" entitlement is licensed.
+    ...(agentChannelsSchema && channelLinksSchema
+      ? [agentChannelsSchema(), channelLinksSchema()]
+      : []),
     otpSendAttemptsSchema(),
   ];
 
@@ -386,6 +394,39 @@ const up = async function (knex: Knex) {
       `CREATE UNIQUE INDEX IF NOT EXISTS claim_checks_session_message_user_uidx
           ON claim_checks (session, message_id, "user")`,
     );
+  }
+
+  // Channels: one channel per (agent, type) and one link per (channel, identity).
+  // The link upsert and the inbound lookup rely on these being unique.
+  if (await knex.schema.hasTable("agent_channels")) {
+    await knex.raw(
+      `CREATE UNIQUE INDEX IF NOT EXISTS agent_channels_agent_type_uidx
+          ON agent_channels (agent, type)`,
+    );
+  }
+  if (await knex.schema.hasTable("channel_links")) {
+    await knex.raw(
+      `CREATE UNIQUE INDEX IF NOT EXISTS channel_links_channel_identity_uidx
+          ON channel_links (channel, identity)`,
+    );
+    // The chat SDK's own tables (subscriptions, locks, cache, ...), created by
+    // the adapter so a later SDK version brings its own schema.
+    // The adapter wants a pg.Pool, not knex: use a short-lived one built from
+    // the same connection settings as postgresClient() and end it afterwards.
+    const pool = new Pool({
+      host: process.env.POSTGRES_DB_HOST,
+      port: parseInt(process.env.POSTGRES_DB_PORT || "5432"),
+      user: process.env.POSTGRES_DB_USER,
+      database: process.env.POSTGRES_DB_NAME || "exulu",
+      password: process.env.POSTGRES_DB_PASSWORD,
+      ssl: process.env.POSTGRES_DB_SSL === "true" ? { rejectUnauthorized: false } : false,
+      max: 2,
+    });
+    try {
+      await ensureChatStateTables(pool);
+    } finally {
+      await pool.end();
+    }
   }
 
   /*  if (!await knex.schema.hasTable('sessions')) {
