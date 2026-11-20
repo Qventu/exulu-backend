@@ -3,6 +3,7 @@ import type { Chat, Logger, Message, Thread } from "chat";
 import type { createWhatsAppAdapter } from "@chat-adapter/whatsapp";
 import type { createPostgresState } from "@chat-adapter/state-pg";
 import { parseChannelConfig, readSecrets } from "./config";
+import { safeError } from "./log";
 import type { InboundMessage } from "./decide";
 import type { AgentChannelRow } from "./types";
 
@@ -31,8 +32,11 @@ export interface ChannelTransport {
 
 export interface TransportDeps {
   pgPool: Pool;
-  /** server passes decide+act; worker passes a no-op */
-  onMessage(msg: InboundMessage): Promise<void>;
+  /**
+   * The server passes decide+act. The worker passes none: its instance only posts,
+   * registers no message handler, and refuses webhooks.
+   */
+  onMessage?(msg: InboundMessage): Promise<void>;
   /** test seam; default dynamically imports the three packages */
   load?: () => Promise<SdkModules>;
 }
@@ -55,14 +59,19 @@ const loadSdk = async (): Promise<SdkModules> => {
 };
 
 // The SDK logs webhook bodies (message text, phone numbers) at debug level and Graph
-// error bodies on failure. Debug is dropped; body-like fields are redacted.
-const REDACTED_KEYS = new Set(["body", "bodyPreview", "text"]);
+// error bodies on failure. Debug is dropped; body-like fields and thread ids (which carry
+// the sender's number) are redacted, and errors are reduced to their class and code.
+const REDACTED_KEYS = new Set(["body", "bodyPreview", "text", "threadId"]);
 const redact = (arg: unknown): unknown => {
-  if (arg === null || typeof arg !== "object" || arg instanceof Error || Array.isArray(arg)) {
+  if (arg instanceof Error) return safeError(arg);
+  if (arg === null || typeof arg !== "object" || Array.isArray(arg)) {
     return arg;
   }
   return Object.fromEntries(
-    Object.entries(arg as Record<string, unknown>).map(([k, v]) => [k, REDACTED_KEYS.has(k) ? "[redacted]" : v]),
+    Object.entries(arg as Record<string, unknown>).map(([k, v]) => [
+      k,
+      REDACTED_KEYS.has(k) ? "[redacted]" : v instanceof Error ? safeError(v) : v,
+    ]),
   );
 };
 const sdkLogger = (prefix: string): Logger => ({
@@ -96,10 +105,17 @@ interface Built {
   shutdown(): Promise<void>;
 }
 
-/** The instance in use per channel id; only successfully built instances land here. */
+/**
+ * The instance in use per cache key; only successfully built instances land here. The key
+ * is the channel id plus whether the instance handles inbound messages, so a post-only
+ * instance (the worker's) is never reused for webhooks in the same process, or vice versa.
+ */
 const cache = new Map<string, CacheEntry>();
-/** A build in progress per channel id, shared by concurrent callers. */
+/** A build in progress per cache key, shared by concurrent callers. */
 const pending = new Map<string, CacheEntry>();
+
+const cacheKey = (channelId: string, deps: TransportDeps): string =>
+  `${channelId}:${deps.onMessage ? "inbound" : "post-only"}`;
 
 export const resetTransports = (): void => {
   cache.clear();
@@ -119,7 +135,9 @@ const isNewer = (incoming: number, cached: number): boolean =>
 const shutDown = (channelId: string, entry: CacheEntry): void => {
   entry.promise
     .then((built) => built.shutdown())
-    .catch((error) => console.error(`${LOG_PREFIX} shutting down the chat instance of channel ${channelId} failed`, error));
+    .catch((error) =>
+      console.error(`${LOG_PREFIX} shutting down the chat instance of channel ${channelId} failed`, safeError(error)),
+    );
 };
 
 interface Settings {
@@ -174,7 +192,8 @@ const build = async (channelId: string, settings: Settings, deps: TransportDeps)
   // secret, and the adapter takes the thread's number from the payload without checking it.
   const ownThreadPrefix = `whatsapp:${settings.phoneNumberId}:`;
 
-  chat.onDirectMessage(async (thread: Thread, message: Message) => {
+  const onMessage = deps.onMessage;
+  if (onMessage) chat.onDirectMessage(async (thread: Thread, message: Message) => {
     // The SDK already skips the bot's own messages; this keeps that true here.
     if (message.author?.isMe) {
       return;
@@ -184,10 +203,10 @@ const build = async (channelId: string, settings: Settings, deps: TransportDeps)
       return;
     }
     try {
-      await deps.onMessage(toInboundMessage(channelId, thread.id, message));
+      await onMessage(toInboundMessage(channelId, thread.id, message));
     } catch (error) {
       // channel id only: the message text and the sender stay out of the log
-      console.error(`${LOG_PREFIX} handling a message on channel ${channelId} failed`, error);
+      console.error(`${LOG_PREFIX} handling a message on channel ${channelId} failed`, safeError(error));
     }
   });
 
@@ -196,7 +215,13 @@ const build = async (channelId: string, settings: Settings, deps: TransportDeps)
   const ready = () => chat.initialize();
 
   const transport: ChannelTransport = {
-    handleWebhook: (request, options) => chat.webhooks.whatsapp(request, options),
+    handleWebhook: async (request, options) => {
+      if (!onMessage) {
+        // a wiring bug: webhooks must go to an instance with an inbound handler
+        throw new Error("post-only channel transport cannot handle webhooks");
+      }
+      return chat.webhooks.whatsapp(request, options);
+    },
     post: async (threadId, markdown) => {
       if (markdown.trim() === "") {
         throw new Error("refusing to post an empty message");
@@ -217,29 +242,35 @@ const build = async (channelId: string, settings: Settings, deps: TransportDeps)
   return { transport, shutdown: () => chat.shutdown() };
 };
 
-const startBuild = (channelId: string, updatedAt: number, settings: Settings, deps: TransportDeps): CacheEntry => {
+const startBuild = (
+  key: string,
+  channelId: string,
+  updatedAt: number,
+  settings: Settings,
+  deps: TransportDeps,
+): CacheEntry => {
   const entry: CacheEntry = { updatedAt, promise: build(channelId, settings, deps) };
-  pending.set(channelId, entry);
+  pending.set(key, entry);
   // Install only after success, so a failed build leaves the current instance usable.
   entry.promise.then(
     () => {
-      if (pending.get(channelId) === entry) {
-        pending.delete(channelId);
+      if (pending.get(key) === entry) {
+        pending.delete(key);
       }
-      const current = cache.get(channelId);
+      const current = cache.get(key);
       if (current && !isNewer(updatedAt, current.updatedAt)) {
         // a newer instance was installed meanwhile; this one is not used
         shutDown(channelId, entry);
         return;
       }
-      cache.set(channelId, entry);
+      cache.set(key, entry);
       if (current) {
         shutDown(channelId, current);
       }
     },
     () => {
-      if (pending.get(channelId) === entry) {
-        pending.delete(channelId);
+      if (pending.get(key) === entry) {
+        pending.delete(key);
       }
     },
   );
@@ -249,10 +280,11 @@ const startBuild = (channelId: string, updatedAt: number, settings: Settings, de
 export const getTransport = async (row: AgentChannelRow, deps: TransportDeps): Promise<ChannelTransport | null> => {
   const settings = settingsOf(row);
   const updatedAt = timeOf(row.updatedAt);
-  const current = cache.get(row.id);
+  const key = cacheKey(row.id, deps);
+  const current = cache.get(key);
   if (!settings) {
     if (current && isNewer(updatedAt, current.updatedAt)) {
-      cache.delete(row.id);
+      cache.delete(key);
       shutDown(row.id, current);
     }
     return null;
@@ -260,12 +292,14 @@ export const getTransport = async (row: AgentChannelRow, deps: TransportDeps): P
   if (current && !isNewer(updatedAt, current.updatedAt)) {
     return (await current.promise).transport;
   }
-  const inFlight = pending.get(row.id);
+  const inFlight = pending.get(key);
   const entry =
-    inFlight && !isNewer(updatedAt, inFlight.updatedAt) ? inFlight : startBuild(row.id, updatedAt, settings, deps);
+    inFlight && !isNewer(updatedAt, inFlight.updatedAt)
+      ? inFlight
+      : startBuild(key, row.id, updatedAt, settings, deps);
   const built = await entry.promise;
   // a newer instance may have been installed while this build ran
-  const installed = cache.get(row.id);
+  const installed = cache.get(key);
   return installed && installed !== entry && !isNewer(entry.updatedAt, installed.updatedAt)
     ? (await installed.promise).transport
     : built.transport;

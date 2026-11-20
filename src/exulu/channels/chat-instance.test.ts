@@ -63,6 +63,62 @@ const deps = (sdk: ReturnType<typeof makeSdk>, onMessage = jest.fn(async () => {
 
 beforeEach(() => resetTransports());
 
+describe("getTransport: inbound and post-only instances", () => {
+  const postOnly = (sdk: ReturnType<typeof makeSdk>): TransportDeps => ({ pgPool: pool, load: sdk.load });
+  const deliver = (chat: any, threadId = "whatsapp:111:4915112345678") =>
+    chat.handlers[0]({ id: threadId }, { id: "m1", text: "hi", attachments: [], author: { isMe: false } });
+
+  it("a worker-style call first does not capture the server's webhooks", async () => {
+    const sdk = makeSdk();
+    const worker = await getTransport(makeRow(), postOnly(sdk));
+    const onMessage = jest.fn(async () => {});
+    const server = await getTransport(makeRow(), deps(sdk, onMessage));
+    expect(server).not.toBe(worker);
+    expect(sdk.chats).toHaveLength(2);
+    expect(sdk.chats[0].handlers).toHaveLength(0);
+    expect(sdk.chats[1].handlers).toHaveLength(1);
+    await deliver(sdk.chats[1]);
+    expect(onMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("a server-style call first is not reused by the worker, and the server's handler still delivers", async () => {
+    const sdk = makeSdk();
+    const onMessage = jest.fn(async () => {});
+    const server = await getTransport(makeRow(), deps(sdk, onMessage));
+    const worker = await getTransport(makeRow(), postOnly(sdk));
+    expect(worker).not.toBe(server);
+    expect(await getTransport(makeRow(), deps(sdk, jest.fn()))).toBe(server);
+    expect(await getTransport(makeRow(), postOnly(sdk))).toBe(worker);
+    await deliver(sdk.chats[0]);
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(sdk.chats[1].handlers).toHaveLength(0);
+  });
+
+  it("a post-only transport refuses webhooks", async () => {
+    const sdk = makeSdk();
+    const worker = await getTransport(makeRow(), postOnly(sdk));
+    await expect(worker!.handleWebhook(new Request("http://localhost/x"))).rejects.toThrow(/post-only/);
+    expect(sdk.chats[0].webhooks.whatsapp).not.toHaveBeenCalled();
+  });
+
+  it("a failing handler is logged without the error's message", async () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const sdk = makeSdk();
+      const onMessage = jest.fn(async () => {
+        throw new Error("select * from channel_links where identity = '4915112345678'");
+      });
+      await getTransport(makeRow(), deps(sdk, onMessage));
+      await deliver(sdk.chats[0]);
+      expect(JSON.stringify(error.mock.calls)).toContain("chan-1");
+      expect(error.mock.calls.flat().some((a) => a instanceof Error)).toBe(false);
+      expect(JSON.stringify(error.mock.calls)).not.toContain("4915112345678");
+    } finally {
+      error.mockRestore();
+    }
+  });
+});
+
 describe("getTransport", () => {
   it("builds one Chat per channel and reuses it for the same row", async () => {
     const sdk = makeSdk();
