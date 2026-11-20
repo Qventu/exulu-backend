@@ -79,7 +79,7 @@ export const createDecideDeps = (p: {
       await store.set(newSessionKey(row.id, identity), "1", { EX: config.sessionIdleHours * 3600 });
     },
     takeNewSession: async (identity) => (await store.getDel(newSessionKey(row.id, identity))) !== null,
-    audit: createChannelAuditor({ channelId: row.id, kv: store }),
+    audit: createChannelAuditor({ channelId: row.id, agentId: row.agent, kv: store }),
   };
 };
 

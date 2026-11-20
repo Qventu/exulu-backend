@@ -119,7 +119,8 @@ const loadChannel = async (db: Knex, agentId: string): Promise<AgentChannelRow |
 
 // The auditor only uses its store to de-duplicate code_lockout, which these routes never send.
 const NO_DEDUP = { set: async () => "OK" as string | null };
-const auditFor = (channelId: string) => createChannelAuditor({ channelId, kv: NO_DEDUP });
+const auditFor = (channelId: string, agentId?: string) =>
+  createChannelAuditor({ channelId, agentId, kv: NO_DEDUP });
 
 /** Counts this issue; true from the 6th code within 600 s of the first, per user. */
 const codeIssueLimitExceeded = async (kv: KeyValueStore, userId: number): Promise<boolean> => {
@@ -480,7 +481,7 @@ export const registerChannelApi = (app: Express, deps: ChannelApiDeps): void => 
       if (!link) return void notFound();
       if (!link.revoked_at) {
         await createLinkStore(db).revoke(link.id, now());
-        await auditFor(row.id)({ type: "revoked", identity: link.identity, userId: link.user });
+        await auditFor(row.id, row.agent)({ type: "revoked", identity: link.identity, userId: link.user });
       }
       res.status(204).end();
     }),
@@ -575,7 +576,7 @@ export const registerChannelApi = (app: Express, deps: ChannelApiDeps): void => 
       if (!link) return void res.status(404).json(NOT_FOUND);
       if (!link.revoked_at) {
         await createLinkStore(db).revoke(link.id, now());
-        await auditFor(row.id)({ type: "unlinked", identity: link.identity, userId: link.user });
+        await auditFor(row.id, row.agent)({ type: "unlinked", identity: link.identity, userId: link.user });
       }
       res.status(204).end();
     }),

@@ -99,6 +99,12 @@ export const createLinkStore = (db: Knex) => ({
     return rows.map(fromRow);
   },
 
+  /** All links of a user across channels (data export). */
+  async listAllForUser(userId: number): Promise<ChannelLink[]> {
+    const rows = await db(TABLE).where({ user: userId }).orderBy("linked_at", "desc");
+    return rows.map(fromRow);
+  },
+
   async deleteForUser(userId: number): Promise<number> {
     return db(TABLE).where({ user: userId }).del();
   },

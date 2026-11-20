@@ -162,4 +162,14 @@ describe("createLinkStore", () => {
     expect(await store.deleteForUser(7)).toBe(1);
     expect(await store.listForChannel("c1")).toHaveLength(1);
   });
+
+  it("listAllForUser returns the user's links across channels", async () => {
+    const { db } = fakeDb();
+    const store = createLinkStore(db);
+    await store.upsert(args);
+    await store.upsert({ ...args, channelId: "c2", identity: "c" });
+    await store.upsert({ ...args, identity: "b", userId: 8 });
+    const all = await store.listAllForUser(7);
+    expect(all.map((l) => l.channel).sort()).toEqual(["c1", "c2"]);
+  });
 });

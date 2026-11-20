@@ -25,6 +25,7 @@ import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/in
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
 import { afterAgentDelete, afterAgentWrite } from "@SRC/exulu/channels/api";
+import { afterUserDeleteBestEffort } from "@SRC/exulu/channels/lifecycle";
 import { shouldGenerateEmbeddings } from "./should-generate-embeddings";
 import { changeContextEmbedder } from "@SRC/exulu/embedder-change";
 import { dropProjection } from "@SRC/exulu/projection/store";
@@ -1038,6 +1039,9 @@ export function createMutations(
       if (tableNamePlural === "agents") {
         await afterAgentDelete(db, id);
       }
+      if (tableNamePlural === "users") {
+        await afterUserDeleteBestEffort(db, id);
+      }
       return finalizeRequestedFields({
         args,
         table,
@@ -1091,6 +1095,9 @@ export function createMutations(
       // see RemoveOneById: last, never throws, a no-op without the licence
       if (tableNamePlural === "agents") {
         await afterAgentDelete(db, result.id);
+      }
+      if (tableNamePlural === "users") {
+        await afterUserDeleteBestEffort(db, result.id);
       }
       return finalizeRequestedFields({
         args,

@@ -68,3 +68,88 @@ describe("createChannelAuditor", () => {
     error.mockRestore();
   });
 });
+
+describe("forwarding to the audit logger", () => {
+  const mk = (over: any = {}) => {
+    const record = jest.fn();
+    const logger = { enabled: true, record, ...over };
+    return { record, logger };
+  };
+
+  it("emits channel.<type> with a masked identity, channel, agent and user", async () => {
+    const { record, logger } = mk();
+    const audit = createChannelAuditor({ channelId: "chan-1", agentId: "ag-1", kv: new FakeKv(), logger: () => logger });
+    await audit({ type: "linked", identity: "4915112345678", userId: 7 });
+    expect(record).toHaveBeenCalledTimes(1);
+    const ev = record.mock.calls[0][0];
+    expect(ev.type).toBe("channel.linked");
+    expect(ev.v).toBe(1);
+    expect(ev.actor).toEqual({ kind: "user", userId: "7" });
+    expect(ev.context).toEqual({ agentId: "ag-1" });
+    expect(ev.target).toEqual({ kind: "channel", id: "chan-1" });
+    expect(ev.status).toBe("ok");
+    expect(ev.data).toEqual({ identity: "•••• 5678" });
+    expect(JSON.stringify(ev)).not.toContain("4915112345678");
+  });
+
+  it("rejections are status denied; no user means a system actor", async () => {
+    const { record, logger } = mk();
+    const audit = createChannelAuditor({ channelId: "chan-1", kv: new FakeKv(), logger: () => logger });
+    await audit({ type: "code_lockout", identity: "4915112345678" });
+    const ev = record.mock.calls[0][0];
+    expect(ev.status).toBe("denied");
+    expect(ev.actor).toEqual({ kind: "system" });
+    expect(ev.context).toBeUndefined();
+  });
+
+  it("does nothing when audit logging is disabled; the log line remains", async () => {
+    const { record, logger } = mk({ enabled: false });
+    await createChannelAuditor({ channelId: "chan-1", kv: new FakeKv(), logger: () => logger })({
+      type: "linked",
+      identity: "a1111",
+    });
+    expect(record).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledTimes(1);
+  });
+
+  it("a throwing logger does not throw into the caller and is logged without detail", async () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    const { logger } = mk({
+      record: () => {
+        throw new Error("sink down 4915112345678");
+      },
+    });
+    const audit = createChannelAuditor({ channelId: "chan-1", kv: new FakeKv(), logger: () => logger });
+    await expect(audit({ type: "revoked", identity: "4915112345678", userId: 1 })).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalled();
+    expect(JSON.stringify(error.mock.calls)).not.toContain("4915112345678");
+    error.mockRestore();
+  });
+
+  it("a throwing logger resolver does not throw either", async () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    const audit = createChannelAuditor({
+      channelId: "chan-1",
+      kv: new FakeKv(),
+      logger: () => {
+        throw new Error("boom");
+      },
+    });
+    await expect(audit({ type: "linked", identity: "a1111" })).resolves.toBeUndefined();
+    error.mockRestore();
+  });
+
+  it("does not wait for a slow sink (record is fire-and-forget)", async () => {
+    const { logger } = mk({ record: () => new Promise(() => {}) });
+    const audit = createChannelAuditor({ channelId: "chan-1", kv: new FakeKv(), logger: () => logger });
+    await expect(audit({ type: "linked", identity: "a1111" })).resolves.toBeUndefined();
+  });
+
+  it("a suppressed code_lockout repeat is not forwarded either", async () => {
+    const { record, logger } = mk();
+    const audit = createChannelAuditor({ channelId: "chan-1", kv: new FakeKv(), logger: () => logger });
+    await audit({ type: "code_lockout", identity: "4915112345678" });
+    await audit({ type: "code_lockout", identity: "4915112345678" });
+    expect(record).toHaveBeenCalledTimes(1);
+  });
+});

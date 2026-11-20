@@ -3,6 +3,7 @@ import {
   type Request,
   type Response,
   type NextFunction } from "express";
+import { channelLinksForExport, afterUserDelete } from "./channels/lifecycle";
 import { requestValidators } from "../validators/requests.ts";
 import { STATISTICS_TYPE_ENUM,
   type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
@@ -5293,7 +5294,7 @@ export const createExpressRoutes = async (
         messages: messagesBySession.get(s.id) ?? [],
       }));
 
-      const [feedback, promptFavorites, tracking, claimChecks] = await Promise.all([
+      const [feedback, promptFavorites, tracking, claimChecks, channelLinks] = await Promise.all([
         db.from("feedback").where({ user: targetUser.id }).catch(() => []),
         db
           .from("prompt_favorites")
@@ -5305,6 +5306,9 @@ export const createExpressRoutes = async (
         // covers it. Same `.catch(() => [])` as its siblings: the table only
         // exists on deployments licensed for claim-check.
         db.from("claim_checks").where({ user: targetUser.id }).catch(() => []),
+        // WhatsApp links (full identity: it is the user's own data). Empty and
+        // query-free without the channels licence; never rejects.
+        channelLinksForExport(db, targetUser.id),
       ]);
 
       const exportedAt = new Date().toISOString();
@@ -5325,6 +5329,7 @@ export const createExpressRoutes = async (
         `  - prompt_favorites.json prompt-library favourites`,
         `  - tracking.json         tracking events linked to the user`,
         `  - claim_checks.json     answer verification results stored for the user`,
+        `  - channel_links.json    messaging-channel (WhatsApp) links of the user`,
         ``,
       ].join("\n");
 
@@ -5339,6 +5344,7 @@ export const createExpressRoutes = async (
       );
       zip.file("tracking.json", JSON.stringify(tracking, null, 2));
       zip.file("claim_checks.json", JSON.stringify(claimChecks, null, 2));
+      zip.file("channel_links.json", JSON.stringify(channelLinks, null, 2));
 
       const buffer = await zip.generateAsync({ type: "nodebuffer" });
       const filename = `user-${targetUser.id}-export-${exportedAt.replace(/[:.]/g, "-")}.zip`;
@@ -5385,6 +5391,8 @@ export const createExpressRoutes = async (
           .delete();
         await trx("tracking").where({ user: targetUser.id }).delete();
         await trx("rbac").where({ user_id: targetUser.id }).delete();
+        // Messaging-channel links: no-op without the channels licence.
+        await afterUserDelete(trx, targetUser.id);
         await trx("users").where({ id: targetUser.id }).delete();
       });
     } catch (err: any) {
