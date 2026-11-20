@@ -171,6 +171,11 @@ import { redisClient } from "@SRC/redis/client.ts";
 import { createRoutineWebhookHandler,
   routineWebhookRateLimitExceeded } from "./email-inbound/webhook.ts";
 import { resolveTriggerBySecret } from "./email-inbound/intake.ts";
+import { createChannelWebhookHandler,
+  channelWebhookRateLimitExceeded } from "./channels/webhook.ts";
+import { createChannelWebhookDeps } from "./channels/wiring.ts";
+import { enqueueChannelMessage } from "./channels/act.ts";
+import { registerChannelQueue } from "./channels/queue.ts";
 import { decrypt } from "@SRC/exulu/auth/credential-store.ts";
 import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
@@ -303,6 +308,8 @@ export const createExpressRoutes = async (
   // Capture the raw body for the routine webhook before the global JSON/urlencoded
   // parsers consume it — the HMAC (spec §4.4) is computed over exact raw bytes.
   app.use("/webhooks/routine", express.raw({ type: () => true, limit: "30mb" }));
+  // Same for the WhatsApp channel webhook: Meta signs the raw bytes (X-Hub-Signature-256).
+  app.use("/webhooks/whatsapp", express.raw({ type: () => true, limit: "5mb" }));
 
   // important to set the limit here, otherwise the proxy will
   // fail for large requests such as those from Claude Code
@@ -612,6 +619,24 @@ export const createExpressRoutes = async (
     rateLimitExceeded: routineWebhookRateLimitExceeded,
   });
   app.post("/webhooks/routine/:secret", routineWebhookHandler);
+
+  // WhatsApp channel webhook (channel spec §5.2). Public: authenticity comes from Meta's
+  // signature, checked by the SDK over the raw bytes captured by the early express.raw.
+  const channelWebhookHandler = createChannelWebhookHandler(
+    createChannelWebhookDeps({
+      entitled: () => {
+        const license = checkLicense();
+        return license["channels"] === true && license["queues"] === true;
+      },
+      rateLimitExceeded: () => channelWebhookRateLimitExceeded(),
+      getDb: async () => (await postgresClient()).db,
+      getRedis: async () => (await redisClient()).client,
+      loadAgent: (id) => exuluApp.get().agent(id),
+      enqueue: async (job) => enqueueChannelMessage((await registerChannelQueue().use()).queue, job),
+    }),
+  );
+  app.get("/webhooks/whatsapp/:channelId", channelWebhookHandler);
+  app.post("/webhooks/whatsapp/:channelId", channelWebhookHandler);
 
   // Ping route that can be used to check if the request
   // is authenticated and the server is running.

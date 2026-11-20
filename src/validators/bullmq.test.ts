@@ -26,6 +26,18 @@ describe("bullmq.validate", () => {
     ).not.toThrow();
   });
 
+  it("accepts channel_message jobs without a workflow/embedder/processor target", () => {
+    expect(() =>
+      bullmq.validate("wa:wamid.1", {
+        ...base,
+        label: "WhatsApp message",
+        type: "channel_message",
+        timeoutInSeconds: 600,
+        inputs: { channelId: "c", threadId: "t", identity: "i", userId: 7, messageId: "m", text: "x", newSession: false },
+      }),
+    ).not.toThrow();
+  });
+
   it("still rejects unknown job types", () => {
     expect(() => bullmq.validate("job-1", { ...base, type: "bogus" })).toThrow(
       /must be of value/,

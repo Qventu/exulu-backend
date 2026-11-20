@@ -39,6 +39,7 @@ import { updateStatistic } from "@SRC/exulu/statistics";
 import { saveChat, getAgentMessages, generateStream } from "@SRC/exulu/generate-stream";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { handleEmailIntake } from "@SRC/exulu/email-inbound/intake";
+import { createChannelWorkerEnv, runChannelMessageJob } from "@SRC/exulu/channels/worker";
 import { markStreamActive, clearStreamActive } from "@SRC/exulu/active-streams.ts";
 import { messageHasPendingApproval, substituteVariablesInMessage } from "@SRC/exulu/routines/flow-steps.ts";
 import { withRunSession } from "@SRC/exulu/routines/run-session.ts";
@@ -1297,6 +1298,16 @@ export const createWorkers = async (
                   format: data.inputs.format === "json" ? "json" : "eml",
                 },
                 { config },
+              );
+              return { result, metadata: {} };
+            }
+
+            if (data.type === "channel_message") {
+              // WhatsApp message (channels/worker.ts). The result holds ids and the outcome
+              // only: the completed handler logs it, so no message text belongs in it.
+              const result = await runChannelMessageJob(
+                data.inputs,
+                createChannelWorkerEnv({ tools, contexts, config }),
               );
               return { result, metadata: {} };
             }
