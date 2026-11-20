@@ -59,9 +59,33 @@ const loadSdk = async (): Promise<SdkModules> => {
 };
 
 // The SDK logs webhook bodies (message text, phone numbers) at debug level and Graph
-// error bodies on failure. Debug is dropped; body-like fields and thread ids (which carry
-// the sender's number) are redacted, and errors are reduced to their class and code.
-const REDACTED_KEYS = new Set(["body", "bodyPreview", "text", "threadId"]);
+// error bodies on failure. Debug is dropped, errors are reduced to their class and code,
+// and every key the SDK logs that can carry a sender id, a phone number, a message id or
+// message content is redacted (surveyed in chat, @chat-adapter/whatsapp, state-pg dist):
+// - content: body, bodyPreview, text, emoji
+// - message ids (a wamid encodes the sender's number): messageId, droppedId, activityId, mediaId
+// - sender / thread ids: threadId, lockKey (= thread id), userId, authorUserId,
+//   conversationId, channelId
+// - lock owner token: token
+// Kept: status, contentType, mode, phoneNumberId (our business number), reason, kind,
+// counts and durations, adapter names, callback/action/context ids of other platforms.
+const REDACTED_KEYS = new Set([
+  "body",
+  "bodyPreview",
+  "text",
+  "emoji",
+  "messageId",
+  "droppedId",
+  "activityId",
+  "mediaId",
+  "threadId",
+  "lockKey",
+  "userId",
+  "authorUserId",
+  "conversationId",
+  "channelId",
+  "token",
+]);
 const redact = (arg: unknown): unknown => {
   if (arg instanceof Error) return safeError(arg);
   if (arg === null || typeof arg !== "object" || Array.isArray(arg)) {

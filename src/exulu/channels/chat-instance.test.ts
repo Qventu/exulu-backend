@@ -2,6 +2,7 @@ process.env.NEXTAUTH_SECRET = "test-secret";
 
 import { getTransport, resetTransports, toInboundMessage, type TransportDeps } from "./chat-instance";
 import { sealSecrets } from "./config";
+import { ChannelSetupError } from "./log";
 import type { AgentChannelRow } from "./types";
 
 type DmHandler = (thread: { id: string }, message: any) => Promise<void>;
@@ -120,6 +121,39 @@ describe("getTransport: inbound and post-only instances", () => {
 });
 
 describe("the SDK logger", () => {
+  it("drops message ids along with errors' messages", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const sdk = makeSdk();
+      await getTransport(makeRow(), deps(sdk));
+      const logger = sdk.chats[0].config.logger.child("whatsapp");
+      logger.error("Failed to handle inbound message", { messageId: "wamid.XYZ", error: new Error("boom 4915112345678") });
+      logger.warn("Failed to persist WhatsApp user identity", { error: new Error("boom 4915112345678"), messageId: "wamid.XYZ" });
+      const out = JSON.stringify([...error.mock.calls, ...warn.mock.calls]);
+      expect(out).not.toContain("wamid.XYZ");
+      expect(out).not.toContain("4915112345678");
+      expect(out).toContain("Failed to handle inbound message");
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it("a ChannelSetupError from the handler is logged with its message", async () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const sdk = makeSdk();
+      await getTransport(makeRow(), deps(sdk, jest.fn(async () => {
+        throw new ChannelSetupError("Neither CHANNEL_LINK_BASE_URL nor NEXTAUTH_URL is set");
+      })));
+      await sdk.chats[0].handlers[0]({ id: "whatsapp:111:4915112345678" }, { id: "m1", text: "hi", attachments: [], author: { isMe: false } });
+      expect(JSON.stringify(error.mock.calls)).toMatch(/CHANNEL_LINK_BASE_URL.*NEXTAUTH_URL/);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it("drops errors' messages, thread ids and bodies", async () => {
     const error = jest.spyOn(console, "error").mockImplementation(() => {});
     try {
