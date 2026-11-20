@@ -260,6 +260,12 @@ describe("createChannelWebhookDeps", () => {
     expect(await createChannelWebhookDeps(makeEnv()).redisAvailable()).toBe(true);
   });
 
+  it("purgeChatState starts the throttled purge on the shared pool and returns at once", () => {
+    const deps = createChannelWebhookDeps(makeEnv());
+    // without the licence (as here) the purge itself makes no query
+    expect(deps.purgeChatState?.()).toBeUndefined();
+  });
+
   it("loads the channel row by id from agent_channels", async () => {
     const db = fakeDb({ agent_channels: row });
     const deps = createChannelWebhookDeps(makeEnv({ getDb: async () => db }));

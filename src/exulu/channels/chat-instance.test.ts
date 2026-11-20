@@ -245,6 +245,8 @@ describe("getTransport", () => {
     const config = sdk.chats[0].config;
     expect(config.userName).toBe("exulu-agent");
     expect(config.concurrency).toBe("concurrent");
+    // the SDK keeps inbound messages for the typing target only: the latest one, for an hour
+    expect(config.history).toEqual({ thread: { maxMessages: 1, ttlMs: 60 * 60 * 1000 } });
     expect(config.state).toBe(sdk.state);
     expect(config.adapters.whatsapp).toBe(sdk.adapters[0]);
     expect(sdk.chats[0].handlers).toHaveLength(1);

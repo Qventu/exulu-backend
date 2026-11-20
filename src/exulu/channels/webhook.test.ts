@@ -319,6 +319,42 @@ describe("createChannelWebhookHandler: SDK pass-through", () => {
   });
 });
 
+describe("createChannelWebhookHandler: opportunistic chat state purge", () => {
+  it("is asked for after the response has been written, and not awaited", async () => {
+    const order: string[] = [];
+    const res = makeRes();
+    const send = res.send.bind(res);
+    res.send = (body) => {
+      order.push("response");
+      send(body);
+    };
+    let settle: () => void = () => {};
+    const purgeChatState = jest.fn(() => {
+      order.push("purge");
+      // a purge that never finishes must not hold the request
+      void new Promise<void>((r) => (settle = r));
+    });
+    await createChannelWebhookHandler(makeDeps({ purgeChatState }))(makeReq(), res as any);
+    expect(order).toEqual(["response", "purge"]);
+    settle();
+  });
+
+  it("is not asked for when the request is refused before the SDK", async () => {
+    const purgeChatState = jest.fn();
+    await run(makeDeps({ purgeChatState, loadChannel: jest.fn(async () => undefined) }));
+    await run(makeDeps({ purgeChatState, entitled: jest.fn(() => false) }));
+    expect(purgeChatState).not.toHaveBeenCalled();
+  });
+
+  it("a throwing purge hook does not change the response", async () => {
+    const purgeChatState = jest.fn(() => {
+      throw new Error("boom");
+    });
+    const res = await run(makeDeps({ purgeChatState }));
+    expect(res.statusCode).toBe(200);
+  });
+});
+
 describe("toWebRequest", () => {
   it("preserves method, query string, the signature header and the exact body", async () => {
     const raw = Buffer.from([0x7b, 0x22, 0xc3, 0xbc, 0x22, 0x7d, 0x0a, 0x00, 0xff]);

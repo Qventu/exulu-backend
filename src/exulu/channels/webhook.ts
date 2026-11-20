@@ -10,6 +10,11 @@ export interface ChannelWebhookDeps {
   redisAvailable(): Promise<boolean>;
   loadChannel(id: string): Promise<AgentChannelRow | undefined>;
   transportFor(row: AgentChannelRow): Promise<ChannelTransport | null>;
+  /**
+   * Called after the SDK's response has been written; must not block (the wiring starts
+   * the throttled chat state purge and does not wait for it).
+   */
+  purgeChatState?(): void;
 }
 
 /** Upper bound for the SDK's background work (decide + enqueue) before Meta gets its answer. */
@@ -155,5 +160,12 @@ export const createChannelWebhookHandler =
     } catch (error) {
       console.error(`${LOG_PREFIX} webhook handling failed on channel ${channelId}`, safeError(error));
       if (!res.headersSent) res.status(500).json({ detail: "internal error" });
+      return;
+    }
+
+    try {
+      deps.purgeChatState?.();
+    } catch (error) {
+      console.error(`${LOG_PREFIX} chat state purge could not be started`, safeError(error));
     }
   };

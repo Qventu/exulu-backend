@@ -10,7 +10,7 @@ import { ensureEntityTables } from "@SRC/exulu/entities";
 import { contextFieldsForSync } from "@SRC/exulu/context-fields-for-sync";
 import { getTableName, getChunksTableName } from "@SRC/exulu/table-names";
 import { hydrateContextEmbedders } from "@SRC/exulu/hydrate-embedders";
-import { ensureChatStateTables } from "@SRC/exulu/channels/state-tables";
+import { ensureChatStateTables, purgeExpiredChatState } from "@SRC/exulu/channels/state-tables";
 import { Pool } from "pg";
 
 const {
@@ -424,6 +424,7 @@ const up = async function (knex: Knex) {
     });
     try {
       await ensureChatStateTables(pool);
+      await purgeExpiredChatState(pool);
     } finally {
       await pool.end();
     }

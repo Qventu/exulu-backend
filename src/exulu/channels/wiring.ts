@@ -11,6 +11,7 @@ import { codeAttemptsExceeded, consumeCode, linkPromptAllowed, type KeyValueStor
 import { createLinkStore } from "./links";
 import { ChannelSetupError } from "./log";
 import { getChannelPgPool } from "./pg-pool";
+import { purgeChatStateThrottled } from "./state-tables";
 import { runLockKey, type ChannelMessageJob } from "./run";
 import { createRunLock, type LockRedis } from "./run-lock";
 import type { ChannelWebhookDeps } from "./webhook";
@@ -118,5 +119,9 @@ export const createChannelWebhookDeps = (env: ChannelServerEnv): ChannelWebhookD
       onMessage: (msg) => handleInbound(row, msg, env, transportDeps),
     };
     return (env.getTransport ?? defaultGetTransport)(row, transportDeps);
+  },
+  // at most once per hour per process, not awaited
+  purgeChatState: () => {
+    purgeChatStateThrottled(getChannelPgPool());
   },
 });

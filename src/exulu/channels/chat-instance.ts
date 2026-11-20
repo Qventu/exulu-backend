@@ -5,6 +5,7 @@ import type { createPostgresState } from "@chat-adapter/state-pg";
 import { parseChannelConfig, readSecrets } from "./config";
 import { safeError } from "./log";
 import type { InboundMessage } from "./decide";
+import { CHAT_STATE_KEY_PREFIX } from "./state-tables";
 import type { AgentChannelRow } from "./types";
 
 /**
@@ -42,7 +43,18 @@ export interface TransportDeps {
 }
 
 const USER_NAME = "exulu-agent";
-const KEY_PREFIX = "exulu-channel";
+const KEY_PREFIX = CHAT_STATE_KEY_PREFIX;
+
+/**
+ * The WhatsApp adapter sets `persistThreadHistory`, so the SDK appends every inbound message
+ * (text, sender id, profile name) to `chat_state_lists` under `msg-history:<threadId>` before
+ * our handler runs (defaults: 100 messages, 7 days, refreshed on each message). Our only use
+ * of it is the typing indicator, which targets the latest inbound message id
+ * (resolveTypingTargetMessageId); answers are posted through the adapter directly and are not
+ * appended. So: one message, kept for an hour (longer than a queued run plus its 600 s
+ * timeout). Expired rows are deleted by purgeExpiredChatState.
+ */
+export const CHAT_HISTORY = { thread: { maxMessages: 1, ttlMs: 60 * 60 * 1000 } } as const;
 const LOG_PREFIX = "[EXULU-CHANNEL]";
 
 const loadSdk = async (): Promise<SdkModules> => {
@@ -209,6 +221,7 @@ const build = async (channelId: string, settings: Settings, deps: TransportDeps)
     state,
     // our own run lock decides; the SDK must not hold or drop messages
     concurrency: "concurrent",
+    history: { thread: { ...CHAT_HISTORY.thread } },
     logger,
   });
 

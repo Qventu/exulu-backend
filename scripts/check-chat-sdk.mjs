@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import pg from "pg";
 
-const { Chat } = await import("chat");
+const { Chat, Message, ThreadHistoryCache } = await import("chat");
 const { createWhatsAppAdapter } = await import("@chat-adapter/whatsapp");
 const { createPostgresState } = await import("@chat-adapter/state-pg");
 
@@ -48,8 +48,60 @@ const chat = new Chat({
   adapters: { whatsapp: adapter },
   state,
   concurrency: "concurrent",
+  // the same value as CHAT_HISTORY in chat-instance.ts
+  history: { thread: { maxMessages: 1, ttlMs: 60 * 60 * 1000 } },
   logger: silent,
 });
+check(
+  "chat honours history.thread (inbound history kept: 1 message, 1 hour)",
+  chat._threadHistory?.maxMessages === 1 && chat._threadHistory?.ttlMs === 60 * 60 * 1000,
+);
+check(
+  "the typing target is read from the inbound history (resolveTypingTargetMessageId)",
+  typeof adapter.resolveTypingTargetMessageId === "function",
+);
+// With one message kept, the typing target is still the latest inbound message: the SDK's own
+// history cache and the adapter's own lookup, over an in-memory state with the list semantics
+// of state-pg's appendToList (trim to maxLength, keep newest).
+{
+  const lists = new Map();
+  const memState = {
+    appendToList: async (key, value, options) => {
+      const list = [...(lists.get(key) ?? []), value];
+      lists.set(key, options?.maxLength ? list.slice(-options.maxLength) : list);
+    },
+    getList: async (key) => lists.get(key) ?? [],
+  };
+  const history = new ThreadHistoryCache(memState, { maxMessages: 1, ttlMs: 60 * 60 * 1000 });
+  const threadId = "whatsapp:111:49151";
+  const inbound = (id) =>
+    new Message({
+      id,
+      threadId,
+      text: "x",
+      formatted: { type: "root", children: [] },
+      raw: {},
+      author: { userId: "49151", userName: "u", fullName: "u", isBot: false, isMe: false },
+      metadata: { dateSent: new Date(), edited: false },
+      attachments: [],
+    });
+  await history.append(threadId, inbound("wamid.first"));
+  await history.append(threadId, inbound("wamid.second"));
+  check("only one inbound message is kept per thread", (lists.get(`msg-history:${threadId}`) ?? []).length === 1);
+  const typingAdapter = createWhatsAppAdapter({
+    accessToken: "dummy-access-token",
+    appSecret: "dummy-app-secret",
+    phoneNumberId: "111",
+    verifyToken: "dummy-verify-token",
+    userName: "exulu-agent",
+    logger: silent,
+  });
+  typingAdapter.chat = { getState: () => memState };
+  check(
+    "the typing target is the latest inbound message id with one message kept",
+    (await typingAdapter.resolveTypingTargetMessageId(threadId)) === "wamid.second",
+  );
+}
 for (const method of ["onDirectMessage", "initialize", "shutdown"]) {
   check(`chat.${method} is a function`, typeof chat[method] === "function");
 }
