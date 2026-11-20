@@ -1,3 +1,4 @@
+import type { AccessOutcome } from "./access";
 import { normalizeCode } from "./link-codes";
 import { linkState, type ChannelLink, type createLinkStore } from "./links";
 import type { ReplyKey, WhatsAppChannelConfig } from "./types";
@@ -27,8 +28,11 @@ export interface DecideDeps {
   /** Counts the attempt when called: call once per code-shaped message only. */
   codeAttemptsExceeded(identity: string): Promise<boolean>;
   linkPromptAllowed(identity: string): Promise<boolean>;
-  /** User exists, isUserActive, and evaluateGuestChatAccess allows. */
-  accessAllowed(userId: number): Promise<boolean>;
+  /**
+   * channelAccessCheck for this channel's agent. "unavailable" (the check itself failed) is
+   * never treated as "denied": no run and no reply, but the link is kept.
+   */
+  access(userId: number): Promise<AccessOutcome>;
   rateLimited(userId: number): boolean;
   runInFlight(identity: string): Promise<boolean>;
   markNewSession(identity: string): Promise<void>;
@@ -63,9 +67,11 @@ const notLinked = async (msg: InboundMessage, deps: DecideDeps): Promise<Decisio
     : { kind: "silent" };
 
 /**
- * Spec 5.5. Returns the decision when the code settles the message, or undefined when it
- * does not (locked out, unknown, wrong channel, access withdrawn). `codeAttemptsExceeded`
- * is called exactly once and `consumeCode` is skipped while locked out.
+ * Spec 5.5. `decision` is set when the code settles the message: linked, or silent when the
+ * access check could not be made. It is unset when the code does not settle it (locked out,
+ * unknown, wrong channel, access denied); decideInbound then answers an unlinked sender with
+ * silence or codeInvalid and handles a sender with a valid link as a normal message (R6).
+ * `codeAttemptsExceeded` is called exactly once and `consumeCode` is skipped while locked out.
  */
 const tryCode = async (
   code: string,
@@ -78,7 +84,10 @@ const tryCode = async (
   }
   const consumed = await deps.consumeCode(code);
   if (!consumed || consumed.channelId !== msg.channelId) return { lockedOut: false };
-  if (!(await deps.accessAllowed(consumed.userId))) return { lockedOut: false };
+  const access = await deps.access(consumed.userId);
+  // could not check: the code is spent, but nothing is linked and nothing is said
+  if (access === "unavailable") return { decision: { kind: "silent" }, lockedOut: false };
+  if (access !== "allowed") return { lockedOut: false };
   const link = await deps.links.upsert({
     channelId: msg.channelId,
     identity: msg.identity,
@@ -96,8 +105,10 @@ export const decideInbound = async (msg: InboundMessage, deps: DecideDeps): Prom
   // 1. Not text.
   if (msg.hasAttachments || text === "") return reply("textOnly");
 
-  // 2. Link code: never forwarded to the model. An unresolved code from a sender with a valid
-  // link falls through to normal handling so a real message is not swallowed.
+  // 2. Link code. A code that links is answered here and never reaches the model. A code-shaped
+  // message that does not link (unknown, wrong channel, locked out, access denied) is, for a
+  // sender with a valid link, handled as a normal message from step 3 on, so a short real
+  // message ("Fehler 42") is not swallowed; an unlinked sender gets codeInvalid or silence.
   const code = normalizeCode(text);
   let codeLockedOut = false;
   if (code !== null) {
@@ -129,8 +140,11 @@ export const decideInbound = async (msg: InboundMessage, deps: DecideDeps): Prom
   if (state.state !== "valid") return notLinked(msg, deps);
   const link = state.link;
 
-  // 5. Re-check access on every message.
-  if (!(await deps.accessAllowed(link.user))) {
+  // 5. Re-check access on every message. A failed check is not a refusal: no run, no reply,
+  // and the link stays, so a transient database or agent-load error never unlinks anyone.
+  const access = await deps.access(link.user);
+  if (access === "unavailable") return { kind: "silent" };
+  if (access !== "allowed") {
     await deps.links.revoke(link.id, now);
     deps.audit({ type: "access_rejected", identity: msg.identity, userId: link.user });
     return notLinked(msg, deps);

@@ -636,6 +636,21 @@ describe("POST /public-agents/:id/channels/whatsapp/link-code", () => {
     delete users[60];
   });
 
+  it("403 for an API key scoped to other agents; a key scoped to this agent gets a code", async () => {
+    users[61] = { id: 61, type: "api", scope_mode: "agents", agent_ids: [OTHER_AGENT], role: { name: "external" } };
+    users[62] = { id: 62, type: "api", scope_mode: "agents", agent_ids: [AGENT_ID], role: { name: "external" } };
+    try {
+      const { app, data } = build({ seed: { agent_channels: [channelRow()] } });
+      const refused = await as(request(app).post(linkCodePath()), 61);
+      expect(refused.status).toBe(403);
+      expect([...data.keys()].some((k) => k.endsWith(":61"))).toBe(false); // no code, no counter
+      expect((await as(request(app).post(linkCodePath()), 62)).status).toBe(200);
+    } finally {
+      delete users[61];
+      delete users[62];
+    }
+  });
+
   it("issues a code with a wa.me link of digits and the code, and only the caller's links", async () => {
     const { app } = build({
       seed: {

@@ -6,7 +6,7 @@ import { createChannelAuditor } from "./audit";
 import { getTransport as defaultGetTransport, type TransportDeps } from "./chat-instance";
 import { linkPageUrl, parseChannelConfig } from "./config";
 import { decideInbound, type DecideDeps, type InboundMessage } from "./decide";
-import { channelAccessAllowed, type GuestAgent } from "./access";
+import { channelAccessCheck, type GuestAgent } from "./access";
 import { codeAttemptsExceeded, consumeCode, linkPromptAllowed, type KeyValueStore } from "./link-codes";
 import { createLinkStore } from "./links";
 import { ChannelSetupError } from "./log";
@@ -70,8 +70,8 @@ export const createDecideDeps = (p: {
     consumeCode: (code) => consumeCode(store, code),
     codeAttemptsExceeded: (identity) => codeAttemptsExceeded(store, row.id, identity),
     linkPromptAllowed: (identity) => linkPromptAllowed(store, row.id, identity),
-    accessAllowed: (userId) =>
-      channelAccessAllowed({ db, loadAgent: env.loadAgent, agentId: row.agent, channelId: row.id, userId }),
+    access: (userId) =>
+      channelAccessCheck({ db, loadAgent: env.loadAgent, agentId: row.agent, channelId: row.id, userId }),
     rateLimited: (userId) => userRateLimited(userId),
     runInFlight: (identity) => lock.held(runLockKey(row.id, identity)),
     // a marker older than the idle window is moot: the next run starts a new session anyway

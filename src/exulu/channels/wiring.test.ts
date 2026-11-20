@@ -3,7 +3,7 @@ process.env.CHANNEL_LINK_BASE_URL = "https://kunden.example.de";
 
 jest.mock("./pg-pool", () => ({ getChannelPgPool: jest.fn(() => ({ fake: "pool" })) }));
 
-import { channelAccessAllowed } from "./access";
+import { channelAccessAllowed, channelAccessCheck } from "./access";
 import {
   channelStoreFromRedis,
   createChannelWebhookDeps,
@@ -143,6 +143,53 @@ describe("channelAccessAllowed", () => {
     };
     expect(await channelAccessAllowed({ ...base, db, loadAgent })).toBe(false);
     expect(JSON.stringify(errorSpy.mock.calls)).toContain(CHANNEL_ID);
+  });
+
+  it("refuses an API user whose key is scoped to other agents (as the run route does)", async () => {
+    const db = fakeDb({ users: { id: 7, type: "api", scope_mode: "agents", agent_ids: ["agent-2"] } });
+    expect(await channelAccessAllowed({ ...base, db, loadAgent: async () => guestAgent })).toBe(false);
+    expect(await channelAccessCheck({ ...base, db, loadAgent: async () => guestAgent })).toBe("denied");
+  });
+
+  it("allows an API user whose key is scoped to this agent", async () => {
+    const db = fakeDb({ users: { id: 7, type: "api", scope_mode: "agents", agent_ids: ["agent-1"] } });
+    expect(await channelAccessAllowed({ ...base, db, loadAgent: async () => guestAgent })).toBe(true);
+  });
+
+  it("refuses an API user with an unknown scope mode", async () => {
+    const db = fakeDb({ users: { id: 7, type: "api", scope_mode: "bogus" } });
+    expect(await channelAccessAllowed({ ...base, db, loadAgent: async () => guestAgent })).toBe(false);
+  });
+
+  it("does not apply the key scope to a normal user", async () => {
+    const db = fakeDb({ users: { id: 7, type: "user", scope_mode: "agents", agent_ids: [] } });
+    expect(await channelAccessAllowed({ ...base, db, loadAgent: async () => guestAgent })).toBe(true);
+  });
+
+  it.each([
+    ["password mode", { guest_auth_mode: "password" }],
+    ["public mode", { guest_auth_mode: "public" }],
+  ])("refuses an agent that left regular guest mode (%s)", async (_label, over) => {
+    const db = fakeDb({ users: { id: 7 } });
+    const agent = { ...guestAgent, ...over };
+    expect(await channelAccessCheck({ ...base, db, loadAgent: async () => agent })).toBe("denied");
+  });
+
+  it("tells a failed check ('unavailable') apart from a refusal", async () => {
+    const throwingDb: any = () => ({
+      where: () => ({
+        first: async () => {
+          throw new Error("connection terminated");
+        },
+      }),
+    });
+    expect(await channelAccessCheck({ ...base, db: throwingDb, loadAgent: async () => guestAgent })).toBe("unavailable");
+    expect(await channelAccessCheck({ ...base, db: fakeDb({ users: undefined }), loadAgent: async () => guestAgent })).toBe(
+      "denied",
+    );
+    expect(await channelAccessCheck({ ...base, db: fakeDb({ users: { id: 7 } }), loadAgent: async () => guestAgent })).toBe(
+      "allowed",
+    );
   });
 });
 

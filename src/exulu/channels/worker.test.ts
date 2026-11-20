@@ -270,6 +270,24 @@ describe("stillAllowed", () => {
   it("user deleted → false", async () => {
     expect(await check(dbWith(validLink, { userDeleted: true }))).toBe(false);
   });
+
+  it("an access check that cannot be made ('unavailable') → false (the job is skipped)", async () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    const loadAgent = async () => {
+      throw new Error("agent load failed");
+    };
+    expect(await check(dbWith(validLink), loadAgent)).toBe(false);
+    error.mockRestore();
+  });
+
+  it("an API user whose key is scoped to another agent → false", async () => {
+    const db = dbWith(validLink);
+    const scoped: any = (table: string) =>
+      table === "users"
+        ? { where: () => ({ first: async () => ({ id: 7, type: "api", scope_mode: "agents", agent_ids: ["other"] }) }) }
+        : db(table);
+    expect(await check(scoped)).toBe(false);
+  });
 });
 
 describe("runChannelMessageJob", () => {

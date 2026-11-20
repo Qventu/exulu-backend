@@ -1,4 +1,5 @@
 import { decideInbound, isUserActive, type DecideDeps, type InboundMessage } from "./decide";
+import type { AccessOutcome } from "./access";
 import { ChannelSetupError } from "./log";
 import type { ChannelLink } from "./links";
 
@@ -41,7 +42,7 @@ const makeDeps = (over: Partial<DecideDeps> = {}) => {
     consumeCode: jest.fn(async () => ({ channelId: "chA", userId: 7 })),
     codeAttemptsExceeded: jest.fn(async () => false),
     linkPromptAllowed: jest.fn(async () => true),
-    accessAllowed: jest.fn(async () => true),
+    access: jest.fn(async (): Promise<AccessOutcome> => "allowed"),
     rateLimited: jest.fn(() => false),
     runInFlight: jest.fn(async () => false),
     markNewSession: jest.fn(async () => undefined),
@@ -61,7 +62,7 @@ const notCalled = (deps: D, ...names: string[]) => {
 };
 const ALL = [
   "find", "upsert", "revoke", "touch", "consumeCode", "codeAttemptsExceeded", "linkPromptAllowed",
-  "accessAllowed", "rateLimited", "runInFlight", "markNewSession", "takeNewSession", "audit",
+  "access", "rateLimited", "runInFlight", "markNewSession", "takeNewSession", "audit",
 ];
 const onlyCalled = (deps: D, ...allowed: string[]) =>
   notCalled(deps, ...ALL.filter((n) => !allowed.includes(n)));
@@ -101,9 +102,9 @@ describe("step 2: code path", () => {
     onlyCalled(deps, "codeAttemptsExceeded", "consumeCode", "find");
   });
   it("unlinked, user no longer allowed -> codeInvalid, no link", async () => {
-    const deps = asUnlinked({ accessAllowed: jest.fn(async () => false) });
+    const deps = asUnlinked({ access: jest.fn(async (): Promise<AccessOutcome> => "denied") });
     expect(await decideInbound(msg({ text: CODE }), deps)).toEqual({ kind: "reply", key: "codeInvalid" });
-    onlyCalled(deps, "codeAttemptsExceeded", "consumeCode", "accessAllowed", "find");
+    onlyCalled(deps, "codeAttemptsExceeded", "consumeCode", "access", "find");
   });
   it("valid code from an unlinked sender -> upsert with ttl, audit linked, reply linked with expiry", async () => {
     const deps = asUnlinked();
@@ -117,14 +118,14 @@ describe("step 2: code path", () => {
       channelId: "chA", identity: msg().identity, userId: 7, linkTtlDays: 30, now: NOW,
     });
     expect(deps.audit).toHaveBeenCalledWith({ type: "linked", identity: msg().identity, userId: 7 });
-    onlyCalled(deps, "codeAttemptsExceeded", "consumeCode", "accessAllowed", "upsert", "audit");
+    onlyCalled(deps, "codeAttemptsExceeded", "consumeCode", "access", "upsert", "audit");
   });
   it("linked user sends a valid code for another user -> linked as that user, no run", async () => {
     const deps = linkedWith({ consumeCode: jest.fn(async () => ({ channelId: "chA", userId: 9 })) });
     expect(await decideInbound(msg({ text: CODE }), deps)).toMatchObject({ kind: "reply", key: "linked" });
-    expect(deps.accessAllowed).toHaveBeenCalledWith(9);
+    expect(deps.access).toHaveBeenCalledWith(9);
     expect(deps.links.upsert).toHaveBeenCalledWith(expect.objectContaining({ userId: 9 }));
-    onlyCalled(deps, "codeAttemptsExceeded", "consumeCode", "accessAllowed", "upsert", "audit");
+    onlyCalled(deps, "codeAttemptsExceeded", "consumeCode", "access", "upsert", "audit");
   });
   it("linked user, code-shaped text that does not resolve -> run, not codeInvalid", async () => {
     const deps = linkedWith({ consumeCode: jest.fn(async () => null) });
@@ -147,7 +148,7 @@ describe("step 2: code path", () => {
     notCalled(deps, "consumeCode", "upsert");
   });
   it("linked user whose access was withdrawn, non-resolving code text -> revoked, linkRequired, never run", async () => {
-    const deps = linkedWith({ consumeCode: jest.fn(async () => null), accessAllowed: jest.fn(async () => false) });
+    const deps = linkedWith({ consumeCode: jest.fn(async () => null), access: jest.fn(async (): Promise<AccessOutcome> => "denied") });
     expect(await decideInbound(msg({ text: CODE }), deps)).toMatchObject({ kind: "reply", key: "linkRequired" });
     expect(deps.links.revoke).toHaveBeenCalledWith("l1", NOW);
     notCalled(deps, "touch", "runInFlight", "takeNewSession", "upsert");
@@ -181,7 +182,7 @@ describe("step 3: commands", () => {
   it("/neu without a link -> linkRequired, no markNewSession", async () => {
     const deps = makeDeps({ links: { ...makeDeps().links, find: jest.fn(async () => undefined) } as any });
     expect(await decideInbound(msg({ text: "/neu" }), deps)).toMatchObject({ kind: "reply", key: "linkRequired" });
-    notCalled(deps, "markNewSession", "accessAllowed", "rateLimited", "runInFlight");
+    notCalled(deps, "markNewSession", "access", "rateLimited", "runInFlight");
   });
   it("/neu with expired link -> linkRequired", async () => {
     const deps = makeDeps({
@@ -207,7 +208,7 @@ describe("step 3: commands", () => {
   it("/abmelden from an unlinked sender -> linkRequired, not an error", async () => {
     const deps = makeDeps({ links: { ...makeDeps().links, find: jest.fn(async () => undefined) } as any });
     expect(await decideInbound(msg({ text: "/abmelden" }), deps)).toMatchObject({ kind: "reply", key: "linkRequired" });
-    notCalled(deps, "revoke", "audit", "accessAllowed", "rateLimited", "runInFlight");
+    notCalled(deps, "revoke", "audit", "access", "rateLimited", "runInFlight");
   });
   it("/abmelden with an already revoked link -> linkRequired, no second revoke", async () => {
     const deps = makeDeps({
@@ -241,7 +242,7 @@ describe("step 4: link not valid", () => {
   it("revoked -> linkRequired", async () => {
     const deps = withLink(link({ revoked_at: new Date("2026-11-15T00:00:00Z") }));
     expect(await decideInbound(msg(), deps)).toMatchObject({ key: "linkRequired" });
-    notCalled(deps, "accessAllowed", "touch");
+    notCalled(deps, "access", "touch");
   });
   it("second prompt inside the window -> silent", async () => {
     const deps = withLink(undefined, { linkPromptAllowed: jest.fn(async () => false) });
@@ -252,21 +253,35 @@ describe("step 4: link not valid", () => {
 
 describe("step 5: access re-check", () => {
   it("access denied -> revoke, audit access_rejected, then linkRequired", async () => {
-    const deps = makeDeps({ accessAllowed: jest.fn(async () => false) });
+    const deps = makeDeps({ access: jest.fn(async (): Promise<AccessOutcome> => "denied") });
     expect(await decideInbound(msg(), deps)).toMatchObject({ kind: "reply", key: "linkRequired" });
-    expect(deps.accessAllowed).toHaveBeenCalledWith(7);
+    expect(deps.access).toHaveBeenCalledWith(7);
     expect(deps.links.revoke).toHaveBeenCalledWith("l1", NOW);
     expect(deps.audit).toHaveBeenCalledWith({ type: "access_rejected", identity: msg().identity, userId: 7 });
     notCalled(deps, "rateLimited", "runInFlight", "touch", "takeNewSession");
   });
   it("access denied and prompt window used -> silent", async () => {
     const deps = makeDeps({
-      accessAllowed: jest.fn(async () => false),
+      access: jest.fn(async (): Promise<AccessOutcome> => "denied"),
       linkPromptAllowed: jest.fn(async () => false),
     });
     expect(await decideInbound(msg(), deps)).toEqual({ kind: "silent" });
     expect(deps.links.revoke).toHaveBeenCalledTimes(1);
     notCalled(deps, "rateLimited", "runInFlight", "touch");
+  });
+  it("access could not be checked -> silent: no run, no reply, no revoke, no audit", async () => {
+    const deps = makeDeps({ access: jest.fn(async (): Promise<AccessOutcome> => "unavailable") });
+    expect(await decideInbound(msg(), deps)).toEqual({ kind: "silent" });
+    expect(deps.access).toHaveBeenCalledWith(7);
+    onlyCalled(deps, "find", "access");
+  });
+  it("access could not be checked for a valid code -> silent, no link written", async () => {
+    const deps = makeDeps({
+      links: { ...makeDeps().links, find: jest.fn(async () => undefined) } as any,
+      access: jest.fn(async (): Promise<AccessOutcome> => "unavailable"),
+    });
+    expect(await decideInbound(msg({ text: CODE }), deps)).toEqual({ kind: "silent" });
+    onlyCalled(deps, "codeAttemptsExceeded", "consumeCode", "access");
   });
 });
 
