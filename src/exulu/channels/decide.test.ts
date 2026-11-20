@@ -79,29 +79,33 @@ describe("step 1: not text", () => {
 });
 
 describe("step 2: code path", () => {
-  it("lockout -> silent, audited, consumeCode not called", async () => {
-    const deps = makeDeps({ codeAttemptsExceeded: jest.fn(async () => true) });
+  const asUnlinked = (over: Partial<DecideDeps> = {}) =>
+    makeDeps({ links: { ...makeDeps().links, find: jest.fn(async () => undefined) } as any, ...over });
+  const linkedWith = (over: Partial<DecideDeps> = {}) => makeDeps(over);
+
+  it("unlinked and locked out -> silent, audited, consumeCode not called", async () => {
+    const deps = asUnlinked({ codeAttemptsExceeded: jest.fn(async () => true) });
     expect(await decideInbound(msg({ text: CODE }), deps)).toEqual({ kind: "silent" });
     expect(deps.audit).toHaveBeenCalledWith({ type: "code_lockout", identity: msg().identity });
-    onlyCalled(deps, "codeAttemptsExceeded", "audit");
+    onlyCalled(deps, "codeAttemptsExceeded", "audit", "find");
   });
-  it("unknown code -> codeInvalid", async () => {
-    const deps = makeDeps({ consumeCode: jest.fn(async () => null) });
+  it("unlinked, unknown code -> codeInvalid", async () => {
+    const deps = asUnlinked({ consumeCode: jest.fn(async () => null) });
     expect(await decideInbound(msg({ text: CODE }), deps)).toEqual({ kind: "reply", key: "codeInvalid" });
-    onlyCalled(deps, "codeAttemptsExceeded", "consumeCode");
+    onlyCalled(deps, "codeAttemptsExceeded", "consumeCode", "find");
   });
-  it("code issued for channel B sent to channel A -> codeInvalid, no link", async () => {
-    const deps = makeDeps({ consumeCode: jest.fn(async () => ({ channelId: "chB", userId: 7 })) });
+  it("unlinked, code issued for channel B sent to channel A -> codeInvalid, no link", async () => {
+    const deps = asUnlinked({ consumeCode: jest.fn(async () => ({ channelId: "chB", userId: 7 })) });
     expect(await decideInbound(msg({ text: CODE }), deps)).toEqual({ kind: "reply", key: "codeInvalid" });
-    onlyCalled(deps, "codeAttemptsExceeded", "consumeCode");
+    onlyCalled(deps, "codeAttemptsExceeded", "consumeCode", "find");
   });
-  it("user no longer allowed -> codeInvalid, no link", async () => {
-    const deps = makeDeps({ accessAllowed: jest.fn(async () => false) });
+  it("unlinked, user no longer allowed -> codeInvalid, no link", async () => {
+    const deps = asUnlinked({ accessAllowed: jest.fn(async () => false) });
     expect(await decideInbound(msg({ text: CODE }), deps)).toEqual({ kind: "reply", key: "codeInvalid" });
-    onlyCalled(deps, "codeAttemptsExceeded", "consumeCode", "accessAllowed");
+    onlyCalled(deps, "codeAttemptsExceeded", "consumeCode", "accessAllowed", "find");
   });
-  it("valid code -> upsert with ttl, audit linked, reply linked with expiry", async () => {
-    const deps = makeDeps();
+  it("valid code from an unlinked sender -> upsert with ttl, audit linked, reply linked with expiry", async () => {
+    const deps = asUnlinked();
     expect(await decideInbound(msg({ text: " abcd 2345 " }), deps)).toEqual({
       kind: "reply",
       key: "linked",
@@ -114,12 +118,38 @@ describe("step 2: code path", () => {
     expect(deps.audit).toHaveBeenCalledWith({ type: "linked", identity: msg().identity, userId: 7 });
     onlyCalled(deps, "codeAttemptsExceeded", "consumeCode", "accessAllowed", "upsert", "audit");
   });
-  it("code from an already linked user is consumed as a code, never run", async () => {
-    const deps = makeDeps();
-    const d = await decideInbound(msg({ text: CODE }), deps);
-    expect(d.kind).toBe("reply");
+  it("linked user sends a valid code for another user -> linked as that user, no run", async () => {
+    const deps = linkedWith({ consumeCode: jest.fn(async () => ({ channelId: "chA", userId: 9 })) });
+    expect(await decideInbound(msg({ text: CODE }), deps)).toMatchObject({ kind: "reply", key: "linked" });
+    expect(deps.accessAllowed).toHaveBeenCalledWith(9);
+    expect(deps.links.upsert).toHaveBeenCalledWith(expect.objectContaining({ userId: 9 }));
+    onlyCalled(deps, "codeAttemptsExceeded", "consumeCode", "accessAllowed", "upsert", "audit");
+  });
+  it("linked user, code-shaped text that does not resolve -> run, not codeInvalid", async () => {
+    const deps = linkedWith({ consumeCode: jest.fn(async () => null) });
+    expect(await decideInbound(msg({ text: CODE }), deps)).toEqual({ kind: "run", userId: 7, newSession: false });
     expect(deps.codeAttemptsExceeded).toHaveBeenCalledTimes(1);
-    notCalled(deps, "find", "runInFlight", "touch", "takeNewSession");
+    expect(deps.links.find).toHaveBeenCalledTimes(1);
+    expect(deps.links.touch).toHaveBeenCalledWith("l1", NOW);
+    notCalled(deps, "upsert", "revoke");
+  });
+  it("linked user, code for another channel -> run", async () => {
+    const deps = linkedWith({ consumeCode: jest.fn(async () => ({ channelId: "chB", userId: 9 })) });
+    expect(await decideInbound(msg({ text: CODE }), deps)).toEqual({ kind: "run", userId: 7, newSession: false });
+    notCalled(deps, "upsert");
+  });
+  it("linked user, locked out, code-shaped text -> run, consumeCode not called", async () => {
+    const deps = linkedWith({ codeAttemptsExceeded: jest.fn(async () => true) });
+    expect(await decideInbound(msg({ text: CODE }), deps)).toEqual({ kind: "run", userId: 7, newSession: false });
+    expect(deps.audit).toHaveBeenCalledWith({ type: "code_lockout", identity: msg().identity });
+    expect(deps.links.find).toHaveBeenCalledTimes(1);
+    notCalled(deps, "consumeCode", "upsert");
+  });
+  it("linked user whose access was withdrawn, non-resolving code text -> revoked, linkRequired, never run", async () => {
+    const deps = linkedWith({ consumeCode: jest.fn(async () => null), accessAllowed: jest.fn(async () => false) });
+    expect(await decideInbound(msg({ text: CODE }), deps)).toMatchObject({ kind: "reply", key: "linkRequired" });
+    expect(deps.links.revoke).toHaveBeenCalledWith("l1", NOW);
+    notCalled(deps, "touch", "runInFlight", "takeNewSession", "upsert");
   });
   it("a sentence containing a code is not a code: goes to step 4", async () => {
     const deps = makeDeps({ links: { ...makeDeps().links, find: jest.fn(async () => undefined) } as any });

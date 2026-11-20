@@ -29,12 +29,19 @@ export const generateCode = (): string => {
   return `${raw.slice(0, 4)}-${raw.slice(4)}`;
 };
 
+// 4 + 4 alphabet characters, joined by nothing, one hyphen, or plain spaces. Matched against the
+// ORIGINAL text (case-insensitive, no `u` flag) so no character outside the alphabet can be folded
+// into it by upper-casing ("ß" never becomes "SS"). Anything looser makes ordinary short messages
+// such as "Fehler 42" or "Guten Tag" code-shaped.
+const CODE_SHAPE = /^([A-HJ-NP-Z2-9]{4})(?:-| +)?([A-HJ-NP-Z2-9]{4})$/i;
+const MAX_CODE_INPUT = 64;
+
 /** Whole-message match only: the trimmed text must be exactly one code. Otherwise null. */
 export const normalizeCode = (text: string): string | null => {
-  const raw = text.trim().toUpperCase().replace(/[\s-]/g, "");
-  if (raw.length !== CODE_LENGTH) return null;
-  for (const ch of raw) if (!ALPHABET.includes(ch)) return null;
-  return `${raw.slice(0, 4)}-${raw.slice(4)}`;
+  const trimmed = text.trim();
+  if (trimmed.length > MAX_CODE_INPUT) return null;
+  const m = CODE_SHAPE.exec(trimmed);
+  return m ? `${m[1]}-${m[2]}`.toUpperCase() : null;
 };
 
 export const issueCode = async (

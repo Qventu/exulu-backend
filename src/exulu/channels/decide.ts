@@ -61,19 +61,23 @@ const notLinked = async (msg: InboundMessage, deps: DecideDeps): Promise<Decisio
     ? reply("linkRequired", { linkUrl: deps.linkUrl })
     : { kind: "silent" };
 
-/** Spec 5.5. Called exactly once per code-shaped message. */
-const handleCode = async (
+/**
+ * Spec 5.5. Returns the decision when the code settles the message, or undefined when it
+ * does not (locked out, unknown, wrong channel, access withdrawn). `codeAttemptsExceeded`
+ * is called exactly once and `consumeCode` is skipped while locked out.
+ */
+const tryCode = async (
   code: string,
   msg: InboundMessage,
   deps: DecideDeps,
-): Promise<Decision> => {
+): Promise<{ decision?: Decision; lockedOut: boolean }> => {
   if (await deps.codeAttemptsExceeded(msg.identity)) {
     deps.audit({ type: "code_lockout", identity: msg.identity });
-    return { kind: "silent" };
+    return { lockedOut: true };
   }
   const consumed = await deps.consumeCode(code);
-  if (!consumed || consumed.channelId !== msg.channelId) return reply("codeInvalid");
-  if (!(await deps.accessAllowed(consumed.userId))) return reply("codeInvalid");
+  if (!consumed || consumed.channelId !== msg.channelId) return { lockedOut: false };
+  if (!(await deps.accessAllowed(consumed.userId))) return { lockedOut: false };
   const link = await deps.links.upsert({
     channelId: msg.channelId,
     identity: msg.identity,
@@ -82,7 +86,7 @@ const handleCode = async (
     now: deps.now(),
   });
   deps.audit({ type: "linked", identity: msg.identity, userId: consumed.userId });
-  return reply("linked", { expiresAt: link.expires_at });
+  return { decision: reply("linked", { expiresAt: link.expires_at }), lockedOut: false };
 };
 
 export const decideInbound = async (msg: InboundMessage, deps: DecideDeps): Promise<Decision> => {
@@ -91,13 +95,22 @@ export const decideInbound = async (msg: InboundMessage, deps: DecideDeps): Prom
   // 1. Not text.
   if (msg.hasAttachments || text === "") return reply("textOnly");
 
-  // 2. Link code: never forwarded to the model, linked or not.
+  // 2. Link code: never forwarded to the model. An unresolved code from a sender with a valid
+  // link falls through to normal handling so a real message is not swallowed.
   const code = normalizeCode(text);
-  if (code !== null) return handleCode(code, msg, deps);
+  let codeLockedOut = false;
+  if (code !== null) {
+    const tried = await tryCode(code, msg, deps);
+    if (tried.decision) return tried.decision;
+    codeLockedOut = tried.lockedOut;
+  }
 
   const now = deps.now();
   const found: ChannelLink | undefined = await deps.links.find(msg.channelId, msg.identity);
   const state = linkState(found, now);
+  if (code !== null && state.state !== "valid") {
+    return codeLockedOut ? { kind: "silent" } : reply("codeInvalid");
+  }
 
   // 3. Commands, whole trimmed message. Without a usable link they fall through to step 4.
   const command = text.toLowerCase();

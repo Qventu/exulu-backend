@@ -65,7 +65,7 @@ describe("generateCode / normalizeCode", () => {
     ["ABCD-EFGH", "ABCD-EFGH"],
     [" abcd efgh ", "ABCD-EFGH"],
     ["abcdefgh", "ABCD-EFGH"],
-    ["ab-cd-ef-gh", "ABCD-EFGH"],
+    ["ABCD   EFGH", "ABCD-EFGH"],
   ])("normalizes %p", (i, o) => expect(normalizeCode(i)).toBe(o));
   it.each([
     "mein Code ist ABCD-EFGH",
@@ -77,6 +77,16 @@ describe("generateCode / normalizeCode", () => {
     "ABCD-EFG0",
     "",
     "hallo",
+    "Fehler 42",
+    "Guten Tag",
+    "ab cd ef gh",
+    "ab-cd-ef-gh",
+    "ABCD--EFGH",
+    "A-BCDEFGH",
+    "ABCD - EFGH",
+    "ABCD\tEFGH",
+    "STRAßEXY",
+    `${"A".repeat(100)}`,
   ])("rejects %p", (i) => expect(normalizeCode(i)).toBeNull());
 });
 
