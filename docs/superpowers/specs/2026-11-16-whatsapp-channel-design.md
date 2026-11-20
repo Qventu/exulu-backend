@@ -1,7 +1,8 @@
 # WhatsApp channel for agents — Design
 
 **Date:** 2026-11-16
-**Status:** agreed with Daniel Claessen 2026-11-16; not yet planned or built
+**Status:** agreed with Daniel Claessen 2026-11-16; backend built on `feature/whatsapp-channel`
+(this document describes the backend as built; §6 is the frontend, not part of that branch)
 **Repos:** `exulu/backend` (channel config, webhook, linking, run), `exulu/frontend` (agent
 editor section, link page)
 **Related specs:** `2026-10-27-agent-guardrails-design.md` (should ship before a client
@@ -37,8 +38,10 @@ RBAC, the external rate limit and guardrails apply without a second access model
 - A linked sender is an ordinary user of the agent: same permissions, same limits, same
   session history (WhatsApp conversations appear in their history rail on the web).
 - Link lifetime is configurable per channel, default 7 days.
-- Disabling the account, revoking the link, unpublishing the agent or disabling the channel
-  takes effect on the next message.
+- Deleting the user, revoking the link, unpublishing the agent or disabling the channel
+  takes effect on the next message. The backend has no account-disable switch (sign-in
+  refuses only a missing user row), so "disabling the account" has no meaning here. A link
+  outlives the user's web session: it stays valid up to `linkTtlDays` after linking.
 - The channel abstraction is generic enough that a second platform is a new adapter and a
   new credential form, not a second design.
 
@@ -125,10 +128,27 @@ Changing `linkTtlDays` affects new links only.
 
 ### 4.3 Link codes
 
-Not a table. Redis key `channel-link:<sha256(code)>` → `{ channelId, userId }`, TTL 10
-minutes, consumed with `GETDEL` so a code works exactly once. Format `XXXX-XXXX` from a
-32-character alphabet without look-alikes (40 bits). Requesting a new code invalidates the
+Not a table. Format `XXXX-XXXX` from a 32-character alphabet without look-alikes (40 bits),
+consumed with `GETDEL` so a code works exactly once. Requesting a new code invalidates the
 user's previous unconsumed code for that channel.
+
+Everything the channel keeps in Redis, as built:
+
+| Key | Value | TTL |
+|---|---|---|
+| `channel-link:code:<sha256(code without hyphen)>` | `{ channelId, userId }` | 600 s |
+| `channel-link:user:<channelId>:<userId>` | hash of the user's current code (pointer, for invalidation) | 600 s |
+| `channel-link:attempts:<channelId>:<identity>` | code attempts; locked out from the 6th | 3600 s, self-healing if the expiry is lost |
+| `channel-link:prompt:<channelId>:<identity>` | `linkRequired` was sent (`SET NX EX`) | 600 s |
+| `channel-link:issued:<userId>` | codes issued to a user, across channels; refused from the 6th | 600 s, self-healing |
+| `channel-seen:<channelId>:<sha256(messageId)>` | the message was accepted for a run (`SET NX`) | 24 h |
+| `channel-answered:<channelId>:<sha256(messageId)>` | the message's answer or `runFailed` was posted (`SET NX`) | 24 h |
+| `channel-run:<channelId>:<identity>` | run lock, random owner token | 90 s, renewed every 20 s while the run is alive |
+| `channel-new-session:<channelId>:<identity>` | `/neu` was sent | `sessionIdleHours` |
+| `channel-audit:code_lockout:<channelId>:<identity>` | one `code_lockout` audit entry per window | 3600 s |
+
+BullMQ job data in `channel_inbound` (message text, identity, thread id) is removed as soon
+as the job completes or fails.
 
 ## 5. Runtime
 
@@ -147,14 +167,20 @@ parsers (the signature is over the raw bytes; `/webhooks/routine` is the precede
 1. Unknown or disabled channel → 404, no detail.
 2. Missing `channels` or `queues` entitlement → 503.
 3. Build a Web `Request` from the Express request and hand it to
-   `bot.webhooks.whatsapp(request)` for that channel's `Chat` instance; write the returned
-   `Response` back. The SDK answers Meta's `GET` challenge against `verify_token`, verifies
-   `X-Hub-Signature-256` against `appSecret`, drops duplicates and ignores status-only
-   deliveries.
+   `chat.webhooks.whatsapp(request, { waitUntil })` for that channel's `Chat` instance. The
+   SDK answers Meta's `GET` challenge against `verify_token`, verifies
+   `X-Hub-Signature-256` against `appSecret`, drops duplicates (a `dedupe:` row per message
+   id, 10 minutes) and ignores status-only deliveries. The SDK returns its response before
+   our handler has run; the route waits up to 8 s for the handler (decide + enqueue) before
+   writing the response back, so Meta's 200 normally means "decided and enqueued".
+
+Because of step 1, the endpoint answers 404 until the channel is enabled; Meta's webhook
+verification therefore only succeeds after enabling. A channel ignores messages whose thread
+belongs to another phone number of the same Meta app.
 
 `Chat` instances are created lazily per channel and cached in-process, keyed on the row's
 `updatedAt`, because the SDK fixes its adapters at construction. State adapter is
-`@chat-adapter/state-pg` on the existing database with its own key prefix. (The Redis
+`@chat-adapter/state-pg` on the existing database with its own key prefix (`exulu-channel`). (The Redis
 adapter depends on `redis ^5`; the backend is on `^4.7`.) Persistent state is required:
 the adapter stores identity aliases there so a conversation survives Meta rotating a
 user ID.
@@ -167,41 +193,73 @@ One `onDirectMessage` handler per instance. It does no model work; it decides an
 In order:
 
 1. **Not text** → fixed reply `textOnly`.
-2. **Looks like a link code** (the whole message matches the code pattern, case and
-   whitespace tolerant) → §5.5. Never forwarded to the model, linked or not.
+2. **Looks like a link code**: the whole trimmed message is 8 characters of the code
+   alphabet, case-insensitive, either joined directly, by one hyphen, or by spaces between
+   the two halves (`ABCD-2345`, `abcd 2345`, `ABCD2345`) → §5.5. A code that links is
+   answered with `linked` and never reaches the model. A code-shaped message that does not
+   link (unknown, wrong channel, locked out, access refused) is, for a sender with a valid
+   link, handled as a normal message from step 3 on (ordinary short messages such as
+   "Fehler 42" have this shape); an unlinked sender gets `codeInvalid`, or silence while
+   locked out. Attempts are counted once per code-shaped message either way.
 3. **Command**: `/neu` or `/new` starts a new session; `/abmelden` or `/logout` revokes
    the link. Fixed confirmation.
 4. **Resolve the link.** No row, expired, or revoked → fixed reply `linkRequired` with the
    link URL, at most once per identity per 10 minutes (Redis counter); otherwise silence.
-5. **Re-check access on every message**: the user still exists and is active, and
-   `evaluateGuestChatAccess(agent, user.id)` allows. Otherwise treat as unlinked and mark
-   the link revoked.
+5. **Re-check access on every message** (`channelAccessCheck`, also used by the link-code
+   route and the worker): the user row still exists, an API user's key is scoped to this
+   agent (`checkApiKeyScope`, as the run route applies it), the agent can still carry a
+   channel (guest access on, regular mode), and `evaluateGuestChatAccess(agent, user.id)`
+   allows. Refused → treat as unlinked and mark the link revoked. The check could not be
+   made (a lookup failed) → no run and no reply for this message, but the link is kept. A
+   user is cut off by deleting them or revoking the link; there is no account-disable
+   rule, and a link outlives the web session up to `linkTtlDays`.
 6. `externalRateLimitExceeded(user.id)` → fixed reply `rateLimited`.
 7. A run is already in flight for this identity (Redis lock) → fixed reply `stillWorking`.
 8. Otherwise enqueue a `channel_message` job on a new `channel_inbound` queue with
-   `{ channelId, threadId, identity, userId, messageId, text }`, mark the message read and
-   start the typing indicator.
+   `{ channelId, threadId, identity, userId, messageId, text, newSession }`, mark the
+   message read and start the typing indicator. Duplicates are stopped by the 24-hour
+   `channel-seen` key taken right before the enqueue (job id: hash of the message id);
+   jobs are not retained after they finish. If the enqueue fails, the seen key is freed
+   and the sender gets `runFailed`.
 
 ### 5.4 The run
 
-The job runs where routine runs do. It:
+The job runs where routine runs do (attempts: 1). It:
 
-1. Takes the per-identity lock (TTL above the run timeout).
-2. Finds the session: the newest `agent_sessions` row for this user and agent whose
-   `metadata.channel.id` matches and whose last message is younger than
-   `sessionIdleHours`; otherwise creates one, titled with the first 50 characters of the
-   message, `metadata.channel = { type, id, identity }`.
-3. Calls `generateSync` with the agent, the linked user, the session and the message.
-   The run is flagged as a guest turn, so everything keyed on `treatAsGuest` /
-   `isPublicSurface` (hidden sources, external step cap, guardrail scope `external`)
-   applies even though there is no HTTP request from a browser.
-4. Posts the final text through the adapter as Markdown. The adapter converts formatting
-   and splits at 4,096 characters.
-5. On failure posts the fixed reply `runFailed` and records the error on the session.
-6. Releases the lock.
+1. Re-checks what decide checked: the link is still valid and belongs to the job's user,
+   and `channelAccessCheck` allows that user on the channel's current agent. Otherwise the
+   job is skipped: nothing is posted and nothing runs.
+2. Takes the per-identity lock: 90 s, renewed every 20 s (compare-and-expire on its owner
+   token) while the run is alive, so a run cut by a crash or deploy blocks its sender for at
+   most 90 s. Lock held → posts `stillWorking` and ends: a second message that passed
+   decide before the first run started, or a stalled job picked up again while the first
+   is still running.
+3. Finds the session: the newest `agent_sessions` row for this user and agent whose
+   `metadata.channel.id` matches and whose last activity (its last answer, else its
+   creation) is younger than `sessionIdleHours`, unless the job carries `newSession`;
+   otherwise creates one, titled with the first 50 characters of the message,
+   `metadata.channel = { type, id, identity }`.
+4. Calls `generateSync` with the agent, the linked user, the session and the message, and
+   saves question and answer to the session as the web chat's stream branch does. The run
+   carries the public-surface header (`x-public-surface: 1`) that the public agent page's
+   proxy sets, so `isPublicSurface` / `treatAsGuest` treat it as a guest turn although a
+   user is signed in. In the paths a channel turn reaches, that flag: limits memory recall
+   to public memories; makes the context item read/find tools return nothing; refuses
+   knowledge-base writes; does not offer the save-to-project and create-project tools; and
+   turns off session file writes. Source visibility is not decided by the flag but by the
+   user's role (`shouldShowSourcesToUser`), as on the web. There is no external step cap
+   and no guardrail scope in the code.
+5. Right before posting, marks the message answered (`channel-answered`, 24 h). If another
+   execution of the same message already did, nothing is posted. Then posts the final text
+   through the adapter as Markdown, without the inline citation markup the web chat renders
+   (the stored session keeps the original). The adapter converts formatting and splits at
+   4,096 characters.
+6. On failure (or an answer that is empty after removing citations) posts the fixed reply
+   `runFailed`; no error is recorded on the session.
+7. Releases the lock (compare-and-delete on its token).
 
-WhatsApp's typing indicator lapses after about 25 seconds, so the job refreshes it while
-the run is active.
+WhatsApp's typing indicator lapses after about 25 seconds, so the job refreshes it every
+20 seconds while the run is active.
 
 `generateSync` is used rather than the stream because nothing can be shown early and
 because it is the path the guardrails design finalises internally: with guardrails
@@ -209,7 +267,9 @@ enabled, the text this job posts has already passed the output check.
 
 ### 5.5 Linking
 
-1. The `linkRequired` reply carries `<app>/public/agents/<agentId>/link/whatsapp`.
+1. The `linkRequired` reply carries `<base>/public/agents/<agentId>/link/whatsapp`, where
+   `<base>` is `CHANNEL_LINK_BASE_URL` on the server, falling back to `NEXTAUTH_URL`. A
+   channel cannot be enabled while neither is set (409 `link_url_not_configured`).
 2. That page requires the normal guest login (existing `/auth` flow with a destination
    back to the page).
 3. Signed in, the page calls `POST /public-agents/:id/channels/whatsapp/link-code`
@@ -253,9 +313,25 @@ by a model.
 
 - Secrets are encrypted at rest and write-only in the API. The webhook path contains only
   the channel ID, which is not a secret; authenticity comes from Meta's signature.
-- Unlinked senders can trigger at most one fixed reply per 10 minutes and no model call.
+- Unlinked senders never cause a model call. The once-per-10-minutes throttle applies to
+  `linkRequired` only; `codeInvalid` (bounded by the attempt lockout) and `textOnly` are
+  not throttled.
 - `channel_links.identity` is personal data (a phone number). It is masked wherever it is
-  displayed, included in the user data export, and deleted with the user.
+  displayed, included in the user data export, and deleted with the user. The identity is
+  also held, unhashed, in Redis key names (`channel-link:attempts|prompt`, `channel-run`,
+  `channel-new-session`, `channel-audit:code_lockout`; TTLs in §4.3) and in
+  `agent_sessions.metadata.channel.identity` of every WhatsApp session.
+- The chat SDK stores per inbound message, before our handler runs and also for unlinked
+  senders: the latest message per sender (text, message id, sender id, WhatsApp profile
+  name) in `chat_state_lists` under `msg-history:<thread id>`, kept one hour after the
+  sender's last message (`history.thread: { maxMessages: 1, ttlMs: 1 h }`; the typing
+  indicator needs the latest inbound message id); and a `dedupe:whatsapp:<message id>` row
+  in `chat_state_cache` for 10 minutes. Expired rows are deleted by `utils:initdb` and at
+  most hourly per process after a webhook. The adapter's identity aliases and routes
+  (`whatsapp:identity:alias|route:…`: phone number and business-scoped ids) have no expiry
+  and are not deleted by us.
+- The channel code logs no message text, identity, link code or message id (errors only
+  as class and code). The generic tool-call logging of a run is the same as for a web turn.
 - Link, unlink, revoke, failed-code lockout and rejected-access events go to the audit log
   when the audit layer is on.
 - A channel widens the audience of an externally published agent. Instructions in the
@@ -292,19 +368,25 @@ classifier is added by the channel itself.
 - API: `secrets` and `verify_token` absent from every GraphQL and REST projection.
 - Enabling rules of §4.1, including auto-disable when guest mode changes.
 
-## 11. Left to the builder
+Verified only against fakes (no Postgres, Redis, Meta or network in the unit tests;
+`scripts/check-chat-sdk.mjs` checks the real SDK offline): the Express mount order and raw
+body; a signed POST through `chat.webhooks.whatsapp` with real state; the SQL of the link
+upsert, `findRecent` on real json metadata, `saveChat` and user hydration; state-pg's DDL,
+the expired-row purge and the history setting against a real database; node-redis `SET NX`,
+`EVAL` (release and extend scripts) and `EXISTS`; BullMQ duplicate job ids, retention and
+pickup by workers with explicit queue lists; the Graph API calls; and tools receiving the
+synthetic request.
 
-- Posting from the worker: confirm the SDK lets a second `Chat` instance (same config,
-  same state) post to a thread ID outside a webhook handler, or call the adapter's
-  `postMessage` directly.
-- How `@chat-adapter/state-pg` creates its tables, and whether that fits our schema
-  bootstrap.
-- The exact way to mark a queued run as a guest turn without a browser request
-  (synthetic header versus an explicit `generateSync` option; the guardrails spec's
-  `isGuardedCaller` must see it either way).
-- Which user field means "active"; this spec only requires that a disabled account fails
-  step 5 of §5.3.
-- Typing-indicator refresh interval against current Meta behaviour.
+## 11. Settled during the build
+
+- Posting from the worker: a second, post-only `Chat` instance per channel (no message
+  handler, refuses webhooks) posts through the adapter's `postMessage` after
+  `chat.initialize()`.
+- The chat SDK's tables are created by the adapter's own DDL (`autoCreateSchema`) from
+  `utils:initdb`; a failure there is logged and does not stop the boot.
+- A queued run is marked as a guest turn with the synthetic `x-public-surface` header.
+- "Active" user: there is no deactivation rule; an existing user row is active.
+- Typing indicator and run lock are refreshed every 20 s.
 
 ## 12. Open questions
 
@@ -315,6 +397,12 @@ classifier is added by the channel itself.
    else counting, that holds; if the check ever moves into the worker it needs Redis.
 3. Worker runs call the server's LiteLLM. A bulk ingestion run would slow WhatsApp answers
    the way it slows the web app today.
+4. UI-only tools on channel turns are untested: `question_ask`, image generation, and tools
+   that wait for an approval have no WhatsApp surface.
+5. Whether answers should carry a plain-text source line, now that citation markup is
+   removed.
+6. A real account-disable rule (today a user is cut off only by deleting them or revoking
+   their links).
 
 ## 13. Deferred
 
