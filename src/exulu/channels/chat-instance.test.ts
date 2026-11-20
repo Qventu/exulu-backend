@@ -160,6 +160,48 @@ describe("getTransport", () => {
     expect(sdk.chats[0].shutdown).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the newer instance when an older row arrives after it", async () => {
+    const sdk = makeSdk();
+    const newer = await getTransport(makeRow({ updatedAt: new Date("2026-11-02T10:00:00Z") }), deps(sdk));
+    const stale = await getTransport(makeRow(), deps(sdk));
+    expect(stale).toBe(newer);
+    expect(sdk.chats).toHaveLength(1);
+    expect(sdk.chats[0].shutdown).not.toHaveBeenCalled();
+  });
+
+  it("does not rebuild on every call when updatedAt does not parse", async () => {
+    const sdk = makeSdk();
+    const a = await getTransport(makeRow({ updatedAt: "not a date" }), deps(sdk));
+    const b = await getTransport(makeRow({ updatedAt: "not a date" }), deps(sdk));
+    expect(b).toBe(a);
+    expect(sdk.chats).toHaveLength(1);
+
+    const sdk2 = makeSdk();
+    resetTransports();
+    const c = await getTransport(makeRow(), deps(sdk2));
+    const d = await getTransport(makeRow({ updatedAt: "not a date" }), deps(sdk2));
+    expect(d).toBe(c);
+    expect(sdk2.chats).toHaveLength(1);
+    expect(sdk2.chats[0].shutdown).not.toHaveBeenCalled();
+  });
+
+  it("keeps the old instance cached and running when the new build rejects", async () => {
+    const sdk = makeSdk();
+    const old = await getTransport(makeRow(), deps(sdk));
+    const realLoad = sdk.load.getMockImplementation()!;
+    sdk.load.mockImplementationOnce(async () => {
+      throw new Error("import failed");
+    });
+    await expect(getTransport(makeRow({ updatedAt: new Date("2026-11-02T10:00:00Z") }), deps(sdk))).rejects.toThrow(
+      "import failed",
+    );
+    sdk.load.mockImplementation(realLoad);
+    await expect(getTransport(makeRow(), deps(sdk))).resolves.toBe(old);
+    await new Promise((r) => setImmediate(r));
+    expect(sdk.chats).toHaveLength(1);
+    expect(sdk.chats[0].shutdown).not.toHaveBeenCalled();
+  });
+
   it("retries after a failed build", async () => {
     const sdk = makeSdk();
     const realLoad = sdk.load.getMockImplementation()!;
@@ -185,7 +227,18 @@ describe("transport", () => {
     const request = new Request("https://x/hook", { method: "POST", body: "{}" });
     const response = await transport.handleWebhook(request);
     expect(response.status).toBe(200);
-    expect(chat.webhooks.whatsapp).toHaveBeenCalledWith(request);
+    expect(chat.webhooks.whatsapp).toHaveBeenCalledTimes(1);
+    expect(chat.webhooks.whatsapp.mock.calls[0]![0]).toBe(request);
+    expect(chat.webhooks.whatsapp.mock.calls[0]![1]).toBeUndefined();
+  });
+
+  it("forwards waitUntil to the SDK webhook", async () => {
+    const { transport, chat } = await build();
+    const request = new Request("https://x/hook", { method: "POST", body: "{}" });
+    const options = { waitUntil: jest.fn() };
+    await transport.handleWebhook(request, options);
+    expect(chat.webhooks.whatsapp.mock.calls[0]![0]).toBe(request);
+    expect(chat.webhooks.whatsapp.mock.calls[0]![1]).toBe(options);
   });
 
   it("posts markdown through the adapter after initializing", async () => {
@@ -233,6 +286,34 @@ describe("transport", () => {
       text: "Hallo",
       hasAttachments: false,
     });
+  });
+
+  it("ignores a message for another phone number of the same Meta app", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { chat, onMessage } = await build();
+      await chat.handlers[0]({ id: "whatsapp:222:49151" }, {
+        id: "wamid.4",
+        text: "geheime Frage",
+        attachments: [],
+        author: { isMe: false },
+      });
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalled();
+      const logged = JSON.stringify(warn.mock.calls.map((c) => c.map(String)));
+      expect(logged).toContain("chan-1");
+      expect(logged).not.toContain("geheime Frage");
+
+      await chat.handlers[0]({ id: "whatsapp:111:49151" }, {
+        id: "wamid.5",
+        text: "Hallo",
+        attachments: [],
+        author: { isMe: false },
+      });
+      expect(onMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("does not pass the bot's own messages to onMessage", async () => {

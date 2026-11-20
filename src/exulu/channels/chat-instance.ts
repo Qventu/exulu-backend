@@ -17,8 +17,13 @@ export interface SdkModules {
   createPostgresState: typeof createPostgresState;
 }
 
+export interface WebhookOptions {
+  /** Receives the background handling task; the caller awaits it before responding. */
+  waitUntil?(task: Promise<unknown>): void;
+}
+
 export interface ChannelTransport {
-  handleWebhook(request: Request): Promise<Response>;
+  handleWebhook(request: Request, options?: WebhookOptions): Promise<Response>;
   post(threadId: string, markdown: string): Promise<void>;
   typing(threadId: string): Promise<void>;
   markRead(threadId: string, messageId: string): Promise<void>;
@@ -91,13 +96,25 @@ interface Built {
   shutdown(): Promise<void>;
 }
 
+/** The instance in use per channel id; only successfully built instances land here. */
 const cache = new Map<string, CacheEntry>();
+/** A build in progress per channel id, shared by concurrent callers. */
+const pending = new Map<string, CacheEntry>();
 
 export const resetTransports = (): void => {
   cache.clear();
+  pending.clear();
 };
 
 const timeOf = (value: string | Date): number => new Date(value).getTime();
+
+/**
+ * Only a strictly newer row replaces an instance: a stale row (read before an edit, or
+ * by another process at another moment) must not tear down the current one. An
+ * unparseable incoming time is never newer; an unparseable cached time is replaced once.
+ */
+const isNewer = (incoming: number, cached: number): boolean =>
+  !Number.isNaN(incoming) && (Number.isNaN(cached) || incoming > cached);
 
 const shutDown = (channelId: string, entry: CacheEntry): void => {
   entry.promise
@@ -153,9 +170,17 @@ const build = async (channelId: string, settings: Settings, deps: TransportDeps)
     logger,
   });
 
+  // Meta delivers every number of an app to the same callback, signed with the same app
+  // secret, and the adapter takes the thread's number from the payload without checking it.
+  const ownThreadPrefix = `whatsapp:${settings.phoneNumberId}:`;
+
   chat.onDirectMessage(async (thread: Thread, message: Message) => {
     // The SDK already skips the bot's own messages; this keeps that true here.
     if (message.author?.isMe) {
+      return;
+    }
+    if (!thread.id.startsWith(ownThreadPrefix)) {
+      console.warn(`${LOG_PREFIX} channel ${channelId} ignored a message for another phone number`);
       return;
     }
     try {
@@ -171,7 +196,7 @@ const build = async (channelId: string, settings: Settings, deps: TransportDeps)
   const ready = () => chat.initialize();
 
   const transport: ChannelTransport = {
-    handleWebhook: (request) => chat.webhooks.whatsapp(request),
+    handleWebhook: (request, options) => chat.webhooks.whatsapp(request, options),
     post: async (threadId, markdown) => {
       if (markdown.trim() === "") {
         throw new Error("refusing to post an empty message");
@@ -192,32 +217,56 @@ const build = async (channelId: string, settings: Settings, deps: TransportDeps)
   return { transport, shutdown: () => chat.shutdown() };
 };
 
+const startBuild = (channelId: string, updatedAt: number, settings: Settings, deps: TransportDeps): CacheEntry => {
+  const entry: CacheEntry = { updatedAt, promise: build(channelId, settings, deps) };
+  pending.set(channelId, entry);
+  // Install only after success, so a failed build leaves the current instance usable.
+  entry.promise.then(
+    () => {
+      if (pending.get(channelId) === entry) {
+        pending.delete(channelId);
+      }
+      const current = cache.get(channelId);
+      if (current && !isNewer(updatedAt, current.updatedAt)) {
+        // a newer instance was installed meanwhile; this one is not used
+        shutDown(channelId, entry);
+        return;
+      }
+      cache.set(channelId, entry);
+      if (current) {
+        shutDown(channelId, current);
+      }
+    },
+    () => {
+      if (pending.get(channelId) === entry) {
+        pending.delete(channelId);
+      }
+    },
+  );
+  return entry;
+};
+
 export const getTransport = async (row: AgentChannelRow, deps: TransportDeps): Promise<ChannelTransport | null> => {
   const settings = settingsOf(row);
-  const cached = cache.get(row.id);
+  const updatedAt = timeOf(row.updatedAt);
+  const current = cache.get(row.id);
   if (!settings) {
-    if (cached) {
+    if (current && isNewer(updatedAt, current.updatedAt)) {
       cache.delete(row.id);
-      shutDown(row.id, cached);
+      shutDown(row.id, current);
     }
     return null;
   }
-  const updatedAt = timeOf(row.updatedAt);
-  if (cached && cached.updatedAt === updatedAt) {
-    return (await cached.promise).transport;
+  if (current && !isNewer(updatedAt, current.updatedAt)) {
+    return (await current.promise).transport;
   }
-
-  const entry: CacheEntry = { updatedAt, promise: build(row.id, settings, deps) };
-  cache.set(row.id, entry);
-  if (cached) {
-    shutDown(row.id, cached);
-  }
-  try {
-    return (await entry.promise).transport;
-  } catch (error) {
-    if (cache.get(row.id) === entry) {
-      cache.delete(row.id);
-    }
-    throw error;
-  }
+  const inFlight = pending.get(row.id);
+  const entry =
+    inFlight && !isNewer(updatedAt, inFlight.updatedAt) ? inFlight : startBuild(row.id, updatedAt, settings, deps);
+  const built = await entry.promise;
+  // a newer instance may have been installed while this build ran
+  const installed = cache.get(row.id);
+  return installed && installed !== entry && !isNewer(entry.updatedAt, installed.updatedAt)
+    ? (await installed.promise).transport
+    : built.transport;
 };
