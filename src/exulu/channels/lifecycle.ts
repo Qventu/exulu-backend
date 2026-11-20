@@ -1,16 +1,13 @@
 import type { Knex } from "knex";
-import { checkLicense } from "@EE/entitlements.ts";
+import { channelsLicensed } from "./licence";
 import { createLinkStore } from "./links";
 import { safeError } from "./log";
 
 const LOG = "[EXULU-CHANNEL]";
 const TABLE = "channel_links";
 
-/**
- * The channel tables exist only on installations licensed for `channels`. The generic user
- * export and user deletion must not touch them otherwise. Read at call time (environment variable).
- */
-const channelsLicensed = (): boolean => checkLicense()["channels"] === true;
+// The channel tables exist only on installations licensed for `channels`: the generic user
+// export and user deletion touch them only when channelsLicensed() (read at call time).
 
 /**
  * The user's WhatsApp links for the GDPR export, across all channels, with the FULL identity

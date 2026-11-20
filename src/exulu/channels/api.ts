@@ -2,7 +2,6 @@ import { randomBytes } from "crypto";
 import type { Express, Request, Response } from "express";
 import type { Knex } from "knex";
 import type { User } from "@EXULU_TYPES/models/user";
-import { checkLicense } from "@EE/entitlements.ts";
 import { channelAccessAllowed, type GuestAgent } from "./access";
 import { createChannelAuditor } from "./audit";
 import {
@@ -16,6 +15,7 @@ import {
   sealSecrets,
 } from "./config";
 import { CODE_TTL_SECONDS, issueCode, type KeyValueStore } from "./link-codes";
+import { channelsLicensed } from "./licence";
 import { createLinkStore, linkState } from "./links";
 import { safeError } from "./log";
 import type { AgentChannelRow, ChannelSecrets, ChannelView, WhatsAppChannelConfig } from "./types";
@@ -126,18 +126,19 @@ const auditFor = (channelId: string, agentId?: string) =>
 /** Counts this issue; true from the 6th code within 600 s of the first, per user. */
 const codeIssueLimitExceeded = async (kv: KeyValueStore, userId: number): Promise<boolean> => {
   const key = `channel-link:issued:${userId}`;
-  // set NX EX first, so the counter can never exist without its expiry
+  // set NX EX first, so the counter normally never exists without its expiry
   await kv.set(key, "0", { EX: CODE_ISSUE_WINDOW_SECONDS, NX: true });
-  return (await kv.incr(key)) > CODE_ISSUE_LIMIT;
+  const n = await kv.incr(key);
+  // the key can expire between the two calls, and INCR then recreates it without a TTL;
+  // heal that, as codeAttemptsExceeded does, so the user is not refused codes for good
+  if ((await kv.ttl(key)) === -1) await kv.expire(key, CODE_ISSUE_WINDOW_SECONDS);
+  return n > CODE_ISSUE_LIMIT;
 };
 
 // --- auto-disable and clean-up (called from the agent mutations) -------------------------
 
-/**
- * The channel tables exist only with the `channels` licence (core-schema), so every helper
- * below is a no-op without it. Read at call time: the licence is an environment variable.
- */
-const channelsLicensed = (): boolean => checkLicense()["channels"] === true;
+// The channel tables exist only with the `channels` licence (core-schema), so every helper
+// below is a no-op without it (channelsLicensed, read at call time).
 
 /** Turns off every channel of this agent; bumps updatedAt so cached transports are dropped. */
 export const disableChannelsForAgent = async (db: Knex, agentId: string, now: Date = new Date()): Promise<void> => {

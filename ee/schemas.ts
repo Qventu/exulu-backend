@@ -520,13 +520,6 @@ export const workflowTemplatesSchema: ExuluTableDefinition = {
     ],
   };
 
-  // Email-triggered routines (spec §3.1): one inbound trigger per routine.
-  // RBAC is false — access is checked via the parent workflow_templates row
-  // (routine read for listing, routine write + workflows:write role for CRUD),
-  // resolved explicitly in the custom GraphQL resolvers. graphql: false keeps
-  // the auto-CRUD generator away from this table; the API surface is the
-  // custom workflowTriggers / upsertWorkflowEmailTrigger / deleteWorkflowTrigger
-  // resolvers only.
   // Chat channels (WhatsApp first): one row per agent and channel type.
   // RBAC false and graphql false, same as workflow_triggers: access is checked
   // through the parent agent in the channel routes, never through auto-CRUD.
@@ -570,6 +563,13 @@ export const workflowTemplatesSchema: ExuluTableDefinition = {
       ],
     };
 
+  // Email-triggered routines (spec §3.1): one inbound trigger per routine.
+  // RBAC is false — access is checked via the parent workflow_templates row
+  // (routine read for listing, routine write + workflows:write role for CRUD),
+  // resolved explicitly in the custom GraphQL resolvers. graphql: false keeps
+  // the auto-CRUD generator away from this table; the API surface is the
+  // custom workflowTriggers / upsertWorkflowEmailTrigger / deleteWorkflowTrigger
+  // resolvers only.
   export const workflowTriggersSchema: ExuluTableDefinition = {
       type: "workflow_triggers",
       name: {

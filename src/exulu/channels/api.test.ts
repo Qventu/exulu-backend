@@ -682,6 +682,15 @@ describe("POST /public-agents/:id/channels/whatsapp/link-code", () => {
     }
   });
 
+  it("an issue counter that lost its expiry is given one again (no permanent refusal)", async () => {
+    const { app, data } = build({ seed: { agent_channels: [channelRow()] } });
+    // the key expired between SET NX and INCR, so INCR recreated it without a TTL
+    data.set(`channel-link:issued:${CUSTOMER}`, { v: String(CODE_ISSUE_LIMIT + 3) });
+    const res = await as(request(app).post(linkCodePath()), CUSTOMER);
+    expect(res.status).toBe(429);
+    expect(data.get(`channel-link:issued:${CUSTOMER}`)?.exp).toBe(600);
+  });
+
   it("issues a code with a wa.me link of digits and the code, and only the caller's links", async () => {
     const { app } = build({
       seed: {

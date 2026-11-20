@@ -1,5 +1,6 @@
 import type { BullMqJobData } from "@EE/queues/decorator";
 import { bullmq } from "./bullmq";
+import { channelJobOptions } from "@SRC/exulu/channels/act";
 
 const base: BullMqJobData = {
   label: "Email intake",
@@ -28,7 +29,8 @@ describe("bullmq.validate", () => {
 
   it("accepts channel_message jobs without a workflow/embedder/processor target", () => {
     expect(() =>
-      bullmq.validate("wa:wamid.1", {
+      // the job id as channels/act.ts builds it: a hash, never the raw message id
+      bullmq.validate(channelJobOptions("wamid.1").jobId, {
         ...base,
         label: "WhatsApp message",
         type: "channel_message",
