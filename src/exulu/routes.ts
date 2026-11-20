@@ -173,7 +173,8 @@ import { createRoutineWebhookHandler,
 import { resolveTriggerBySecret } from "./email-inbound/intake.ts";
 import { createChannelWebhookHandler,
   channelWebhookRateLimitExceeded } from "./channels/webhook.ts";
-import { createChannelWebhookDeps } from "./channels/wiring.ts";
+import { channelStoreFromRedis, createChannelWebhookDeps } from "./channels/wiring.ts";
+import { registerChannelApi } from "./channels/api.ts";
 import { enqueueChannelMessage } from "./channels/act.ts";
 import { registerChannelQueue } from "./channels/queue.ts";
 import { decrypt } from "@SRC/exulu/auth/credential-store.ts";
@@ -5781,6 +5782,24 @@ export const createExpressRoutes = async (
     res.setHeader("Cache-Control", "private, no-store");
     if (headers.disposition) res.setHeader("Content-Disposition", headers.disposition);
     res.send(bytes);
+  });
+
+  // WhatsApp channel API (channel spec §5.5, §6): the agent editor's admin routes and the
+  // signed-in customer's link-code / unlink routes. Handlers and their authorisation live in
+  // channels/api.ts so the HTTP contract is testable with supertest and no Postgres or Redis.
+  registerChannelApi(app, {
+    authenticate: (req) => requestValidators.authenticate(req),
+    getDb: async () => (await postgresClient()).db,
+    getStore: async () => {
+      const client = (await redisClient()).client;
+      return client && client.isReady ? channelStoreFromRedis(client) : null;
+    },
+    loadAgent: (id) => exuluApp.get().agent(id),
+    checkRecordAccess: (record, request, user) => checkRecordAccess(record, request, user),
+    entitled: () => {
+      const license = checkLicense();
+      return license["channels"] === true && license["queues"] === true;
+    },
   });
 
   // ---- Public agents (spec 2026-07-16-public-agents §3.3) ----------------
