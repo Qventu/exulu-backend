@@ -234,6 +234,7 @@
               "self-hosting/branding",
               "self-hosting/database",
               "self-hosting/operations",
+              "self-hosting/whatsapp-channel",
               "self-hosting/troubleshooting"
             ]
           }
