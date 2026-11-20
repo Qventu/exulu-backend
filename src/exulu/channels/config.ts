@@ -137,6 +137,17 @@ export const channelView = (row: AgentChannelRow): ChannelView => ({
 export const maskIdentity = (identity: string): string =>
   identity.length < 4 ? "••••" : `•••• ${identity.slice(-4)}`;
 
-/** The page where a signed-in user gets a link code (the `linkRequired` reply and the link route). */
-export const linkPageUrl = (agentId: string): string =>
-  `${(process.env.NEXTAUTH_URL ?? "").replace(/\/+$/, "")}/public/agents/${encodeURIComponent(agentId)}/link/whatsapp`;
+/**
+ * The page where a signed-in user gets a link code (the `linkRequired` reply and the link
+ * route). CHANNEL_LINK_BASE_URL is the hostname customers use, where that differs from
+ * NEXTAUTH_URL (the employees' hostname); NEXTAUTH_URL is the fallback.
+ */
+export const linkPageUrl = (agentId: string): string => {
+  const base = [process.env.CHANNEL_LINK_BASE_URL, process.env.NEXTAUTH_URL]
+    .map((v) => (v ?? "").trim())
+    .find((v) => v !== "");
+  if (!base) {
+    throw new Error("Neither CHANNEL_LINK_BASE_URL nor NEXTAUTH_URL is set; the channel link page has no URL");
+  }
+  return `${base.replace(/\/+$/, "")}/public/agents/${encodeURIComponent(agentId)}/link/whatsapp`;
+};

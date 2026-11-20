@@ -20,6 +20,7 @@ This page is the authoritative reference for IMP environment variables. Variable
 | `NEXT_BACKEND` | Yes | Frontend | Backend URL reachable from within the frontend container's network. Use the container name when both run on the same Docker network. | `http://exulu-backend:9001` |
 | `NEXTAUTH_URL` | Yes | Frontend | Canonical public URL for NextAuth. Set to the same value as `FRONTEND`. | `https://imp.example.com` |
 | `NEXTAUTH_URL_INTERNAL` | No | Frontend | Backend URL for server-side NextAuth calls. Falls back to `NEXTAUTH_URL` if absent. | `http://exulu-backend:9001` |
+| `CHANNEL_LINK_BASE_URL` | No | Server | Public URL of the frontend that customers use, for the WhatsApp link page sent to unlinked senders (`/public/agents/{id}/link/whatsapp`). Set it when customers and employees use different hostnames. Falls back to `NEXTAUTH_URL`. | `https://kunden.imp.example.com` |
 | `NEXTAUTH_SECRET` | Yes | Server, Frontend | **Must be identical in both.** Used to sign session JWTs (frontend) and verify them + encrypt stored secrets (backend). Generate with `openssl rand -base64 32`. | `3n/afQmVBq…` |
 | `AUTH_MODE` | No | Server, Frontend | Login mode. `password` (default) or `otp` (requires SMTP). Set in both environments with the same value. | `password` |
 | `INTERNAL_SECRET` | No | Server | Shared secret for internal service-to-service calls using the `internal` request header. Not required for standard deployments. | `some-internal-secret` |

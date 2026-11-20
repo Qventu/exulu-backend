@@ -116,18 +116,29 @@ it("maskIdentity shows only the last four characters", () => {
 });
 
 describe("linkPageUrl", () => {
-  const original = process.env.NEXTAUTH_URL;
-  afterEach(() => {
-    process.env.NEXTAUTH_URL = original;
+  const original = { link: process.env.CHANNEL_LINK_BASE_URL, auth: process.env.NEXTAUTH_URL };
+  const set = (link?: string, auth?: string) => {
+    if (link === undefined) delete process.env.CHANNEL_LINK_BASE_URL;
+    else process.env.CHANNEL_LINK_BASE_URL = link;
+    if (auth === undefined) delete process.env.NEXTAUTH_URL;
+    else process.env.NEXTAUTH_URL = auth;
+  };
+  afterEach(() => set(original.link, original.auth));
+
+  it("uses CHANNEL_LINK_BASE_URL (the customer hostname) when set", () => {
+    set("https://kunden.example.de//", "https://newton.example.de");
+    expect(linkPageUrl("agent-1")).toBe("https://kunden.example.de/public/agents/agent-1/link/whatsapp");
   });
 
-  it("points at the public link page of the agent", () => {
-    process.env.NEXTAUTH_URL = "https://newton.example.de";
-    expect(linkPageUrl("agent-1")).toBe("https://newton.example.de/public/agents/agent-1/link/whatsapp");
-  });
-
-  it("does not double a trailing slash and encodes the agent id", () => {
-    process.env.NEXTAUTH_URL = "https://newton.example.de/";
+  it("falls back to NEXTAUTH_URL, trailing slash trimmed, agent id encoded", () => {
+    set(undefined, "https://newton.example.de/");
     expect(linkPageUrl("a b")).toBe("https://newton.example.de/public/agents/a%20b/link/whatsapp");
+  });
+
+  it("throws naming both variables when neither is set", () => {
+    set(undefined, undefined);
+    expect(() => linkPageUrl("agent-1")).toThrow(/CHANNEL_LINK_BASE_URL.*NEXTAUTH_URL/);
+    set("", "  ");
+    expect(() => linkPageUrl("agent-1")).toThrow(/CHANNEL_LINK_BASE_URL.*NEXTAUTH_URL/);
   });
 });
