@@ -15,7 +15,11 @@ export interface ChannelMessageJob {
 export interface RunDeps {
   now: () => Date;
   loadChannel(id: string): Promise<{ row: AgentChannelRow; config: WhatsAppChannelConfig } | null>;
-  lock: { acquire(key: string, ttlSeconds: number): Promise<boolean>; release(key: string): Promise<void> };
+  /**
+   * `acquire` returns an owner token, or null when the lock is held. `release` must be a
+   * compare-and-delete on that token, so a job that outlived the TTL cannot remove a newer job's lock.
+   */
+  lock: { acquire(key: string, ttlSeconds: number): Promise<string | null>; release(key: string, token: string): Promise<void> };
   sessions: {
     findRecent(p: { agentId: string; userId: number; channelId: string; idleHours: number; now: Date }): Promise<string | null>;
     create(p: {
@@ -50,7 +54,8 @@ export const handleChannelMessage = async (
   const { row, config } = loaded;
 
   const key = runLockKey(job.channelId, job.identity);
-  if (!(await deps.lock.acquire(key, RUN_LOCK_TTL_SECONDS))) {
+  const token = await deps.lock.acquire(key, RUN_LOCK_TTL_SECONDS);
+  if (token === null) {
     return { sessionId: null, posted: "skipped" };
   }
 
@@ -115,6 +120,6 @@ export const handleChannelMessage = async (
     }
     return { sessionId, posted: ok ? "answer" : "runFailed" };
   } finally {
-    await deps.lock.release(key).catch((e) => console.error(`[EXULU-CHANNEL] lock release failed for ${who}`, e));
+    await deps.lock.release(key, token).catch((e) => console.error(`[EXULU-CHANNEL] lock release failed for ${who}`, e));
   }
 };

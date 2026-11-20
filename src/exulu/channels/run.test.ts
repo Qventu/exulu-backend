@@ -15,7 +15,7 @@ const makeDeps = (over: Partial<RunDeps> = {}) => {
   const deps = {
     now: () => NOW,
     loadChannel: jest.fn(async () => ({ row, config })),
-    lock: { acquire: jest.fn(async () => true), release: jest.fn(async () => undefined) },
+    lock: { acquire: jest.fn(async () => "tok-1" as string | null), release: jest.fn(async () => undefined) },
     sessions: {
       findRecent: jest.fn(async () => "sess-old" as string | null),
       create: jest.fn(async () => "sess-new"),
@@ -84,7 +84,7 @@ describe("handleChannelMessage", () => {
     expect(r.posted).toBe("answer");
     expect(d.lock.acquire).toHaveBeenCalledWith(KEY, 900);
     expect(d.lock.release).toHaveBeenCalledTimes(1);
-    expect(d.lock.release).toHaveBeenCalledWith(KEY);
+    expect(d.lock.release).toHaveBeenCalledWith(KEY, "tok-1");
   });
 
   it.each(["", "   \n\t"])("posts runFailed for an empty answer (%j)", async (answer) => {
@@ -105,7 +105,7 @@ describe("handleChannelMessage", () => {
   });
 
   it("skips when the lock is not acquired and does not release it", async () => {
-    const d = makeDeps({ lock: { acquire: jest.fn(async () => false), release: jest.fn(async () => undefined) } });
+    const d = makeDeps({ lock: { acquire: jest.fn(async () => null), release: jest.fn(async () => undefined) } });
     const r = await handleChannelMessage(job(), d);
     expect(r).toEqual({ sessionId: null, posted: "skipped" });
     expect(d.runAgentTurn).not.toHaveBeenCalled();
@@ -142,9 +142,51 @@ describe("handleChannelMessage", () => {
     const d = makeDeps({
       transport: { post: jest.fn(async () => undefined), typing: jest.fn(async () => { throw new Error("nope"); }) },
     });
+    const warn = console.warn as jest.Mock;
     const r = await handleChannelMessage(job(), d);
     await jest.advanceTimersByTimeAsync(0);
     expect(r.posted).toBe("answer");
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it("does not fail the job when typing rejects on a later tick", async () => {
+    let finish!: (s: string) => void;
+    let n = 0;
+    const d = makeDeps({
+      runAgentTurn: jest.fn(() => new Promise<string>((res) => { finish = res; })),
+      transport: { post: jest.fn(async () => undefined), typing: jest.fn(async () => { if (++n > 1) throw new Error("late"); }) },
+    });
+    const p = handleChannelMessage(job(), d);
+    await jest.advanceTimersByTimeAsync(20_000);
+    expect(d.transport.typing).toHaveBeenCalledTimes(2);
+    finish("ok");
+    await expect(p).resolves.toEqual({ sessionId: "sess-old", posted: "answer" });
+    expect(console.warn).toHaveBeenCalled();
+  });
+
+  it("a job finishing after its lock expired does not free the newer holder's lock", async () => {
+    let holder: string | null = null;
+    let seq = 0;
+    const lock = {
+      acquire: jest.fn(async () => { if (holder) return null; holder = `tok-${++seq}`; return holder; }),
+      release: jest.fn(async (_k: string, t: string) => { if (holder === t) holder = null; }),
+    };
+    let finishA!: (s: string) => void;
+    const a = makeDeps({ lock, runAgentTurn: jest.fn(() => new Promise<string>((res) => { finishA = res; })) });
+    const pA = handleChannelMessage(job(), a);
+    await jest.advanceTimersByTimeAsync(0);
+    holder = null; // A's TTL expires
+    const b = makeDeps({ lock, runAgentTurn: jest.fn(() => new Promise<string>(() => undefined)) });
+    void handleChannelMessage(job({ messageId: "m2" }), b);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(holder).toBe("tok-2");
+    finishA("A");
+    await pA;
+    expect(lock.release).toHaveBeenCalledWith(KEY, "tok-1");
+    expect(holder).toBe("tok-2");
+    const c = makeDeps({ lock });
+    expect((await handleChannelMessage(job({ messageId: "m3" }), c)).posted).toBe("skipped");
+    jest.clearAllTimers(); // B never finishes in this test
   });
 
   it("clears the timer when the run throws", async () => {
