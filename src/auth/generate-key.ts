@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { postgresClient } from "../postgres/client";
+import { afterUserDeleteBestEffort } from "../exulu/channels/lifecycle";
 export const SALT_ROUNDS = 12;
 
 export async function encryptString(string: string) {
@@ -16,6 +17,7 @@ export const deleteApiKey = async (name: string): Promise<{ message: string }> =
     };
   }
   await db.from("users").where({ id: existing.id }).delete();
+  await afterUserDeleteBestEffort(db, existing.id);
   return {
     message: "API key deleted.",
   };

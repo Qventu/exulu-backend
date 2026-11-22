@@ -10,6 +10,7 @@ import { ensureEntityTables } from "@SRC/exulu/entities";
 import { contextFieldsForSync } from "@SRC/exulu/context-fields-for-sync";
 import { getTableName, getChunksTableName } from "@SRC/exulu/table-names";
 import { hydrateContextEmbedders } from "@SRC/exulu/hydrate-embedders";
+import { initChatStateTables } from "@SRC/exulu/channels/state-tables";
 
 const {
   agentsSchema,
@@ -30,6 +31,8 @@ const {
   variablesSchema,
   workflowTemplatesSchema,
   workflowTriggersSchema,
+  agentChannelsSchema,
+  channelLinksSchema,
   rbacSchema,
   projectsSchema,
   jobResultsSchema,
@@ -155,6 +158,10 @@ const up = async function (knex: Knex) {
     skillsSchema(),
     workflowTemplatesSchema(),
     workflowTriggersSchema(),
+    // Only present when the "channels" entitlement is licensed.
+    ...(agentChannelsSchema && channelLinksSchema
+      ? [agentChannelsSchema(), channelLinksSchema()]
+      : []),
     otpSendAttemptsSchema(),
   ];
 
@@ -386,6 +393,25 @@ const up = async function (knex: Knex) {
       `CREATE UNIQUE INDEX IF NOT EXISTS claim_checks_session_message_user_uidx
           ON claim_checks (session, message_id, "user")`,
     );
+  }
+
+  // Channels: one channel per (agent, type) and one link per (channel, identity).
+  // The link upsert and the inbound lookup rely on these being unique.
+  if (await knex.schema.hasTable("agent_channels")) {
+    await knex.raw(
+      `CREATE UNIQUE INDEX IF NOT EXISTS agent_channels_agent_type_uidx
+          ON agent_channels (agent, type)`,
+    );
+  }
+  if (await knex.schema.hasTable("channel_links")) {
+    await knex.raw(
+      `CREATE UNIQUE INDEX IF NOT EXISTS channel_links_channel_identity_uidx
+          ON channel_links (channel, identity)`,
+    );
+    // The chat SDK's own tables (subscriptions, locks, cache, ...), created by
+    // the adapter so a later SDK version brings its own schema. Never throws:
+    // a failure is logged and boot continues.
+    await initChatStateTables();
   }
 
   /*  if (!await knex.schema.hasTable('sessions')) {

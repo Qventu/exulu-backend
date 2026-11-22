@@ -3,6 +3,7 @@ import {
   type Request,
   type Response,
   type NextFunction } from "express";
+import { channelLinksForExport, afterUserDelete } from "./channels/lifecycle";
 import { requestValidators } from "../validators/requests.ts";
 import { STATISTICS_TYPE_ENUM,
   type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
@@ -171,6 +172,12 @@ import { redisClient } from "@SRC/redis/client.ts";
 import { createRoutineWebhookHandler,
   routineWebhookRateLimitExceeded } from "./email-inbound/webhook.ts";
 import { resolveTriggerBySecret } from "./email-inbound/intake.ts";
+import { createChannelWebhookHandler,
+  channelWebhookRateLimitExceeded } from "./channels/webhook.ts";
+import { channelStoreFromRedis, createChannelWebhookDeps } from "./channels/wiring.ts";
+import { registerChannelApi } from "./channels/api.ts";
+import { enqueueChannelMessage } from "./channels/act.ts";
+import { registerChannelQueue } from "./channels/queue.ts";
 import { decrypt } from "@SRC/exulu/auth/credential-store.ts";
 import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
@@ -303,6 +310,8 @@ export const createExpressRoutes = async (
   // Capture the raw body for the routine webhook before the global JSON/urlencoded
   // parsers consume it — the HMAC (spec §4.4) is computed over exact raw bytes.
   app.use("/webhooks/routine", express.raw({ type: () => true, limit: "30mb" }));
+  // Same for the WhatsApp channel webhook: Meta signs the raw bytes (X-Hub-Signature-256).
+  app.use("/webhooks/whatsapp", express.raw({ type: () => true, limit: "5mb" }));
 
   // important to set the limit here, otherwise the proxy will
   // fail for large requests such as those from Claude Code
@@ -612,6 +621,24 @@ export const createExpressRoutes = async (
     rateLimitExceeded: routineWebhookRateLimitExceeded,
   });
   app.post("/webhooks/routine/:secret", routineWebhookHandler);
+
+  // WhatsApp channel webhook (channel spec §5.2). Public: authenticity comes from Meta's
+  // signature, checked by the SDK over the raw bytes captured by the early express.raw.
+  const channelWebhookHandler = createChannelWebhookHandler(
+    createChannelWebhookDeps({
+      entitled: () => {
+        const license = checkLicense();
+        return license["channels"] === true && license["queues"] === true;
+      },
+      rateLimitExceeded: () => channelWebhookRateLimitExceeded(),
+      getDb: async () => (await postgresClient()).db,
+      getRedis: async () => (await redisClient()).client,
+      loadAgent: (id) => exuluApp.get().agent(id),
+      enqueue: async (job) => enqueueChannelMessage((await registerChannelQueue().use()).queue, job),
+    }),
+  );
+  app.get("/webhooks/whatsapp/:channelId", channelWebhookHandler);
+  app.post("/webhooks/whatsapp/:channelId", channelWebhookHandler);
 
   // Ping route that can be used to check if the request
   // is authenticated and the server is running.
@@ -5267,7 +5294,7 @@ export const createExpressRoutes = async (
         messages: messagesBySession.get(s.id) ?? [],
       }));
 
-      const [feedback, promptFavorites, tracking, claimChecks] = await Promise.all([
+      const [feedback, promptFavorites, tracking, claimChecks, channelLinks] = await Promise.all([
         db.from("feedback").where({ user: targetUser.id }).catch(() => []),
         db
           .from("prompt_favorites")
@@ -5279,6 +5306,9 @@ export const createExpressRoutes = async (
         // covers it. Same `.catch(() => [])` as its siblings: the table only
         // exists on deployments licensed for claim-check.
         db.from("claim_checks").where({ user: targetUser.id }).catch(() => []),
+        // WhatsApp links (full identity: it is the user's own data). Empty and
+        // query-free without the channels licence; never rejects.
+        channelLinksForExport(db, targetUser.id),
       ]);
 
       const exportedAt = new Date().toISOString();
@@ -5299,6 +5329,7 @@ export const createExpressRoutes = async (
         `  - prompt_favorites.json prompt-library favourites`,
         `  - tracking.json         tracking events linked to the user`,
         `  - claim_checks.json     answer verification results stored for the user`,
+        `  - channel_links.json    messaging-channel (WhatsApp) links of the user`,
         ``,
       ].join("\n");
 
@@ -5313,6 +5344,7 @@ export const createExpressRoutes = async (
       );
       zip.file("tracking.json", JSON.stringify(tracking, null, 2));
       zip.file("claim_checks.json", JSON.stringify(claimChecks, null, 2));
+      zip.file("channel_links.json", JSON.stringify(channelLinks, null, 2));
 
       const buffer = await zip.generateAsync({ type: "nodebuffer" });
       const filename = `user-${targetUser.id}-export-${exportedAt.replace(/[:.]/g, "-")}.zip`;
@@ -5359,6 +5391,8 @@ export const createExpressRoutes = async (
           .delete();
         await trx("tracking").where({ user: targetUser.id }).delete();
         await trx("rbac").where({ user_id: targetUser.id }).delete();
+        // Messaging-channel links: no-op without the channels licence.
+        await afterUserDelete(trx, targetUser.id);
         await trx("users").where({ id: targetUser.id }).delete();
       });
     } catch (err: any) {
@@ -5756,6 +5790,24 @@ export const createExpressRoutes = async (
     res.setHeader("Cache-Control", "private, no-store");
     if (headers.disposition) res.setHeader("Content-Disposition", headers.disposition);
     res.send(bytes);
+  });
+
+  // WhatsApp channel API (channel spec §5.5, §6): the agent editor's admin routes and the
+  // signed-in customer's link-code / unlink routes. Handlers and their authorisation live in
+  // channels/api.ts so the HTTP contract is testable with supertest and no Postgres or Redis.
+  registerChannelApi(app, {
+    authenticate: (req) => requestValidators.authenticate(req),
+    getDb: async () => (await postgresClient()).db,
+    getStore: async () => {
+      const client = (await redisClient()).client;
+      return client && client.isReady ? channelStoreFromRedis(client) : null;
+    },
+    loadAgent: (id) => exuluApp.get().agent(id),
+    checkRecordAccess: (record, request, user) => checkRecordAccess(record, request, user),
+    entitled: () => {
+      const license = checkLicense();
+      return license["channels"] === true && license["queues"] === true;
+    },
   });
 
   // ---- Public agents (spec 2026-07-16-public-agents §3.3) ----------------

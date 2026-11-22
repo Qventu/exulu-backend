@@ -520,6 +520,49 @@ export const workflowTemplatesSchema: ExuluTableDefinition = {
     ],
   };
 
+  // Chat channels (WhatsApp first): one row per agent and channel type.
+  // RBAC false and graphql false, same as workflow_triggers: access is checked
+  // through the parent agent in the channel routes, never through auto-CRUD.
+  // secrets and verify_token are hidden, so they never appear in a read payload.
+  export const agentChannelsSchema: ExuluTableDefinition = {
+      type: "agent_channels",
+      name: {
+        plural: "agent_channels",
+        singular: "agent_channel",
+      },
+      RBAC: false,
+      graphql: false,
+      fields: [
+        { name: "agent", type: "uuid", required: true, index: true },
+        { name: "type", type: "text", required: true },
+        { name: "enabled", type: "boolean", default: false },
+        { name: "config", type: "json" },
+        { name: "secrets", type: "text", hidden: true },
+        { name: "verify_token", type: "text", hidden: true },
+      ],
+    };
+
+  // Links a channel identity (for WhatsApp the sender's phone number) to an
+  // Exulu user. Unique on (channel, identity), created in init-exulu-db.
+  export const channelLinksSchema: ExuluTableDefinition = {
+      type: "channel_links",
+      name: {
+        plural: "channel_links",
+        singular: "channel_link",
+      },
+      RBAC: false,
+      graphql: false,
+      fields: [
+        { name: "channel", type: "uuid", required: true, index: true },
+        { name: "identity", type: "text", required: true },
+        { name: "user", type: "number", required: true, index: true },
+        { name: "linked_at", type: "date" },
+        { name: "expires_at", type: "date" },
+        { name: "revoked_at", type: "date" },
+        { name: "last_seen_at", type: "date" },
+      ],
+    };
+
   // Email-triggered routines (spec §3.1): one inbound trigger per routine.
   // RBAC is false — access is checked via the parent workflow_templates row
   // (routine read for listing, routine write + workflows:write role for CRUD),

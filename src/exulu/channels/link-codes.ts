@@ -1,0 +1,104 @@
+import { createHash, randomInt } from "crypto";
+
+/** The slice of node-redis v4 this module needs; the real client is passed in by the caller. */
+export interface KeyValueStore {
+  set(key: string, value: string, opts: { EX: number; NX?: true }): Promise<string | null>;
+  getDel(key: string): Promise<string | null>;
+  del(key: string): Promise<unknown>;
+  incr(key: string): Promise<number>;
+  expire(key: string, seconds: number): Promise<unknown>;
+  get(key: string): Promise<string | null>;
+  ttl(key: string): Promise<number>; // -2 missing, -1 no expiry, else seconds left
+}
+
+export const CODE_TTL_SECONDS = 600;
+const ATTEMPT_WINDOW_SECONDS = 3600;
+const MAX_ATTEMPTS = 5;
+const PROMPT_WINDOW_SECONDS = 600;
+const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const CODE_LENGTH = 8;
+
+const hashCode = (raw: string): string => createHash("sha256").update(raw).digest("hex");
+const codeKey = (raw: string) => `channel-link:code:${hashCode(raw)}`;
+const userKey = (channelId: string, userId: number) => `channel-link:user:${channelId}:${userId}`;
+
+/** Returns "XXXX-XXXX". */
+export const generateCode = (): string => {
+  let raw = "";
+  for (let i = 0; i < CODE_LENGTH; i++) raw += ALPHABET[randomInt(ALPHABET.length)];
+  return `${raw.slice(0, 4)}-${raw.slice(4)}`;
+};
+
+// 4 + 4 alphabet characters, joined by nothing, one hyphen, or plain spaces. Matched against the
+// ORIGINAL text (case-insensitive, no `u` flag) so no character outside the alphabet can be folded
+// into it by upper-casing ("ß" never becomes "SS"). Anything looser makes ordinary short messages
+// such as "Fehler 42" or "Guten Tag" code-shaped.
+const CODE_SHAPE = /^([A-HJ-NP-Z2-9]{4})(?:-| +)?([A-HJ-NP-Z2-9]{4})$/i;
+const MAX_CODE_INPUT = 64;
+
+/** Whole-message match only: the trimmed text must be exactly one code. Otherwise null. */
+export const normalizeCode = (text: string): string | null => {
+  const trimmed = text.trim();
+  if (trimmed.length > MAX_CODE_INPUT) return null;
+  const m = CODE_SHAPE.exec(trimmed);
+  return m ? `${m[1]}-${m[2]}`.toUpperCase() : null;
+};
+
+export const issueCode = async (
+  kv: KeyValueStore,
+  p: { channelId: string; userId: number },
+): Promise<string> => {
+  const pointer = userKey(p.channelId, p.userId);
+  const previous = await kv.getDel(pointer);
+  if (previous) await kv.del(`channel-link:code:${previous}`);
+
+  const code = generateCode();
+  const hash = hashCode(code.replace("-", ""));
+  await kv.set(`channel-link:code:${hash}`, JSON.stringify({ channelId: p.channelId, userId: p.userId }), {
+    EX: CODE_TTL_SECONDS,
+  });
+  await kv.set(pointer, hash, { EX: CODE_TTL_SECONDS });
+  return code;
+};
+
+export const consumeCode = async (
+  kv: KeyValueStore,
+  code: string,
+): Promise<{ channelId: string; userId: number } | null> => {
+  const normalized = normalizeCode(code);
+  if (!normalized) return null;
+  const value = await kv.getDel(codeKey(normalized.replace("-", "")));
+  if (!value) return null;
+  let parsed: { channelId: string; userId: number };
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  await kv.del(userKey(parsed.channelId, parsed.userId));
+  return { channelId: parsed.channelId, userId: parsed.userId };
+};
+
+/** Counts this attempt. True from the 6th attempt within 3600 s of the first. */
+export const codeAttemptsExceeded = async (
+  kv: KeyValueStore,
+  channelId: string,
+  identity: string,
+): Promise<boolean> => {
+  const key = `channel-link:attempts:${channelId}:${identity}`;
+  const n = await kv.incr(key);
+  // Also heal a counter that lost its expiry (failed expire after the first incr).
+  if (n === 1 || (await kv.ttl(key)) === -1) await kv.expire(key, ATTEMPT_WINDOW_SECONDS);
+  return n > MAX_ATTEMPTS;
+};
+
+/** True at most once per 600 s per identity. */
+export const linkPromptAllowed = async (
+  kv: KeyValueStore,
+  channelId: string,
+  identity: string,
+): Promise<boolean> => {
+  const key = `channel-link:prompt:${channelId}:${identity}`;
+  // One atomic call: the key can never exist without its expiry.
+  return (await kv.set(key, "1", { EX: PROMPT_WINDOW_SECONDS, NX: true })) !== null;
+};
