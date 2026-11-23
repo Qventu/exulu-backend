@@ -268,8 +268,9 @@ enabled, the text this job posts has already passed the output check.
 ### 5.5 Linking
 
 1. The `linkRequired` reply carries `<base>/public/agents/<agentId>/link/whatsapp`, where
-   `<base>` is `CHANNEL_LINK_BASE_URL` on the server, falling back to `NEXTAUTH_URL`. A
-   channel cannot be enabled while neither is set (409 `link_url_not_configured`).
+   `<base>` is `FRONTEND` on the server; `CHANNEL_LINK_BASE_URL` overrides it where
+   customers use a hostname of their own, and `NEXTAUTH_URL` is the last fallback. A
+   channel cannot be enabled while none is set (409 `link_url_not_configured`).
 2. That page requires the normal guest login (existing `/auth` flow with a destination
    back to the page).
 3. Signed in, the page calls `POST /public-agents/:id/channels/whatsapp/link-code`

@@ -360,7 +360,7 @@ export const registerChannelApi = (app: Express, deps: ChannelApiDeps): void => 
         } catch {
           return void refuse(
             "link_url_not_configured",
-            "Set CHANNEL_LINK_BASE_URL (the customer-facing web address) on the server; NEXTAUTH_URL is not set here either.",
+            "Set FRONTEND (or CHANNEL_LINK_BASE_URL, where customers use a web address of their own) on the server; NEXTAUTH_URL is not set here either.",
           );
         }
       }

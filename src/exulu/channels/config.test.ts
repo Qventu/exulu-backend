@@ -116,18 +116,31 @@ it("maskIdentity shows only the last four characters", () => {
 });
 
 describe("linkPageUrl", () => {
-  const original = { link: process.env.CHANNEL_LINK_BASE_URL, auth: process.env.NEXTAUTH_URL };
-  const set = (link?: string, auth?: string) => {
+  const original = {
+    link: process.env.CHANNEL_LINK_BASE_URL,
+    auth: process.env.NEXTAUTH_URL,
+    frontend: process.env.FRONTEND,
+  };
+  const set = (link?: string, auth?: string, frontend?: string) => {
     if (link === undefined) delete process.env.CHANNEL_LINK_BASE_URL;
     else process.env.CHANNEL_LINK_BASE_URL = link;
     if (auth === undefined) delete process.env.NEXTAUTH_URL;
     else process.env.NEXTAUTH_URL = auth;
+    if (frontend === undefined) delete process.env.FRONTEND;
+    else process.env.FRONTEND = frontend;
   };
-  afterEach(() => set(original.link, original.auth));
+  afterEach(() => set(original.link, original.auth, original.frontend));
 
   it("uses CHANNEL_LINK_BASE_URL (the customer hostname) when set", () => {
-    set("https://kunden.example.de//", "https://newton.example.de");
+    set("https://kunden.example.de//", "https://newton.example.de", "https://imp.example.de");
     expect(linkPageUrl("agent-1")).toBe("https://kunden.example.de/public/agents/agent-1/link/whatsapp");
+  });
+
+  it("uses FRONTEND when there is no override, ahead of NEXTAUTH_URL", () => {
+    set(undefined, "https://newton.example.de", "https://imp.example.de/");
+    expect(linkPageUrl("agent-1")).toBe("https://imp.example.de/public/agents/agent-1/link/whatsapp");
+    set("  ", "https://newton.example.de", "https://imp.example.de");
+    expect(linkPageUrl("agent-1")).toBe("https://imp.example.de/public/agents/agent-1/link/whatsapp");
   });
 
   it("falls back to NEXTAUTH_URL, trailing slash trimmed, agent id encoded", () => {
@@ -135,10 +148,10 @@ describe("linkPageUrl", () => {
     expect(linkPageUrl("a b")).toBe("https://newton.example.de/public/agents/a%20b/link/whatsapp");
   });
 
-  it("throws naming both variables when neither is set", () => {
+  it("throws naming the variables when none is set", () => {
     set(undefined, undefined);
-    expect(() => linkPageUrl("agent-1")).toThrow(/CHANNEL_LINK_BASE_URL.*NEXTAUTH_URL/);
-    set("", "  ");
-    expect(() => linkPageUrl("agent-1")).toThrow(/CHANNEL_LINK_BASE_URL.*NEXTAUTH_URL/);
+    expect(() => linkPageUrl("agent-1")).toThrow(/CHANNEL_LINK_BASE_URL.*FRONTEND.*NEXTAUTH_URL/);
+    set("", "  ", " ");
+    expect(() => linkPageUrl("agent-1")).toThrow(/CHANNEL_LINK_BASE_URL.*FRONTEND.*NEXTAUTH_URL/);
   });
 });

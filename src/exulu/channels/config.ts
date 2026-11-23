@@ -140,15 +140,16 @@ export const maskIdentity = (identity: string): string =>
 
 /**
  * The page where a signed-in user gets a link code (the `linkRequired` reply and the link
- * route). CHANNEL_LINK_BASE_URL is the hostname customers use, where that differs from
- * NEXTAUTH_URL (the employees' hostname); NEXTAUTH_URL is the fallback.
+ * route). FRONTEND, the installation's public web address, is the normal source.
+ * CHANNEL_LINK_BASE_URL overrides it where customers use a hostname of their own;
+ * NEXTAUTH_URL is the last fallback.
  */
 export const linkPageUrl = (agentId: string): string => {
-  const base = [process.env.CHANNEL_LINK_BASE_URL, process.env.NEXTAUTH_URL]
+  const base = [process.env.CHANNEL_LINK_BASE_URL, process.env.FRONTEND, process.env.NEXTAUTH_URL]
     .map((v) => (v ?? "").trim())
     .find((v) => v !== "");
   if (!base) {
-    throw new ChannelSetupError("Neither CHANNEL_LINK_BASE_URL nor NEXTAUTH_URL is set; the channel link page has no URL");
+    throw new ChannelSetupError("None of CHANNEL_LINK_BASE_URL, FRONTEND and NEXTAUTH_URL is set; the channel link page has no URL");
   }
   return `${base.replace(/\/+$/, "")}/public/agents/${encodeURIComponent(agentId)}/link/whatsapp`;
 };

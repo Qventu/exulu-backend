@@ -370,9 +370,14 @@ describe("PUT /agents/:agentId/channels/whatsapp", () => {
   });
 
   it("enabling without a link page URL is a 409 link_url_not_configured, after the other reasons", async () => {
-    const saved = { link: process.env.CHANNEL_LINK_BASE_URL, auth: process.env.NEXTAUTH_URL };
+    const saved = {
+      link: process.env.CHANNEL_LINK_BASE_URL,
+      auth: process.env.NEXTAUTH_URL,
+      frontend: process.env.FRONTEND,
+    };
     delete process.env.CHANNEL_LINK_BASE_URL;
     delete process.env.NEXTAUTH_URL;
+    delete process.env.FRONTEND;
     try {
       // an earlier reason still wins
       const missingConfig = build({ seed: { agent_channels: [channelRow({ enabled: false, config: null })] } });
@@ -383,7 +388,7 @@ describe("PUT /agents/:agentId/channels/whatsapp", () => {
       const res = await as(request(app).put(adminPath()), ADMIN).send({ enabled: true });
       expect(res.status).toBe(409);
       expect(res.body.reason).toBe("link_url_not_configured");
-      expect(res.body.detail).toMatch(/CHANNEL_LINK_BASE_URL/);
+      expect(res.body.detail).toMatch(/FRONTEND.*CHANNEL_LINK_BASE_URL/);
       expect(tables.agent_channels[0].enabled).toBe(false);
 
       // NEXTAUTH_URL on the server process is enough
@@ -395,6 +400,8 @@ describe("PUT /agents/:agentId/channels/whatsapp", () => {
       else delete process.env.CHANNEL_LINK_BASE_URL;
       if (saved.auth !== undefined) process.env.NEXTAUTH_URL = saved.auth;
       else delete process.env.NEXTAUTH_URL;
+      if (saved.frontend !== undefined) process.env.FRONTEND = saved.frontend;
+      else delete process.env.FRONTEND;
     }
   });
 

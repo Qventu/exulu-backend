@@ -19,7 +19,11 @@ An agent that is published for guests in **regular** (sign-in) mode can also be 
 | Variable | Process | Purpose |
 |---|---|---|
 | `BACKEND` | Server | Public URL of the backend. The webhook URL is `<BACKEND>/webhooks/whatsapp/<channel id>`; without `BACKEND` the API returns no webhook URL. |
-| `CHANNEL_LINK_BASE_URL` | Server | The customer-facing web address. Unlinked senders get `<CHANNEL_LINK_BASE_URL>/public/agents/<agent id>/link/whatsapp`. Falls back to `NEXTAUTH_URL` when the server process has it. Without either, a channel cannot be enabled (`409 link_url_not_configured`). |
+| `FRONTEND` | Server | The public web address of the installation. Unlinked senders get `<FRONTEND>/public/agents/<agent id>/link/whatsapp`. |
+| `CHANNEL_LINK_BASE_URL` | Server | Optional. Overrides `FRONTEND` for the link page where customers use a web address of their own, separate from the one employees use. |
+
+If neither is set, `NEXTAUTH_URL` is used when the server process has it. Without any of the three, a channel cannot be enabled (`409 link_url_not_configured`).
+
 
 ## Setting up a channel
 

@@ -347,12 +347,18 @@ describe("channelStoreFromRedis", () => {
 
 describe("a missing link URL variable", () => {
   const unset = () => {
-    const saved = { link: process.env.CHANNEL_LINK_BASE_URL, auth: process.env.NEXTAUTH_URL };
+    const saved = {
+      link: process.env.CHANNEL_LINK_BASE_URL,
+      auth: process.env.NEXTAUTH_URL,
+      frontend: process.env.FRONTEND,
+    };
     delete process.env.CHANNEL_LINK_BASE_URL;
     delete process.env.NEXTAUTH_URL;
+    delete process.env.FRONTEND;
     return () => {
       if (saved.link !== undefined) process.env.CHANNEL_LINK_BASE_URL = saved.link;
       if (saved.auth !== undefined) process.env.NEXTAUTH_URL = saved.auth;
+      if (saved.frontend !== undefined) process.env.FRONTEND = saved.frontend;
     };
   };
 
