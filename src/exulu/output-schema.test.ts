@@ -262,3 +262,17 @@ describe("run route wiring", () => {
     expect(source).toContain("await respondWithOutputSchema({");
   });
 });
+
+/**
+ * The package is published as ESM and ajv has no exports map, so Node only
+ * resolves a deep import that names the file. Jest resolves the short form
+ * too, which is how 5.17.0 shipped with `ajv/dist/2020` and failed at import
+ * in every consumer ("Cannot find module .../ajv/dist/2020").
+ */
+describe("deep imports into ajv", () => {
+  it("name the file with its extension", () => {
+    const source = readFileSync(join(__dirname, "output-schema.ts"), "utf8");
+    const deep = [...source.matchAll(/from "(ajv\/[^"]+)"/g)].map((m) => m[1]);
+    expect(deep).toEqual(["ajv/dist/2020.js"]);
+  });
+});

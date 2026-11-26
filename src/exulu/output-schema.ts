@@ -15,7 +15,7 @@
  */
 import { generateText, jsonSchema, tool, type LanguageModel } from "ai";
 import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
-import Ajv2020 from "ajv/dist/2020";
+import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 
 export const OUTPUT_SCHEMA_MAX_BYTES = 32 * 1024;
