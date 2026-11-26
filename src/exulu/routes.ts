@@ -91,6 +91,7 @@ import { resumeRoutineRunIfWaiting } from "@SRC/exulu/routines/run-state";
 import { compactSession,
   CompactionInsufficientError } from "./compact-session.ts";
 import { describeRequestError } from "./request-error.ts";
+import { messageText, outputSchemaInstructions, readOutputSchema, respondWithOutputSchema } from "./output-schema.ts";
 import { finishTurnMetadata,
   type ChatUIMessage } from "./turn-metadata.ts";
 import { recalledMemoriesMetadata } from "./memory/recalled-metadata.ts";
@@ -892,6 +893,15 @@ export const createExpressRoutes = async (
       const contextWindow = await resolveContextWindow({
         modelId: resolved.model.id
       });
+      // Output schema (design 2026-11-26): refused before any model work when
+      // it is unusable or combined with streaming.
+      const outputSchemaRequest = readOutputSchema(req.body?.outputSchema, headers.stream);
+      if (outputSchemaRequest.error) {
+        res.status(400).json(outputSchemaRequest.error);
+        return;
+      }
+      const outputSchema = outputSchemaRequest.schema;
+
       // todo add authentication based on thread id to guarantee privacy
       // todo validate req.body data structure
       if (!!headers.stream) {
@@ -1183,10 +1193,15 @@ export const createExpressRoutes = async (
             : JSON.stringify(req.body.customInstructions)
           : "";
 
-        const instructions = withGlossary(
+        const baseInstructions = withGlossary(
           customInstructions ? `${agent.instructions}\n\n${customInstructions}` : agent.instructions,
           agent.tools,
         );
+        // The agent is told which structure its answer will be put into, so it
+        // gathers and states what every field needs.
+        const instructions = outputSchema
+          ? `${baseInstructions}\n\n${outputSchemaInstructions(outputSchema)}`
+          : baseInstructions;
 
         let response: Awaited<ReturnType<typeof generateSync>>;
         try {
@@ -1220,6 +1235,49 @@ export const createExpressRoutes = async (
           );
           const { status, body } = describeRequestError(err);
           res.status(status).send(body);
+          return;
+        }
+        if (outputSchema) {
+          try {
+            const shaped = await respondWithOutputSchema({
+              model: resolvedLanguageModel,
+              system: baseInstructions,
+              question: messageText(req.body.message),
+              answer: typeof response === "string" ? response : JSON.stringify(response ?? ""),
+              schema: outputSchema,
+              // Same counters as the agent run itself; the run was already counted once.
+              onUsage: async ({ inputTokens, outputTokens }) => {
+                await Promise.all(
+                  (
+                    [
+                      ["inputTokens", inputTokens],
+                      ["outputTokens", outputTokens],
+                    ] as const
+                  )
+                    .filter(([, count]) => count > 0)
+                    .map(([name, count]) =>
+                      updateStatistic({
+                        name,
+                        label: agent.name,
+                        type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                        trigger: "agent",
+                        count,
+                        user: user?.id,
+                        role: user?.role?.id,
+                      }),
+                    ),
+                );
+              },
+            });
+            res.status(shaped.status).json(shaped.body);
+          } catch (err) {
+            console.error(
+              "[EXULU] output schema shaping failed.",
+              err instanceof Error ? err.message.slice(0, 500) : err,
+            );
+            const { status, body } = describeRequestError(err);
+            res.status(status).send(body);
+          }
           return;
         }
         res.status(200).json(response);
