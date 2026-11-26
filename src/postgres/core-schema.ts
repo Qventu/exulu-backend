@@ -11,7 +11,9 @@ import {
   evalRunsSchema,
   rbacSchema,
   workflowTemplatesSchema,
-  workflowTriggersSchema
+  workflowTriggersSchema,
+  agentChannelsSchema,
+  channelLinksSchema
 } from "@EE/schemas"
 import { checkLicense } from "@EE/entitlements";
 
@@ -1264,6 +1266,11 @@ export const coreSchemas = {
       schemas.workflowTriggersSchema = (): ExuluTableDefinition => addCoreFields(workflowTriggersSchema)
     }
     
+    if (license["channels"]) {
+      schemas.agentChannelsSchema = (): ExuluTableDefinition => addCoreFields(agentChannelsSchema)
+      schemas.channelLinksSchema = (): ExuluTableDefinition => addCoreFields(channelLinksSchema)
+    }
+
     if (license["queues"]) {
       schemas.jobResultsSchema = (): ExuluTableDefinition => addCoreFields(jobResultsSchema)
     }

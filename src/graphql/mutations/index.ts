@@ -24,6 +24,8 @@ import { startImport, cancelImport, StartImportError } from "@SRC/exulu/import/s
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
+import { afterAgentDelete, afterAgentWrite } from "@SRC/exulu/channels/api";
+import { afterUserDeleteBestEffort } from "@SRC/exulu/channels/lifecycle";
 import { shouldGenerateEmbeddings } from "./should-generate-embeddings";
 import { changeContextEmbedder } from "@SRC/exulu/embedder-change";
 import { dropProjection } from "@SRC/exulu/projection/store";
@@ -658,6 +660,11 @@ export function createMutations(
 
       let results = await insert;
 
+      // WhatsApp channel: never throws, a no-op without the channels licence
+      if (tableNamePlural === "agents" && args.upsert) {
+        await afterAgentWrite(db, results[0], args.input);
+      }
+
       // Handle RBAC records if provided
       if (table.RBAC && rbacData && results[0]) {
         await handleRBACUpdate(db, table.name.singular, results[0].id, rbacData, []);
@@ -799,6 +806,11 @@ export function createMutations(
 
       if (!result?.id) {
         throw new Error("Something went wrong with the update, no id returned.");
+      }
+
+      // WhatsApp channel: never throws, a no-op without the channels licence
+      if (tableNamePlural === "agents") {
+        await afterAgentWrite(db, result, args.input);
       }
 
       // Update RBAC records if provided
@@ -946,6 +958,11 @@ export function createMutations(
         .select(Object.keys(columns))
         .where({ id })
         .first();
+
+      // WhatsApp channel: never throws, a no-op without the channels licence
+      if (tableNamePlural === "agents") {
+        await afterAgentWrite(db, result, args.input);
+      }
       const { job } = await postprocessUpdate({
         table,
         requestedFields,
@@ -1016,6 +1033,15 @@ export function createMutations(
         tools,
         result,
       });
+
+      // No foreign keys on the channel tables: remove the agent's WhatsApp channels and links.
+      // Last, after everything that existed before; never throws, a no-op without the licence.
+      if (tableNamePlural === "agents") {
+        await afterAgentDelete(db, id);
+      }
+      if (tableNamePlural === "users") {
+        await afterUserDeleteBestEffort(db, id);
+      }
       return finalizeRequestedFields({
         args,
         table,
@@ -1065,6 +1091,14 @@ export function createMutations(
         tools,
         result,
       });
+
+      // see RemoveOneById: last, never throws, a no-op without the licence
+      if (tableNamePlural === "agents") {
+        await afterAgentDelete(db, result.id);
+      }
+      if (tableNamePlural === "users") {
+        await afterUserDeleteBestEffort(db, result.id);
+      }
       return finalizeRequestedFields({
         args,
         table,

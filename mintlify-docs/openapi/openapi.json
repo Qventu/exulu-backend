@@ -274,6 +274,12 @@
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Tool call IDs that the user has pre-approved for execution without a confirmation prompt."
+                  },
+                  "outputSchema": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "A JSON Schema the response must conform to. Only with `stream: false`. The root must have `\"type\": \"object\"`; at most 32 KB. The agent answers as usual, then one additional model call transfers that answer into this structure and the result is validated against the schema. On success the response body is the object itself. `anyOf`, `oneOf`, `$ref`/`$defs`, formats and draft-07 schemas are supported. Make a field nullable (or optional) where a value can be missing: a required, non-nullable field leaves the model no honest way to express a gap. May also be sent as a JSON string.",
+                    "example": { "type": "object", "properties": { "summary": { "type": "string" }, "priority": { "type": ["integer", "null"], "minimum": 1, "maximum": 5 } }, "required": ["summary", "priority"] }
                   }
                 }
               },
@@ -340,6 +346,23 @@
           "413": {
             "description": "Context window is full and compaction is required before the next message can be sent.",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "422": {
+            "description": "`outputSchema` was given, but the model's output did not conform to it, also after one repair attempt. The body carries the validation issues and the agent's plain answer. (A request whose `outputSchema` is unusable, or combined with `stream: true`, gets a 400 with `{ \"error\": \"output_schema_invalid\" | \"output_schema_not_streamable\", \"message\": string }`.)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string", "enum": ["output_schema_mismatch"] },
+                    "message": { "type": "string" },
+                    "issues": { "type": "array", "items": { "type": "object", "properties": { "path": { "type": "string", "description": "JSON pointer into the output, e.g. `/items/0/priority`." }, "message": { "type": "string" } } } },
+                    "text": { "type": "string", "description": "The agent's answer as plain text." }
+                  }
+                },
+                "example": { "error": "output_schema_mismatch", "message": "The agent's output did not match the output schema.", "issues": [{ "path": "/priority", "message": "must be <= 5" }], "text": "…" }
+              }
+            }
           }
         },
         "x-codeSamples": [

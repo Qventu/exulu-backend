@@ -11,6 +11,7 @@ import { redisServer } from "@EE/queues/server.ts";
 import { getDefaultEvals } from "@SRC/templates/evals/index.ts";
 import { queues as ExuluQueues, global_queues } from "@EE/queues/queues";
 import { registerImportQueue } from "@EE/queues/import-queue";
+import { registerChannelQueue } from "@SRC/exulu/channels/queue";
 import { todoTools } from "@SRC/templates/tools/todo/todo.ts";
 import { questionTools } from "@SRC/templates/tools/question/question.ts";
 import { perplexityTools } from "@SRC/templates/tools/perplexity.ts";
@@ -369,6 +370,9 @@ export class ExuluApp {
       // helper the StartImport/CancelImport resolvers also use, so the two
       // registrations cannot drift (ee/queues/import-queue.ts).
       registerImportQueue();
+      // Inbound channel messages (WhatsApp): the webhook enqueues, a worker runs the agent.
+      // Same helper as the enqueue side (channels/queue.ts), so the parameters cannot drift.
+      registerChannelQueue();
 
       if (queues?.length) {
         // Custom provided queues

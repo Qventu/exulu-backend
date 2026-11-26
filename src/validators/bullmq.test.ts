@@ -1,5 +1,6 @@
 import type { BullMqJobData } from "@EE/queues/decorator";
 import { bullmq } from "./bullmq";
+import { channelJobOptions } from "@SRC/exulu/channels/act";
 
 const base: BullMqJobData = {
   label: "Email intake",
@@ -22,6 +23,19 @@ describe("bullmq.validate", () => {
         inputs: {},
         jobResultId: "jr-1",
         context: "ctx-1",
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts channel_message jobs without a workflow/embedder/processor target", () => {
+    expect(() =>
+      // the job id as channels/act.ts builds it: a hash, never the raw message id
+      bullmq.validate(channelJobOptions("wamid.1").jobId, {
+        ...base,
+        label: "WhatsApp message",
+        type: "channel_message",
+        timeoutInSeconds: 600,
+        inputs: { channelId: "c", threadId: "t", identity: "i", userId: 7, messageId: "m", text: "x", newSession: false },
       }),
     ).not.toThrow();
   });

@@ -1,0 +1,97 @@
+---
+title: "WhatsApp channel"
+description: "Prerequisites, Meta setup, what is stored where and for how long, how to cut a customer off, and the known limits of the WhatsApp channel."
+icon: "message-circle"
+---
+
+An agent that is published for guests in **regular** (sign-in) mode can also be reached over WhatsApp. A customer links their phone number to their IMP account once, with a one-time code from the agent's link page, and then chats with the agent in WhatsApp. Every answer is generated as that user, with that user's permissions and rate limit.
+
+## Prerequisites
+
+- **Entitlements.** The licence must include both `channels` and `queues`. Without them the webhook answers `503`, enabling a channel is refused (`409 not_entitled`) and the link page gets `404`.
+- **Database.** `npm run utils:initdb` (it runs on every server and worker boot) creates the two channel tables, `agent_channels` and `channel_links`, and the chat SDK's own `chat_state_*` tables. Restart once after the licence includes `channels`, before you enable a channel. If the SDK tables cannot be created, initdb logs `[EXULU-CHANNEL] chat state tables not created; WhatsApp channels will not work until this succeeds` and the boot continues.
+- **Agent.** Guest access on, guest mode `regular`. A channel cannot be enabled otherwise, and it is switched off when a change to the agent's guest settings leaves it without guest access or in another mode.
+- **Workers.** Answers are generated in a worker, from the `channel_inbound` queue. A worker started with an explicit queue list must include `channel_inbound`; otherwise messages are accepted but wait unanswered until a worker that listens to it runs.
+- **Postgres connections.** Each server and worker process opens up to 5 additional Postgres connections for the chat SDK, on first use.
+
+### Environment variables
+
+| Variable | Process | Purpose |
+|---|---|---|
+| `BACKEND` | Server | Public URL of the backend. The webhook URL is `<BACKEND>/webhooks/whatsapp/<channel id>`; without `BACKEND` the API returns no webhook URL. |
+| `FRONTEND` | Server | The public web address of the installation. Unlinked senders get `<FRONTEND>/public/agents/<agent id>/link/whatsapp`. |
+| `CHANNEL_LINK_BASE_URL` | Server | Optional. Overrides `FRONTEND` for the link page where customers use a web address of their own, separate from the one employees use. |
+
+If neither is set, `NEXTAUTH_URL` is used when the server process has it. Without any of the three, a channel cannot be enabled (`409 link_url_not_configured`).
+
+
+## Setting up a channel
+
+1. **Create the channel** through the API (the agent editor uses the same routes). You need write access to the agent.
+   `PUT /agents/<agent id>/channels/whatsapp` with
+   `{ "config": { "phoneNumberId": "…", "displayNumber": "+49 …" }, "secrets": { "accessToken": "…", "appSecret": "…" } }`.
+   Optional config: `linkTtlDays` (1–365, default 7), `sessionIdleHours` (1–168, default 8), `locale` (`de` or `en`), `texts` (overrides of the fixed replies). Use a permanent System User token as `accessToken`.
+2. **Copy the verify token.** The response that creates the channel contains `verifyToken`. It is shown this once and never returned again.
+3. **Check the credentials** with `POST /agents/<agent id>/channels/whatsapp/test` (asks the Graph API for the phone number).
+4. **Enable the channel**: `PUT … { "enabled": true }`. `GET /agents/<agent id>/channels/whatsapp` shows `webhookUrl`.
+5. **At Meta**, in the app's WhatsApp webhook settings, enter the webhook URL and the verify token, and subscribe to the `messages` field. The adapter also processes `user_id_update`, which keeps a customer's identity when Meta rotates their user ID.
+
+<Warning>
+Enable the channel **before** you verify the webhook at Meta. The webhook answers `404` for a channel that does not exist or is disabled, so Meta's verification fails until it is enabled.
+</Warning>
+
+One Meta app delivers the messages of **all** its phone numbers to one callback URL. A channel ignores messages for any other phone number than its own `phoneNumberId`. To run two channels from one Meta app, set a callback override per phone number, each pointing at its own channel's webhook URL.
+
+## What is stored, where, and for how long
+
+**Postgres**
+
+| Where | What | How long |
+|---|---|---|
+| `agent_channels` | Configuration; access token and app secret encrypted; the verify token. Never returned by the API except the verify token once. | Until the agent is deleted. |
+| `channel_links` | The sender's WhatsApp identity (a phone number or Meta business-scoped user ID), the IMP user, linked / expiry / revoked / last-seen times. | A link is valid for `linkTtlDays` from linking (fixed, not sliding). Revoked and expired rows stay until the user or the agent is deleted. Included in the user's data export. |
+| `agent_sessions`, messages | WhatsApp conversations are ordinary sessions of the user, visible in their history on the web. `metadata.channel` holds `{ type, id, identity }` with the full identity. The stored answer keeps its source citations. | Like any other session. |
+| `chat_state_lists` | The chat SDK keeps the **latest** inbound message per sender under `msg-history:whatsapp:<phone number id>:<identity>`: message text, message id, sender id, WhatsApp profile name, timestamp. | 1 hour after the sender's last message; then deleted at the next purge (see below). |
+| `chat_state_cache` | One `dedupe:whatsapp:<message id>` row per inbound message. | 10 minutes; then deleted at the next purge. |
+| `chat_state_cache` | The adapter's identity aliases and routes (`whatsapp:identity:alias:…`, `whatsapp:identity:route:…`): the sender's phone number and/or business-scoped user IDs. | No expiry; not deleted by IMP. |
+
+Expired `chat_state_*` rows are deleted by `utils:initdb` and, at most once an hour per process, after a webhook request.
+
+**Redis**
+
+| Key | What | TTL |
+|---|---|---|
+| `channel-link:code:<sha256 of the code>` | A link code → channel and user | 10 minutes, single use |
+| `channel-link:user:<channel>:<user>` | Pointer to the user's current code | 10 minutes |
+| `channel-link:issued:<user>` | Codes requested (5 per 10 minutes) | 10 minutes |
+| `channel-link:attempts:<channel>:<identity>` | Code attempts (5 per hour) | 1 hour |
+| `channel-link:prompt:<channel>:<identity>` | The link prompt was sent | 10 minutes |
+| `channel-seen:<channel>:<sha256 of message id>` | Message accepted for an answer | 24 hours |
+| `channel-answered:<channel>:<sha256 of message id>` | Message answered | 24 hours |
+| `channel-run:<channel>:<identity>` | An answer is being generated | 90 seconds, renewed while it runs |
+| `channel-new-session:<channel>:<identity>` | `/neu` or `/new` was sent | `sessionIdleHours` |
+| `channel-audit:code_lockout:<channel>:<identity>` | One lockout audit entry per hour | 1 hour |
+
+A queued job in `channel_inbound` carries the message text and the sender's identity; it is removed as soon as it finishes or fails.
+
+## Cutting a customer off
+
+- **Revoke the link**: `DELETE /agents/<agent id>/channels/whatsapp/links/<link id>` (admin), the unlink button on the customer's link page, or the customer sends `/abmelden` or `/logout`.
+- **Unpublish the agent** (guest access off, or a guest mode other than `regular`): its channels are disabled and no message is answered.
+- **Delete the user**: their links are deleted.
+
+There is no switch that disables an account. A link outlives the customer's web session: it stays valid up to `linkTtlDays` after linking, whether or not they are still signed in on the web.
+
+## Logs
+
+Channel code logs no message text, phone number, link code or WhatsApp message id. Errors show only an error class and, where present, a short code (for example a Postgres SQLSTATE), plus the channel id. That is deliberate, and it means the log line names the failing step, not the detail.
+
+If `utils:initdb` did not create the SDK tables, inbound messages fail with a generic error (`webhook handling failed on channel …` and the SDK's `Postgres connect failed`). Check the boot log for `chat state tables not created` and that `utils:initdb` ran.
+
+## Behaviour and limits
+
+- **Text only.** Photos, voice notes and documents get a fixed "text only" reply. Location messages arrive as text. Contact and order messages are not delivered by the SDK and get no reply.
+- **No source citations.** WhatsApp answers are posted without the inline source references the web chat shows; the stored session keeps them.
+- **One question at a time.** A message that arrives while an answer is being generated gets a fixed "still working" reply and is not queued.
+- **Unlinked senders** never reach the model. They get only fixed replies: the link prompt at most once per 10 minutes per sender, an answer to a code they send, or the text-only notice.
+- **Replies only.** The agent only replies to a customer's message (inside WhatsApp's 24-hour window); it never sends first.
